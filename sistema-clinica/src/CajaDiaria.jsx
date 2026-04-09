@@ -64,15 +64,24 @@ export default function CajaDiaria() {
   const [revisadoPor, setRevisadoPor] = useState("");
 
   useEffect(() => {
+    if (!empresa?.id) {
+      setMetodos([]);
+      setClientes([]);
+      setFilas([]);
+      setObservacion("");
+      limpiarFormularioCierre();
+      return;
+    }
+
     cargarMetodos();
     cargarClientes();
-  }, []);
+  }, [empresa?.id]);
 
   useEffect(() => {
-    if (metodos.length > 0 && fechaLocal) {
+    if (empresa?.id && metodos.length > 0 && fechaLocal) {
       cargarCajaDelDia(fechaLocal);
     }
-  }, [metodos, fechaLocal]);
+  }, [empresa?.id, metodos, fechaLocal]);
 
   const crearFilaVacia = (metodosActuales = metodos, nombrePaciente = "") => {
     const pagos = {};
@@ -102,9 +111,12 @@ export default function CajaDiaria() {
   };
 
   const cargarMetodos = async () => {
+    if (!empresa?.id) return;
+
     const { data, error } = await supabase
       .from("metodos_pago")
       .select("*")
+      .eq("empresa_id", empresa.id)
       .eq("activo", true)
       .order("orden", { ascending: true });
 
@@ -118,7 +130,7 @@ export default function CajaDiaria() {
   };
 
   const cargarClientes = async () => {
-    if (!empresa) return;
+    if (!empresa?.id) return;
 
     const { data, error } = await supabase
       .from("clientes")
@@ -135,9 +147,12 @@ export default function CajaDiaria() {
   };
 
   const cargarCajaDelDia = async (fechaBuscada) => {
+    if (!empresa?.id) return;
+
     const { data: caja, error: errorCaja } = await supabase
       .from("cajas_diarias")
       .select("*")
+      .eq("empresa_id", empresa.id)
       .eq("fecha_local", fechaBuscada)
       .maybeSingle();
 
@@ -264,6 +279,10 @@ export default function CajaDiaria() {
   };
 
   const guardarCaja = async () => {
+    if (!empresa?.id) {
+      return alert("No hay empresa seleccionada");
+    }
+
     const filasValidas = filas.filter((fila) => fila.paciente.trim() !== "");
 
     setLoading(true);
@@ -273,6 +292,7 @@ export default function CajaDiaria() {
     const { data: cajaExistente, error: errorBuscarCaja } = await supabase
       .from("cajas_diarias")
       .select("*")
+      .eq("empresa_id", empresa.id)
       .eq("fecha_local", fechaLocal)
       .maybeSingle();
 
@@ -284,6 +304,7 @@ export default function CajaDiaria() {
     }
 
     const payloadCaja = {
+      empresa_id: empresa.id,
       observacion,
       cierre_realizado: cierreRealizado,
       remesa_efectivo: remesaEfectivo,
@@ -329,7 +350,6 @@ export default function CajaDiaria() {
           {
             fecha: obtenerFechaHoraSVISO(),
             fecha_local: fechaLocal,
-            empresa_id: empresa?.id || null,
             ...payloadCaja,
           },
         ])
@@ -389,6 +409,11 @@ export default function CajaDiaria() {
   };
 
   const obtenerDatosReporte = async () => {
+    if (!empresa?.id) {
+      alert("No hay empresa seleccionada");
+      return null;
+    }
+
     if (!filtroDesde || !filtroHasta) {
       alert("Seleccioná desde y hasta");
       return null;
@@ -423,6 +448,7 @@ export default function CajaDiaria() {
           )
         )
       `)
+      .eq("empresa_id", empresa.id)
       .gte("fecha_local", filtroDesde)
       .lte("fecha_local", filtroHasta)
       .order("fecha_local", { ascending: true });

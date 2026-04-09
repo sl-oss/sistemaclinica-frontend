@@ -6,14 +6,24 @@ export default function MetodoPago() {
   const [nombre, setNombre] = useState("");
   const [loading, setLoading] = useState(false);
 
+  const empresa = JSON.parse(localStorage.getItem("empresa") || "null");
+
   useEffect(() => {
+    if (!empresa?.id) {
+      setMetodos([]);
+      return;
+    }
+
     cargarMetodos();
-  }, []);
+  }, [empresa?.id]);
 
   const cargarMetodos = async () => {
+    if (!empresa?.id) return;
+
     const { data, error } = await supabase
       .from("metodos_pago")
       .select("*")
+      .eq("empresa_id", empresa.id)
       .order("orden", { ascending: true });
 
     if (error) {
@@ -27,6 +37,10 @@ export default function MetodoPago() {
 
   const agregarMetodo = async (e) => {
     e.preventDefault();
+
+    if (!empresa?.id) {
+      return alert("No hay empresa seleccionada");
+    }
 
     if (!nombre.trim()) {
       alert("Escribí el nombre del método de pago");
@@ -42,6 +56,7 @@ export default function MetodoPago() {
 
     const { error } = await supabase.from("metodos_pago").insert([
       {
+        empresa_id: empresa.id,
         nombre: nombre.trim(),
         activo: true,
         orden: siguienteOrden,
@@ -62,10 +77,13 @@ export default function MetodoPago() {
   };
 
   const cambiarActivo = async (id, activo) => {
+    if (!empresa?.id) return;
+
     const { error } = await supabase
       .from("metodos_pago")
       .update({ activo: !activo })
-      .eq("id", id);
+      .eq("id", id)
+      .eq("empresa_id", empresa.id);
 
     if (error) {
       console.error(error);
@@ -77,6 +95,8 @@ export default function MetodoPago() {
   };
 
   const mover = async (index, direccion) => {
+    if (!empresa?.id) return;
+
     const nuevoIndex = direccion === "up" ? index - 1 : index + 1;
     if (nuevoIndex < 0 || nuevoIndex >= metodos.length) return;
 
@@ -86,12 +106,14 @@ export default function MetodoPago() {
     const { error: error1 } = await supabase
       .from("metodos_pago")
       .update({ orden: destino.orden })
-      .eq("id", actual.id);
+      .eq("id", actual.id)
+      .eq("empresa_id", empresa.id);
 
     const { error: error2 } = await supabase
       .from("metodos_pago")
       .update({ orden: actual.orden })
-      .eq("id", destino.id);
+      .eq("id", destino.id)
+      .eq("empresa_id", empresa.id);
 
     if (error1 || error2) {
       console.error(error1 || error2);
@@ -103,6 +125,8 @@ export default function MetodoPago() {
   };
 
   const eliminarMetodo = async (metodo) => {
+    if (!empresa?.id) return;
+
     if (metodo.es_fijo) {
       alert("Este método no se puede eliminar");
       return;
@@ -116,7 +140,8 @@ export default function MetodoPago() {
     const { error } = await supabase
       .from("metodos_pago")
       .delete()
-      .eq("id", metodo.id);
+      .eq("id", metodo.id)
+      .eq("empresa_id", empresa.id);
 
     if (error) {
       console.error(error);
@@ -372,37 +397,39 @@ const styles = {
     borderBottom: "1px solid #e2e8f0",
   },
   tr: {
-    borderBottom: "1px solid #edf2f7",
+    borderBottom: "1px solid #eef2f7",
   },
   td: {
     padding: "14px 12px",
+    color: "#334155",
+    fontSize: "14px",
     verticalAlign: "middle",
   },
   tdCenter: {
     padding: "14px 12px",
+    color: "#334155",
+    fontSize: "14px",
     textAlign: "center",
     verticalAlign: "middle",
   },
   orderBadge: {
     display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
     minWidth: "34px",
     height: "34px",
+    alignItems: "center",
+    justifyContent: "center",
     borderRadius: "999px",
-    background: "#eef6ff",
-    color: "#1d4ed8",
+    background: "#e0f2fe",
+    color: "#075985",
     fontWeight: "700",
-    border: "1px solid #cfe0ff",
   },
   nombreMetodo: {
-    fontWeight: "700",
-    color: "#10243e",
-    fontSize: "15px",
+    fontWeight: "600",
+    color: "#0f172a",
   },
   statusBadge: {
     display: "inline-block",
-    padding: "6px 12px",
+    padding: "6px 10px",
     borderRadius: "999px",
     fontSize: "12px",
     fontWeight: "700",
@@ -410,37 +437,35 @@ const styles = {
   },
   actions: {
     display: "flex",
-    flexWrap: "wrap",
     gap: "8px",
-    justifyContent: "center",
+    flexWrap: "wrap",
   },
   moveBtn: {
-    background: "#eef2f7",
-    color: "#334155",
-    border: "1px solid #d6dde6",
+    background: "#f8fafc",
+    color: "#0f172a",
+    border: "1px solid #cbd5e1",
     borderRadius: "10px",
-    padding: "8px 10px",
-    cursor: "pointer",
-    fontWeight: "700",
-    minWidth: "42px",
-  },
-  enableBtn: {
-    background: "#e7f8ee",
-    color: "#15803d",
-    border: "1px solid #bbf7d0",
-    borderRadius: "10px",
-    padding: "8px 12px",
+    padding: "8px 11px",
     cursor: "pointer",
     fontWeight: "700",
   },
   disableBtn: {
-    background: "#fff7d6",
-    color: "#a16207",
-    border: "1px solid #fde68a",
+    background: "#fff7ed",
+    color: "#9a3412",
+    border: "1px solid #fed7aa",
     borderRadius: "10px",
     padding: "8px 12px",
     cursor: "pointer",
-    fontWeight: "700",
+    fontWeight: "600",
+  },
+  enableBtn: {
+    background: "#ecfdf5",
+    color: "#166534",
+    border: "1px solid #bbf7d0",
+    borderRadius: "10px",
+    padding: "8px 12px",
+    cursor: "pointer",
+    fontWeight: "600",
   },
   deleteBtn: {
     background: "#fff1f2",
@@ -448,7 +473,7 @@ const styles = {
     border: "1px solid #fecdd3",
     borderRadius: "10px",
     padding: "8px 12px",
-    fontWeight: "700",
+    fontWeight: "600",
   },
   emptyTd: {
     textAlign: "center",
