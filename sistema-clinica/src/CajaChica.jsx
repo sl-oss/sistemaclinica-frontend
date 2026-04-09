@@ -1272,9 +1272,13 @@ function CajaChica() {
                 style={{
                   ...styles.summaryRow,
                   background:
-                    Math.abs(diferencia) > 0.009 ? "#fefdf2" : "#ecfdf5",
+                    Math.abs(diferencia) > 0.009 ? "#fef2f2" : "#ecfdf5",
                   borderColor:
                     Math.abs(diferencia) > 0.009 ? "#fecaca" : "#bbf7d0",
+            background:
+                      Math.abs(diferencia) < 0.009 ? "#fefdf2" : "#ecfdf5",
+                  borderColor:
+                    Math.abs(diferencia) < 0.009 ? "#fecaca" : "#bbf7d0",
                 }}
               >
                 <span>Diferencia (faltante (rojo) / sobrante (amarillo))</span>
