@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "./supabaseClient";
+import * as XLSX from "xlsx";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 
 function Citas() {
   const [citas, setCitas] = useState([]);
@@ -16,7 +19,7 @@ function Citas() {
 
   const [filtroDesde, setFiltroDesde] = useState("");
   const [filtroHasta, setFiltroHasta] = useState("");
-  const [filtroEstado, setFiltroEstado] = useState("activas");
+  const [filtroEstado, setFiltroEstado] = useState("pendientes");
 
   const [bloqueoFecha, setBloqueoFecha] = useState("");
   const [bloqueoInicio, setBloqueoInicio] = useState("");
@@ -50,6 +53,26 @@ function Citas() {
     return String(horaTexto).slice(0, 5);
   };
 
+  const formatearFechaPantalla = (fechaTexto) => {
+    if (!fechaTexto) return "";
+    const [yyyy, mm, dd] = String(fechaTexto).slice(0, 10).split("-");
+    if (!yyyy || !mm || !dd) return fechaTexto;
+    return `${dd}/${mm}/${yyyy}`;
+  };
+
+  const formatearFechaLocal = (date) => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  };
+
+  const obtenerFechaHoySV = () => {
+    return new Date().toLocaleString("en-CA", {
+      timeZone: "America/El_Salvador",
+    }).slice(0, 10);
+  };
+
   useEffect(() => {
     const onResize = () => setEsMovil(window.innerWidth < 900);
     window.addEventListener("resize", onResize);
@@ -69,7 +92,7 @@ function Citas() {
     setFiltroHasta(formatearFechaLocal(fin));
 
     obtenerClientes();
-  }, []);
+  }, [empresa]);
 
   useEffect(() => {
     if (!empresa) return;
@@ -81,13 +104,6 @@ function Citas() {
     if (!empresa || !fecha) return;
     refrescarDia(fecha);
   }, [empresa, fecha]);
-
-  const formatearFechaLocal = (date) => {
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, "0");
-    const day = String(date.getDate()).padStart(2, "0");
-    return `${year}-${month}-${day}`;
-  };
 
   const esDiaValido = (fechaTexto) => {
     if (!fechaTexto) return false;
@@ -182,8 +198,14 @@ function Citas() {
       .order("fecha", { ascending: true })
       .order("hora", { ascending: true });
 
-    if (filtroEstado === "activas") {
-      query = query.neq("estado", "cancelada");
+    if (filtroEstado === "pendientes") {
+      query = query.eq("estado", "pendiente");
+    } else if (filtroEstado === "atendidas") {
+      query = query.eq("estado", "atendida");
+    } else if (filtroEstado === "canceladas_sin_reprogramacion") {
+      query = query
+        .eq("estado", "cancelada")
+        .eq("desea_reprogramar", false);
     } else if (filtroEstado === "canceladas") {
       query = query.eq("estado", "cancelada");
     }
@@ -195,7 +217,14 @@ function Citas() {
       return;
     }
 
-    setCitas(data || []);
+    const filtradas = (data || []).filter((c) => {
+      if (filtroEstado === "canceladas_sin_reprogramacion") {
+        return !c.desea_reprogramar;
+      }
+      return true;
+    });
+
+    setCitas(filtradas);
   };
 
   const obtenerCitasDelDia = async (fechaConsulta) => {
@@ -233,26 +262,6 @@ function Citas() {
     return data || [];
   };
 
-  const obtenerCitasActivasPorFecha = async (fechaConsulta, citaExcluirId = null) => {
-    const { data, error } = await supabase
-      .from("citas")
-      .select("*")
-      .eq("empresa_id", empresa.id)
-      .eq("fecha", fechaConsulta)
-      .neq("estado", "cancelada")
-      .order("hora", { ascending: true });
-
-    if (error) {
-      console.error(error);
-      return [];
-    }
-
-    return (data || []).filter((c) => {
-      if (citaExcluirId && c.id === citaExcluirId) return false;
-      return true;
-    });
-  };
-
   const obtenerBloqueosPorFecha = async (fechaConsulta) => {
     const { data, error } = await supabase
       .from("bloqueos")
@@ -276,38 +285,15 @@ function Citas() {
     ]);
   };
 
-  const horasOcupadas = useMemo(() => {
+  const horasBloqueadas = useMemo(() => {
     if (!fecha) return [];
-
-    const desdeListadoGeneral = citas
-      .filter((c) => {
-        if (c.estado === "cancelada") return false;
-        if (c.fecha !== fecha) return false;
-        if (citaEditando && c.id === citaEditando) return false;
-        return true;
-      })
-      .map((c) => normalizarHora(c.hora));
-
-    const desdeCitasDelDia = citasDelDia
-      .filter((c) => {
-        if (c.estado === "cancelada") return false;
-        if (citaEditando && c.id === citaEditando) return false;
-        return true;
-      })
-      .map((c) => normalizarHora(c.hora));
-
-    return [...new Set([...desdeListadoGeneral, ...desdeCitasDelDia])];
-  }, [fecha, citas, citasDelDia, citaEditando]);
+    return [...new Set(bloqueos.map((b) => normalizarHora(b.hora)))];
+  }, [fecha, bloqueos]);
 
   const horasDisponibles = useMemo(() => {
     if (!fecha) return [];
-
-    return horarios.filter((h) => {
-      const bloqueada = bloqueos.some((b) => normalizarHora(b.hora) === h);
-      const ocupada = horasOcupadas.includes(h);
-      return !bloqueada && !ocupada;
-    });
-  }, [fecha, bloqueos, horasOcupadas]);
+    return horarios.filter((h) => !horasBloqueadas.includes(h));
+  }, [fecha, horasBloqueadas]);
 
   useEffect(() => {
     if (!hora) return;
@@ -325,8 +311,8 @@ function Citas() {
       return alert("No se atiende domingos ni lunes");
     }
 
-    if (horasOcupadas.includes(normalizarHora(hora))) {
-      return alert("Esa hora ya está ocupada");
+    if (!horasDisponibles.includes(normalizarHora(hora))) {
+      return alert("Esa hora está bloqueada");
     }
 
     if (citaEditando) {
@@ -342,9 +328,6 @@ function Citas() {
 
       if (error) {
         console.error(error);
-        if (error.code === "23505") {
-          return alert("Hora de cita ocupada, seleccione otra ⌚");
-        }
         return alert("Error al actualizar cita");
       }
 
@@ -364,9 +347,6 @@ function Citas() {
 
       if (error) {
         console.error(error);
-        if (error.code === "23505") {
-          return alert("Hora de cita ocupada, seleccione otra ⌚");
-        }
         return alert("Error al guardar cita");
       }
     }
@@ -420,19 +400,13 @@ function Citas() {
         return alert("No se atiende domingos ni lunes");
       }
 
-      const citasNuevaFecha = await obtenerCitasActivasPorFecha(nuevaFecha, cita.id);
       const bloqueosNuevaFecha = await obtenerBloqueosPorFecha(nuevaFecha);
-
-      const horasOcupadasReprogramacion = [
-        ...new Set(citasNuevaFecha.map((c) => normalizarHora(c.hora))),
-      ];
 
       const horasDisponiblesReprogramacion = horarios.filter((h) => {
         const bloqueada = bloqueosNuevaFecha.some(
           (b) => normalizarHora(b.hora) === h
         );
-        const ocupada = horasOcupadasReprogramacion.includes(h);
-        return !bloqueada && !ocupada;
+        return !bloqueada;
       });
 
       if (horasDisponiblesReprogramacion.length === 0) {
@@ -452,10 +426,6 @@ function Citas() {
 
       if (!horarios.includes(nuevaHora)) {
         return alert("La hora ingresada no es válida");
-      }
-
-      if (horasOcupadasReprogramacion.includes(nuevaHora)) {
-        return alert("Esa hora ya está ocupada");
       }
 
       const bloqueada = bloqueosNuevaFecha.some(
@@ -643,6 +613,177 @@ function Citas() {
     }
   };
 
+  const obtenerTituloReporte = () => {
+    if (filtroEstado === "pendientes") return "Citas Pendientes";
+    if (filtroEstado === "atendidas") return "Citas Atendidas";
+    if (filtroEstado === "canceladas_sin_reprogramacion") {
+      return "Citas Canceladas sin Reprogramación";
+    }
+    if (filtroEstado === "canceladas") return "Citas Canceladas";
+    return "Reporte General de Citas";
+  };
+
+  const obtenerNombreArchivoReporte = () => {
+    if (filtroEstado === "pendientes") return "Citas_Pendientes";
+    if (filtroEstado === "atendidas") return "Citas_Atendidas";
+    if (filtroEstado === "canceladas_sin_reprogramacion") {
+      return "Citas_Canceladas_Sin_Reprogramacion";
+    }
+    if (filtroEstado === "canceladas") return "Citas_Canceladas";
+    return "Reporte_Citas";
+  };
+
+  const obtenerFilasReporte = () => {
+    return citas.map((c) => ({
+      Fecha: formatearFechaPantalla(c.fecha),
+      Hora: normalizarHora(c.hora),
+      Cliente: c.clientes?.nombre || "Sin nombre",
+      Telefono: c.clientes?.telefono || "",
+      Servicio: c.servicio || "",
+      Estado: c.estado || "",
+      Confirmada: c.confirmada ? "Sí" : "No",
+      "Motivo cancelación": c.motivo_cancelacion || "",
+      "Reprogramada": c.desea_reprogramar ? "Sí" : "No",
+      "Nueva fecha": c.fecha_reprogramada
+        ? formatearFechaPantalla(c.fecha_reprogramada)
+        : "",
+      "Nueva hora": c.hora_reprogramada
+        ? normalizarHora(c.hora_reprogramada)
+        : "",
+    }));
+  };
+
+  const exportarExcel = () => {
+    if (citas.length === 0) {
+      return alert("No hay citas para exportar");
+    }
+
+    const titulo = obtenerTituloReporte();
+    const nombreArchivo = obtenerNombreArchivoReporte();
+
+    const encabezado = [
+      {
+        Fecha: empresa?.nombre || "Empresa activa",
+        Hora: "",
+        Cliente: "",
+        Telefono: "",
+        Servicio: "",
+        Estado: "",
+        Confirmada: "",
+        "Motivo cancelación": "",
+        Reprogramada: "",
+        "Nueva fecha": "",
+        "Nueva hora": "",
+      },
+      {
+        Fecha: titulo,
+        Hora: "",
+        Cliente: "",
+        Telefono: "",
+        Servicio: "",
+        Estado: "",
+        Confirmada: "",
+        "Motivo cancelación": "",
+        Reprogramada: "",
+        "Nueva fecha": "",
+        "Nueva hora": "",
+      },
+      {
+        Fecha: `Período: ${formatearFechaPantalla(filtroDesde)} al ${formatearFechaPantalla(filtroHasta)}`,
+        Hora: "",
+        Cliente: "",
+        Telefono: "",
+        Servicio: "",
+        Estado: "",
+        Confirmada: "",
+        "Motivo cancelación": "",
+        Reprogramada: "",
+        "Nueva fecha": "",
+        "Nueva hora": "",
+      },
+      {
+        Fecha: "",
+        Hora: "",
+        Cliente: "",
+        Telefono: "",
+        Servicio: "",
+        Estado: "",
+        Confirmada: "",
+        "Motivo cancelación": "",
+        Reprogramada: "",
+        "Nueva fecha": "",
+        "Nueva hora": "",
+      },
+    ];
+
+    const rows = [...encabezado, ...obtenerFilasReporte()];
+
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.json_to_sheet(rows);
+    XLSX.utils.book_append_sheet(wb, ws, "Citas");
+
+    XLSX.writeFile(
+      wb,
+      `${nombreArchivo}_${filtroDesde}_a_${filtroHasta}.xlsx`
+    );
+  };
+
+  const exportarPDF = () => {
+    if (citas.length === 0) {
+      return alert("No hay citas para exportar");
+    }
+
+    const titulo = obtenerTituloReporte();
+    const nombreArchivo = obtenerNombreArchivoReporte();
+
+    const doc = new jsPDF("landscape");
+
+    doc.setFontSize(16);
+    doc.text(titulo, 14, 15);
+
+    doc.setFontSize(11);
+    doc.text(`Empresa: ${empresa?.nombre || "Empresa activa"}`, 14, 22);
+    doc.text(
+      `Período: ${formatearFechaPantalla(filtroDesde)} al ${formatearFechaPantalla(filtroHasta)}`,
+      14,
+      28
+    );
+
+    autoTable(doc, {
+      startY: 34,
+      head: [[
+        "Fecha",
+        "Hora",
+        "Cliente",
+        "Teléfono",
+        "Servicio",
+        "Estado",
+        "Confirmada",
+        "Motivo cancelación",
+        "Reprogramada",
+        "Nueva fecha",
+        "Nueva hora",
+      ]],
+      body: citas.map((c) => [
+        formatearFechaPantalla(c.fecha),
+        normalizarHora(c.hora),
+        c.clientes?.nombre || "Sin nombre",
+        c.clientes?.telefono || "",
+        c.servicio || "",
+        c.estado || "",
+        c.confirmada ? "Sí" : "No",
+        c.motivo_cancelacion || "",
+        c.desea_reprogramar ? "Sí" : "No",
+        c.fecha_reprogramada ? formatearFechaPantalla(c.fecha_reprogramada) : "",
+        c.hora_reprogramada ? normalizarHora(c.hora_reprogramada) : "",
+      ]),
+      styles: { fontSize: 8 },
+      headStyles: { fillColor: [39, 67, 98] },
+    });
+
+    doc.save(`${nombreArchivo}_${filtroDesde}_a_${filtroHasta}.pdf`);
+  };
+
   if (!empresa) {
     return <div>No hay empresa seleccionada</div>;
   }
@@ -822,8 +963,12 @@ function Citas() {
                   value={filtroEstado}
                   onChange={(e) => setFiltroEstado(e.target.value)}
                 >
-                  <option value="activas">Solo activas</option>
-                  <option value="canceladas">Solo canceladas</option>
+                  <option value="pendientes">Citas pendientes</option>
+                  <option value="atendidas">Citas atendidas</option>
+                  <option value="canceladas_sin_reprogramacion">
+                    Canceladas sin reprogramación
+                  </option>
+                  <option value="canceladas">Todas las canceladas</option>
                   <option value="todas">Todas</option>
                 </select>
               </div>
@@ -855,9 +1000,17 @@ function Citas() {
                 </button>
               </div>
 
-              <button style={styles.btnSecundario} onClick={obtenerCitas}>
-                Filtrar
-              </button>
+              <div style={styles.reportRow}>
+                <button style={styles.btnSecundario} onClick={obtenerCitas}>
+                  Filtrar
+                </button>
+                <button style={styles.btnPdf} onClick={exportarPDF}>
+                  PDF
+                </button>
+                <button style={styles.btnExcel} onClick={exportarExcel}>
+                  Excel
+                </button>
+              </div>
             </div>
           </div>
 
@@ -1075,6 +1228,11 @@ const styles = {
     flexWrap: "wrap",
     marginBottom: 10,
   },
+  reportRow: {
+    display: "flex",
+    gap: 10,
+    flexWrap: "wrap",
+  },
   btnGuardar: {
     padding: "10px 16px",
     background: "#10b981",
@@ -1090,6 +1248,24 @@ const styles = {
     border: "none",
     borderRadius: 8,
     cursor: "pointer",
+  },
+  btnPdf: {
+    padding: "10px 16px",
+    background: "#fee2e2",
+    color: "#991b1b",
+    border: "none",
+    borderRadius: 8,
+    cursor: "pointer",
+    fontWeight: "600",
+  },
+  btnExcel: {
+    padding: "10px 16px",
+    background: "#dcfce7",
+    color: "#166534",
+    border: "none",
+    borderRadius: 8,
+    cursor: "pointer",
+    fontWeight: "600",
   },
   btnBloqueo: {
     padding: "10px 16px",
