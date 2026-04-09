@@ -1,8 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "./supabaseClient";
-import * as XLSX from "xlsx";
-import jsPDF from "jspdf";
-import autoTable from "jspdf-autotable";
 
 function Citas() {
   const [citas, setCitas] = useState([]);
@@ -29,6 +26,11 @@ function Citas() {
   const [nuevoClienteNombre, setNuevoClienteNombre] = useState("");
   const [nuevoClienteTelefono, setNuevoClienteTelefono] = useState("");
   const [guardandoCliente, setGuardandoCliente] = useState(false);
+
+  const [cargandoCitas, setCargandoCitas] = useState(false);
+  const [busquedaInicialAplicada, setBusquedaInicialAplicada] = useState(false);
+
+  const ultimaConsultaRef = useRef("");
 
   const empresa = JSON.parse(localStorage.getItem("empresa") || "null");
   const [esMovil, setEsMovil] = useState(window.innerWidth < 900);
@@ -60,17 +62,24 @@ function Citas() {
     return `${dd}/${mm}/${yyyy}`;
   };
 
-  const formatearFechaLocal = (date) => {
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, "0");
-    const day = String(date.getDate()).padStart(2, "0");
-    return `${year}-${month}-${day}`;
+  const formatearFechaSV = (date = new Date()) => {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/El_Salvador",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(date);
   };
 
-  const obtenerFechaHoySV = () => {
-    return new Date().toLocaleString("en-CA", {
-      timeZone: "America/El_Salvador",
-    }).slice(0, 10);
+  const sumarDiasSV = (fechaBaseTexto, dias) => {
+    const [y, m, d] = fechaBaseTexto.split("-").map(Number);
+    const fecha = new Date(y, m - 1, d);
+    fecha.setDate(fecha.getDate() + dias);
+    return formatearFechaSV(fecha);
+  };
+
+  const manejarCambioFecha = (valor, setter) => {
+    setter(valor || "");
   };
 
   useEffect(() => {
@@ -82,14 +91,11 @@ function Citas() {
   useEffect(() => {
     if (!empresa) return;
 
-    const hoy = new Date();
-    const hoyTexto = formatearFechaLocal(hoy);
+    const hoySV = formatearFechaSV(new Date());
+    const finSV = sumarDiasSV(hoySV, 7);
 
-    const fin = new Date();
-    fin.setDate(hoy.getDate() + 7);
-
-    setFiltroDesde(hoyTexto);
-    setFiltroHasta(formatearFechaLocal(fin));
+    setFiltroDesde((prev) => prev || hoySV);
+    setFiltroHasta((prev) => prev || finSV);
 
     obtenerClientes();
   }, [empresa]);
@@ -97,36 +103,20 @@ function Citas() {
   useEffect(() => {
     if (!empresa) return;
     if (!filtroDesde || !filtroHasta) return;
-    obtenerCitas();
+    if (filtroDesde > filtroHasta) return;
+
+    const timer = setTimeout(() => {
+      obtenerCitas();
+      setBusquedaInicialAplicada(true);
+    }, busquedaInicialAplicada ? 250 : 0);
+
+    return () => clearTimeout(timer);
   }, [empresa, filtroDesde, filtroHasta, filtroEstado]);
 
   useEffect(() => {
     if (!empresa || !fecha) return;
     refrescarDia(fecha);
   }, [empresa, fecha]);
-
-  const esDiaValido = (fechaTexto) => {
-    if (!fechaTexto) return false;
-    const [y, m, d] = fechaTexto.split("-").map(Number);
-    const fechaObj = new Date(y, m - 1, d);
-    const dia = fechaObj.getDay();
-    return dia !== 0 && dia !== 1;
-  };
-
-  const manejarCambioFecha = (valor, setter) => {
-    if (!valor) {
-      setter("");
-      return;
-    }
-
-    if (!esDiaValido(valor)) {
-      alert("No se atiende domingos ni lunes");
-      setter("");
-      return;
-    }
-
-    setter(valor);
-  };
 
   const obtenerClientes = async () => {
     const { data, error } = await supabase
@@ -189,9 +179,34 @@ function Citas() {
   };
 
   const obtenerCitas = async () => {
+    if (!empresa?.id || !filtroDesde || !filtroHasta) return;
+
+    const firmaConsulta = `${empresa.id}|${filtroDesde}|${filtroHasta}|${filtroEstado}`;
+    if (ultimaConsultaRef.current === firmaConsulta && cargandoCitas) return;
+
+    ultimaConsultaRef.current = firmaConsulta;
+    setCargandoCitas(true);
+
     let query = supabase
       .from("citas")
-      .select("*, clientes(nombre, telefono)")
+      .select(`
+        id,
+        empresa_id,
+        cliente_id,
+        fecha,
+        hora,
+        servicio,
+        estado,
+        confirmada,
+        motivo_cancelacion,
+        desea_reprogramar,
+        fecha_reprogramada,
+        hora_reprogramada,
+        clientes (
+          nombre,
+          telefono
+        )
+      `)
       .eq("empresa_id", empresa.id)
       .gte("fecha", filtroDesde)
       .lte("fecha", filtroHasta)
@@ -203,14 +218,14 @@ function Citas() {
     } else if (filtroEstado === "atendidas") {
       query = query.eq("estado", "atendida");
     } else if (filtroEstado === "canceladas_sin_reprogramacion") {
-      query = query
-        .eq("estado", "cancelada")
-        .eq("desea_reprogramar", false);
+      query = query.eq("estado", "cancelada").eq("desea_reprogramar", false);
     } else if (filtroEstado === "canceladas") {
       query = query.eq("estado", "cancelada");
     }
 
     const { data, error } = await query;
+
+    setCargandoCitas(false);
 
     if (error) {
       console.error(error);
@@ -307,10 +322,6 @@ function Citas() {
       return alert("Completa los campos");
     }
 
-    if (!esDiaValido(fecha)) {
-      return alert("No se atiende domingos ni lunes");
-    }
-
     if (!horasDisponibles.includes(normalizarHora(hora))) {
       return alert("Esa hora está bloqueada");
     }
@@ -394,10 +405,6 @@ function Citas() {
       nuevaFecha = prompt("Ingrese la nueva fecha (YYYY-MM-DD):", cita.fecha || "");
       if (!nuevaFecha) {
         return alert("Debes ingresar la nueva fecha");
-      }
-
-      if (!esDiaValido(nuevaFecha)) {
-        return alert("No se atiende domingos ni lunes");
       }
 
       const bloqueosNuevaFecha = await obtenerBloqueosPorFecha(nuevaFecha);
@@ -519,10 +526,6 @@ function Citas() {
       return alert("Completa fecha, hora inicio y hora fin");
     }
 
-    if (!esDiaValido(bloqueoFecha)) {
-      return alert("No se atiende domingos ni lunes");
-    }
-
     const motivo = prompt("Motivo del bloqueo:");
     if (!motivo) return;
 
@@ -553,6 +556,10 @@ function Citas() {
       await refrescarDia(fecha);
     }
 
+    if (bloqueoFecha) {
+      await obtenerBloqueos(bloqueoFecha);
+    }
+
     setBloqueoInicio("");
     setBloqueoFin("");
     alert("Bloqueo guardado");
@@ -575,41 +582,30 @@ function Citas() {
   };
 
   const aplicarFiltroRapido = (tipo) => {
-    const hoy = new Date();
+    const hoySV = formatearFechaSV(new Date());
 
     if (tipo === "hoy") {
-      const f = formatearFechaLocal(hoy);
-      setFiltroDesde(f);
-      setFiltroHasta(f);
+      setFiltroDesde(hoySV);
+      setFiltroHasta(hoySV);
       return;
     }
 
     if (tipo === "mañana") {
-      const manana = new Date();
-      manana.setDate(hoy.getDate() + 1);
-      const f = formatearFechaLocal(manana);
-      setFiltroDesde(f);
-      setFiltroHasta(f);
+      const mananaSV = sumarDiasSV(hoySV, 1);
+      setFiltroDesde(mananaSV);
+      setFiltroHasta(mananaSV);
       return;
     }
 
     if (tipo === "semana") {
-      const desde = formatearFechaLocal(hoy);
-      const hasta = new Date();
-      hasta.setDate(hoy.getDate() + 7);
-      setFiltroDesde(desde);
-      setFiltroHasta(formatearFechaLocal(hasta));
+      setFiltroDesde(hoySV);
+      setFiltroHasta(sumarDiasSV(hoySV, 7));
       return;
     }
 
     if (tipo === "todo") {
-      const desde = new Date();
-      desde.setDate(hoy.getDate() - 30);
-      const hasta = new Date();
-      hasta.setDate(hoy.getDate() + 30);
-
-      setFiltroDesde(formatearFechaLocal(desde));
-      setFiltroHasta(formatearFechaLocal(hasta));
+      setFiltroDesde(sumarDiasSV(hoySV, -30));
+      setFiltroHasta(sumarDiasSV(hoySV, 30));
     }
   };
 
@@ -643,7 +639,7 @@ function Citas() {
       Estado: c.estado || "",
       Confirmada: c.confirmada ? "Sí" : "No",
       "Motivo cancelación": c.motivo_cancelacion || "",
-      "Reprogramada": c.desea_reprogramar ? "Sí" : "No",
+      Reprogramada: c.desea_reprogramar ? "Sí" : "No",
       "Nueva fecha": c.fecha_reprogramada
         ? formatearFechaPantalla(c.fecha_reprogramada)
         : "",
@@ -653,10 +649,12 @@ function Citas() {
     }));
   };
 
-  const exportarExcel = () => {
+  const exportarExcel = async () => {
     if (citas.length === 0) {
       return alert("No hay citas para exportar");
     }
+
+    const XLSX = await import("xlsx");
 
     const titulo = obtenerTituloReporte();
     const nombreArchivo = obtenerNombreArchivoReporte();
@@ -728,10 +726,15 @@ function Citas() {
     );
   };
 
-  const exportarPDF = () => {
+  const exportarPDF = async () => {
     if (citas.length === 0) {
       return alert("No hay citas para exportar");
     }
+
+    const [{ default: jsPDF }, { default: autoTable }] = await Promise.all([
+      import("jspdf"),
+      import("jspdf-autotable"),
+    ]);
 
     const titulo = obtenerTituloReporte();
     const nombreArchivo = obtenerNombreArchivoReporte();
@@ -971,6 +974,12 @@ function Citas() {
                   <option value="canceladas">Todas las canceladas</option>
                   <option value="todas">Todas</option>
                 </select>
+
+                {filtroDesde && filtroHasta && filtroDesde > filtroHasta && (
+                  <div style={{ color: "#b91c1c", fontSize: 14, marginTop: -4 }}>
+                    La fecha "desde" no puede ser mayor que la fecha "hasta".
+                  </div>
+                )}
               </div>
 
               <div style={styles.quickFilters}>
@@ -1018,7 +1027,11 @@ function Citas() {
             <div style={styles.card}>
               <h3 style={styles.subtitulo}>📌 Citas encontradas</h3>
 
-              {citas.length === 0 && <p>No hay citas en ese rango.</p>}
+              {cargandoCitas ? (
+                <p>Cargando citas...</p>
+              ) : citas.length === 0 ? (
+                <p>No hay citas en ese rango.</p>
+              ) : null}
 
               <div
                 style={{
