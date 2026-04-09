@@ -1270,16 +1270,21 @@ function CajaChica() {
 
               <div
                 style={{
-                  ...styles.summaryRow,
-                  background:
-                    Math.abs(diferencia) > 0.009 ? "#fef2f2" : "#ecfdf5",
-                  borderColor:
-                    Math.abs(diferencia) > 0.009 ? "#fecaca" : "#bbf7d0",
-            background:
-                      Math.abs(diferencia) < 0.009 ? "#fefdf2" : "#ecfdf5",
-                  borderColor:
-                    Math.abs(diferencia) < 0.009 ? "#fecaca" : "#bbf7d0",
-                }}
+  ...styles.summaryRow,
+  background:
+    Math.abs(diferencia) < 0.009
+      ? "#ecfdf5" // verde (cuadrado)
+      : diferencia > 0
+      ? "#fef2f2" // rojo (falta dinero)
+      : "#fef9c3", // amarillo (sobra dinero)
+
+  borderColor:
+    Math.abs(diferencia) < 0.009
+      ? "#bbf7d0"
+      : diferencia > 0
+      ? "#fecaca"
+      : "#fde68a",
+}}
               >
                 <span>Diferencia (faltante (rojo) / sobrante (amarillo))</span>
                 <strong>${money(diferencia)}</strong>
