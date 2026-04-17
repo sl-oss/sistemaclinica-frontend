@@ -775,161 +775,173 @@ function CajaChica() {
   };
 
   const exportarPDF = () => {
-    const doc = new jsPDF("p", "mm", "a4");
+  const doc = new jsPDF("p", "mm", "a4");
 
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(14);
-    doc.text("LIQUIDACIÓN DE CAJA CHICA", 105, 12, { align: "center" });
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(14);
+  doc.text("LIQUIDACIÓN DE CAJA CHICA", 105, 12, { align: "center" });
 
-    doc.setFontSize(11);
-    doc.text(empresa?.nombre || "", 105, 19, { align: "center" });
+  doc.setFontSize(11);
+  doc.text(empresa?.nombre || "", 105, 19, { align: "center" });
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(10);
+
+  doc.text(`Del: ${fechaDesde || ""}`, 14, 28);
+  doc.text(`Al: ${fechaHasta || ""}`, 60, 28);
+
+  const correlativoLabel = `Correlativo: ${correlativo}`;
+  const correlativoMaxWidth = 70;
+  const correlativoLineas = doc.splitTextToSize(
+    correlativoLabel,
+    correlativoMaxWidth
+  );
+
+  doc.text(correlativoLineas, 196, 28, { align: "right" });
+
+  const alturaCorrelativo = correlativoLineas.length * 5;
+  const inicioTabla = Math.max(34, 28 + alturaCorrelativo + 4);
+
+  autoTable(doc, {
+    startY: inicioTabla,
+    head: [["Billetes", "Cant.", "Total", "Monedas", "Cant.", "Total"]],
+    body: Array.from(
+      { length: Math.max(billetes.length, monedas.length) },
+      (_, i) => {
+        const b = billetes[i];
+        const m = monedas[i];
+        return [
+          b ? b.denom : "",
+          b ? numero(b.cantidad) : "",
+          b ? money(numero(b.denom) * numero(b.cantidad)) : "",
+          m ? m.denom : "",
+          m ? numero(m.cantidad) : "",
+          m ? money(numero(m.denom) * numero(m.cantidad)) : "",
+        ];
+      }
+    ),
+    theme: "grid",
+    styles: { fontSize: 9 },
+    headStyles: { fillColor: [28, 63, 95] },
+  });
+
+  const y1 = doc.lastAutoTable.finalY + 6;
+
+  autoTable(doc, {
+    startY: y1,
+    body: [
+      ["Total billetes", money(totalBilletes)],
+      ["Total monedas", money(totalMonedas)],
+      ["Total efectivo disponible", money(totalEfectivoDisponible)],
+      ["Fondo de caja chica", money(numero(fondoCajaChica))],
+    ],
+    theme: "grid",
+    styles: { fontSize: 9 },
+    columnStyles: { 0: { fontStyle: "bold" } },
+  });
+
+  let y2 = doc.lastAutoTable.finalY + 6;
+
+  autoTable(doc, {
+    startY: y2,
+    head: [[
+      "#",
+      "Tipo",
+      "Fecha",
+      "Concepto",
+      "Proveedor",
+      "Comprobante",
+      "Ingreso",
+      "Egreso",
+      "Balance",
+    ]],
+    body: gastosConBalance.map((g) => [
+      g.index,
+      g.tipoDoc,
+      g.fecha,
+      g.concepto,
+      g.proveedor,
+      g.comprobante,
+      money(g.ingresoNum),
+      money(g.egresoNum),
+      money(g.balance),
+    ]),
+    theme: "grid",
+    styles: { fontSize: 8 },
+    headStyles: { fillColor: [28, 63, 95] },
+    margin: { left: 8, right: 8 },
+  });
+
+  let y3 = doc.lastAutoTable.finalY + 6;
+
+  if (y3 > 245) {
+    doc.addPage();
+    y3 = 20;
+  }
+
+  autoTable(doc, {
+    startY: y3,
+    body: [
+      ["Saldo inicial del periodo", money(numero(saldoInicial))],
+      ["(+) Ingresos / reintegros (reposiciones)", money(totalIngresos)],
+      ["(=) Monto total disponible para gastos", money(montoTotalDisponible)],
+      ["(-) Total comprobado (gastos válidos)", money(totalEgresos)],
+      ["(=) Monto que debería quedar de efectivo", money(montoDeberiaQuedar)],
+      ["Efectivo contado al cierre", money(efectivoContadoCierre)],
+      ["Diferencia (faltante / sobrante)", money(diferencia)],
+    ],
+    theme: "grid",
+    styles: { fontSize: 9 },
+    columnStyles: { 0: { fontStyle: "bold" } },
+  });
+
+  const yObs = doc.lastAutoTable.finalY + 8;
+  doc.setFont("helvetica", "bold");
+  doc.text("Observaciones / explicación de la diferencia:", 14, yObs);
+  doc.setFont("helvetica", "normal");
+  doc.text(observaciones || "-", 14, yObs + 6, { maxWidth: 180 });
+
+  let yFirmas = yObs + 25;
+  if (yFirmas > 260) {
+    doc.addPage();
+    yFirmas = 30;
+  }
+
+  const anchoPagina = 210;
+  const margen = 18;
+  const espacio = (anchoPagina - margen * 2) / 3;
+
+  const firmas = [
+    {
+      nombre: elaboradoPor || "________________________",
+      cargo: "Elabora caja chica",
+    },
+    {
+      nombre: revisadoPor || "________________________",
+      cargo: "Revisa",
+    },
+    {
+      nombre: autorizadoPor || "________________________",
+      cargo: "Autoriza",
+    },
+  ];
+
+  doc.setFontSize(10);
+
+  firmas.forEach((firma, i) => {
+    const x = margen + espacio * i + espacio / 2;
+
+    doc.line(x - 28, yFirmas, x + 28, yFirmas);
 
     doc.setFont("helvetica", "normal");
-    doc.setFontSize(10);
-    doc.text(`Del: ${fechaDesde || ""}`, 14, 28);
-    doc.text(`Al: ${fechaHasta || ""}`, 60, 28);
-    doc.text(`Correlativo: ${correlativo}`, 130, 28);
+    doc.text(firma.nombre, x, yFirmas + 6, { align: "center" });
 
-    autoTable(doc, {
-      startY: 34,
-      head: [["Billetes", "Cant.", "Total", "Monedas", "Cant.", "Total"]],
-      body: Array.from(
-        { length: Math.max(billetes.length, monedas.length) },
-        (_, i) => {
-          const b = billetes[i];
-          const m = monedas[i];
-          return [
-            b ? b.denom : "",
-            b ? numero(b.cantidad) : "",
-            b ? money(numero(b.denom) * numero(b.cantidad)) : "",
-            m ? m.denom : "",
-            m ? numero(m.cantidad) : "",
-            m ? money(numero(m.denom) * numero(m.cantidad)) : "",
-          ];
-        }
-      ),
-      theme: "grid",
-      styles: { fontSize: 9 },
-      headStyles: { fillColor: [28, 63, 95] },
-    });
-
-    const y1 = doc.lastAutoTable.finalY + 6;
-
-    autoTable(doc, {
-      startY: y1,
-      body: [
-        ["Total billetes", money(totalBilletes)],
-        ["Total monedas", money(totalMonedas)],
-        ["Total efectivo disponible", money(totalEfectivoDisponible)],
-        ["Fondo de caja chica", money(numero(fondoCajaChica))],
-      ],
-      theme: "grid",
-      styles: { fontSize: 9 },
-      columnStyles: { 0: { fontStyle: "bold" } },
-    });
-
-    let y2 = doc.lastAutoTable.finalY + 6;
-
-    autoTable(doc, {
-      startY: y2,
-      head: [[
-        "#",
-        "Tipo",
-        "Fecha",
-        "Concepto",
-        "Proveedor",
-        "Comprobante",
-        "Ingreso",
-        "Egreso",
-        "Balance",
-      ]],
-      body: gastosConBalance.map((g) => [
-        g.index,
-        g.tipoDoc,
-        g.fecha,
-        g.concepto,
-        g.proveedor,
-        g.comprobante,
-        money(g.ingresoNum),
-        money(g.egresoNum),
-        money(g.balance),
-      ]),
-      theme: "grid",
-      styles: { fontSize: 8 },
-      headStyles: { fillColor: [28, 63, 95] },
-      margin: { left: 8, right: 8 },
-    });
-
-    let y3 = doc.lastAutoTable.finalY + 6;
-
-    if (y3 > 245) {
-      doc.addPage();
-      y3 = 20;
-    }
-
-    autoTable(doc, {
-      startY: y3,
-      body: [
-        ["Saldo inicial del periodo", money(numero(saldoInicial))],
-        ["(+) Ingresos / reintegros (reposiciones)", money(totalIngresos)],
-        ["(=) Monto total disponible para gastos", money(montoTotalDisponible)],
-        ["(-) Total comprobado (gastos válidos)", money(totalEgresos)],
-        ["(=) Monto que debería quedar de efectivo", money(montoDeberiaQuedar)],
-        ["Efectivo contado al cierre", money(efectivoContadoCierre)],
-        ["Diferencia (faltante / sobrante)", money(diferencia)],
-      ],
-      theme: "grid",
-      styles: { fontSize: 9 },
-      columnStyles: { 0: { fontStyle: "bold" } },
-    });
-
-    const yObs = doc.lastAutoTable.finalY + 8;
     doc.setFont("helvetica", "bold");
-    doc.text("Observaciones / explicación de la diferencia:", 14, yObs);
-    doc.setFont("helvetica", "normal");
-    doc.text(observaciones || "-", 14, yObs + 6, { maxWidth: 180 });
+    doc.text(firma.cargo, x, yFirmas + 12, { align: "center" });
+  });
 
-    let yFirmas = yObs + 25;
-    if (yFirmas > 260) {
-      doc.addPage();
-      yFirmas = 30;
-    }
-
-    const anchoPagina = 210;
-    const margen = 18;
-    const espacio = (anchoPagina - margen * 2) / 3;
-
-    const firmas = [
-      {
-        nombre: elaboradoPor || "________________________",
-        cargo: "Elabora caja chica",
-      },
-      {
-        nombre: revisadoPor || "________________________",
-        cargo: "Revisa",
-      },
-      {
-        nombre: autorizadoPor || "________________________",
-        cargo: "Autoriza",
-      },
-    ];
-
-    doc.setFontSize(10);
-
-    firmas.forEach((firma, i) => {
-      const x = margen + espacio * i + espacio / 2;
-
-      doc.line(x - 28, yFirmas, x + 28, yFirmas);
-
-      doc.setFont("helvetica", "normal");
-      doc.text(firma.nombre, x, yFirmas + 6, { align: "center" });
-
-      doc.setFont("helvetica", "bold");
-      doc.text(firma.cargo, x, yFirmas + 12, { align: "center" });
-    });
-
-    doc.save(`CajaChica_${correlativo}.pdf`);
-  };
+  doc.save(`CajaChica_${correlativo}.pdf`);
+};
 
   if (!empresa) {
     return <div>No hay empresa seleccionada</div>;
