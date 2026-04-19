@@ -82,6 +82,7 @@ function Reporte() {
 
   const [ventaEditando, setVentaEditando] = useState(null);
   const [guardandoEdicion, setGuardandoEdicion] = useState(false);
+  const [eliminandoVenta, setEliminandoVenta] = useState(false);
 
   const [editFecha, setEditFecha] = useState(obtenerFechaLocalSV());
   const [editClienteId, setEditClienteId] = useState("");
@@ -249,7 +250,7 @@ function Reporte() {
   };
 
   const cerrarEdicion = () => {
-    if (guardandoEdicion) return;
+    if (guardandoEdicion || eliminandoVenta) return;
     setVentaEditando(null);
     setEditFecha(obtenerFechaLocalSV());
     setEditClienteId("");
@@ -632,6 +633,94 @@ function Reporte() {
     }
   };
 
+  const eliminarVenta = async () => {
+    if (!ventaEditando || !empresa?.id) return;
+
+    const confirmar = window.confirm(
+      `¿Seguro que deseas eliminar esta venta?\n\nEsta acción hará lo siguiente:\n- eliminará la venta\n- eliminará pagos\n- quitará movimiento de caja diaria\n- devolverá stock si aplica\n- registrará reversa en kardex`
+    );
+
+    if (!confirmar) return;
+
+    setEliminandoVenta(true);
+
+    try {
+      const detalleAnterior = (ventaEditando.detalle_venta || []).map((d) => ({
+        item_id: d.item_id,
+        cantidad: Number(d.cantidad || 0),
+      }));
+
+      for (const det of detalleAnterior) {
+        const itemInfo = items.find((it) => String(it.id) === String(det.item_id));
+        if (!itemInfo || itemInfo.tipo !== "producto") continue;
+
+        const nuevoStock = Number(itemInfo.stock || 0) + Number(det.cantidad || 0);
+
+        const { error: errorUpdateItem } = await supabase
+          .from("items")
+          .update({ stock: nuevoStock })
+          .eq("id", det.item_id)
+          .eq("empresa_id", empresa.id);
+
+        if (errorUpdateItem) throw errorUpdateItem;
+
+        const { error: errorKardex } = await supabase
+          .from("kardex")
+          .insert([
+            {
+              empresa_id: empresa.id,
+              item_id: det.item_id,
+              tipo: "entrada",
+              cantidad: Number(det.cantidad || 0),
+              motivo: `eliminación venta ${ventaEditando.id}`,
+              fecha_local: obtenerFechaHoraSVISO(),
+            },
+          ]);
+
+        if (errorKardex) throw errorKardex;
+      }
+
+      const { error: errorDeleteCaja } = await supabase
+        .from("caja_diaria_detalle")
+        .delete()
+        .eq("venta_id", ventaEditando.id);
+
+      if (errorDeleteCaja) throw errorDeleteCaja;
+
+      const { error: errorDeletePagos } = await supabase
+        .from("venta_pagos")
+        .delete()
+        .eq("venta_id", ventaEditando.id);
+
+      if (errorDeletePagos) throw errorDeletePagos;
+
+      const { error: errorDeleteDetalle } = await supabase
+        .from("detalle_venta")
+        .delete()
+        .eq("venta_id", ventaEditando.id);
+
+      if (errorDeleteDetalle) throw errorDeleteDetalle;
+
+      const { error: errorDeleteVenta } = await supabase
+        .from("ventas")
+        .delete()
+        .eq("id", ventaEditando.id)
+        .eq("empresa_id", empresa.id);
+
+      if (errorDeleteVenta) throw errorDeleteVenta;
+
+      alert("Venta eliminada correctamente");
+      cerrarEdicion();
+      await obtenerVentas();
+      await obtenerItems();
+    } catch (error) {
+      console.error(error);
+      alert(error.message || "Error al eliminar la venta");
+    } finally {
+      setEliminandoVenta(false);
+    }
+  };
+
   return (
     <div style={styles.page}>
       <div style={styles.container}>
@@ -817,6 +906,7 @@ function Reporte() {
                   {itemsDisponibles.map((item) => (
                     <button
                       key={item.id}
+                      type="button"
                       style={styles.itemBtn}
                       onClick={() => agregarItemEdicion(item)}
                     >
@@ -842,11 +932,17 @@ function Reporte() {
                     </div>
 
                     <div style={styles.qtyBox}>
-                      <button onClick={() => cambiarCantidadEdit(item.item_id, item.cantidad - 1)}>
+                      <button
+                        type="button"
+                        onClick={() => cambiarCantidadEdit(item.item_id, item.cantidad - 1)}
+                      >
                         -
                       </button>
                       <span>{item.cantidad}</span>
-                      <button onClick={() => cambiarCantidadEdit(item.item_id, item.cantidad + 1)}>
+                      <button
+                        type="button"
+                        onClick={() => cambiarCantidadEdit(item.item_id, item.cantidad + 1)}
+                      >
                         +
                       </button>
                     </div>
@@ -865,6 +961,7 @@ function Reporte() {
                     </div>
 
                     <button
+                      type="button"
                       style={styles.deleteBtn}
                       onClick={() => eliminarItemEdit(item.item_id)}
                     >
@@ -877,7 +974,7 @@ function Reporte() {
               <div style={styles.editSection}>
                 <div style={styles.pagosHeader}>
                   <h3 style={styles.sectionTitle}>Pagos</h3>
-                  <button style={styles.addBtn} onClick={agregarFilaPagoEdit}>
+                  <button type="button" style={styles.addBtn} onClick={agregarFilaPagoEdit}>
                     + Agregar pago
                   </button>
                 </div>
@@ -922,6 +1019,7 @@ function Reporte() {
                     />
 
                     <button
+                      type="button"
                       style={styles.deleteBtn}
                       onClick={() => eliminarFilaPagoEdit(index)}
                     >
@@ -938,11 +1036,30 @@ function Reporte() {
               </div>
 
               <div style={styles.modalActions}>
-                <button style={styles.cancelBtn} onClick={cerrarEdicion} disabled={guardandoEdicion}>
+                <button
+                  type="button"
+                  style={styles.cancelBtn}
+                  onClick={cerrarEdicion}
+                  disabled={guardandoEdicion || eliminandoVenta}
+                >
                   Cancelar
                 </button>
 
-                <button style={styles.saveBtn} onClick={guardarEdicion} disabled={guardandoEdicion}>
+                <button
+                  type="button"
+                  style={styles.deleteSaleBtn}
+                  onClick={eliminarVenta}
+                  disabled={guardandoEdicion || eliminandoVenta}
+                >
+                  {eliminandoVenta ? "Eliminando..." : "Eliminar venta"}
+                </button>
+
+                <button
+                  type="button"
+                  style={styles.saveBtn}
+                  onClick={guardarEdicion}
+                  disabled={guardandoEdicion || eliminandoVenta}
+                >
                   {guardandoEdicion ? "Guardando..." : "Guardar cambios"}
                 </button>
               </div>
@@ -1275,6 +1392,7 @@ const styles = {
     justifyContent: "flex-end",
     gap: "10px",
     marginTop: "18px",
+    flexWrap: "wrap",
   },
   cancelBtn: {
     background: "#fff",
@@ -1284,6 +1402,15 @@ const styles = {
     padding: "10px 14px",
     cursor: "pointer",
     fontWeight: "600",
+  },
+  deleteSaleBtn: {
+    background: "#ef4444",
+    color: "#fff",
+    border: "none",
+    borderRadius: "10px",
+    padding: "10px 14px",
+    cursor: "pointer",
+    fontWeight: "700",
   },
   saveBtn: {
     background: "#16a34a",
