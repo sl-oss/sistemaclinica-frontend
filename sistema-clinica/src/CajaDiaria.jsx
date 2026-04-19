@@ -282,6 +282,16 @@ export default function CajaDiaria() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
+  const irAEditarVenta = (fila) => {
+    if (!fila?.venta_id) return;
+
+    localStorage.setItem("ventaEditarRapidoId", String(fila.venta_id));
+    localStorage.setItem("ventaEditarRapidoOrigen", "caja_diaria");
+    localStorage.setItem("ventaEditarRapidoFechaCaja", fechaLocal);
+
+    window.location.href = "/reporte";
+  };
+
   const agregarFila = () => {
     setFilas((prev) => [
       ...prev,
@@ -392,7 +402,6 @@ export default function CajaDiaria() {
         return;
       }
 
-      // Solo elimina filas manuales, no las que vienen de ventas/cxc
       const { error: errorEliminarDetalleManual } = await supabase
         .from("caja_diaria_detalle")
         .delete()
@@ -1004,7 +1013,7 @@ export default function CajaDiaria() {
                       {metodo.nombre}
                     </th>
                   ))}
-                  <th style={{ ...styles.th, minWidth: 90 }}>Acción</th>
+                  <th style={{ ...styles.th, minWidth: 220 }}>Acción</th>
                 </tr>
               </thead>
 
@@ -1064,17 +1073,39 @@ export default function CajaDiaria() {
                     ))}
 
                     <td style={styles.tdTop}>
-                      <button
-                        type="button"
-                        onClick={() => eliminarFila(index)}
-                        style={{
-                          ...styles.deleteBtn,
-                          opacity: fila.origen === "venta" ? 0.55 : 1,
-                          cursor: fila.origen === "venta" ? "not-allowed" : "pointer",
-                        }}
-                      >
-                        Eliminar
-                      </button>
+                      <div style={styles.actionCell}>
+                        {fila.origen === "venta" ? (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => irAEditarVenta(fila)}
+                              style={styles.editSourceBtn}
+                            >
+                              Ir a editar
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => eliminarFila(index)}
+                              style={{
+                                ...styles.deleteBtn,
+                                opacity: 0.55,
+                                cursor: "not-allowed",
+                              }}
+                            >
+                              Eliminar
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => eliminarFila(index)}
+                            style={styles.deleteBtn}
+                          >
+                            Eliminar
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -1455,7 +1486,7 @@ const styles = {
   table: {
     width: "100%",
     borderCollapse: "collapse",
-    minWidth: "1180px",
+    minWidth: "1300px",
   },
   historialWrap: {
     overflowX: "auto",
@@ -1492,6 +1523,19 @@ const styles = {
   cellStack: {
     display: "grid",
     gap: "8px",
+  },
+  actionCell: {
+    display: "grid",
+    gap: "8px",
+  },
+  editSourceBtn: {
+    background: "#e0f2fe",
+    color: "#075985",
+    border: "1px solid #bae6fd",
+    borderRadius: "12px",
+    padding: "10px 12px",
+    cursor: "pointer",
+    fontWeight: "600",
   },
   emptyTd: {
     textAlign: "center",
