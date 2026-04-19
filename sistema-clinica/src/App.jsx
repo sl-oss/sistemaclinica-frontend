@@ -109,8 +109,15 @@ function App() {
 
   useEffect(() => {
     const irVenta = () => setPantalla("venta");
+    const irReporte = () => setPantalla("reporte");
+
     window.addEventListener("irAVenta", irVenta);
-    return () => window.removeEventListener("irAVenta", irVenta);
+    window.addEventListener("irAReporte", irReporte);
+
+    return () => {
+      window.removeEventListener("irAVenta", irVenta);
+      window.removeEventListener("irAReporte", irReporte);
+    };
   }, []);
 
   const cambiarPantalla = (nuevaPantalla) => {

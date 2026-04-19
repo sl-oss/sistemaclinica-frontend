@@ -101,6 +101,24 @@ function Reporte() {
     obtenerMetodosPago();
   }, []);
 
+  useEffect(() => {
+    if (!ventas.length) return;
+
+    const ventaRapidaId = localStorage.getItem("ventaEditarRapidoId");
+    if (!ventaRapidaId) return;
+
+    const ventaEncontrada = ventas.find(
+      (v) => String(v.id) === String(ventaRapidaId)
+    );
+
+    if (ventaEncontrada) {
+      abrirEdicion(ventaEncontrada);
+      localStorage.removeItem("ventaEditarRapidoId");
+      localStorage.removeItem("ventaEditarRapidoOrigen");
+      localStorage.removeItem("ventaEditarRapidoFechaCaja");
+    }
+  }, [ventas]);
+
   const obtenerVentas = async () => {
     if (!empresa?.id) return;
 
@@ -430,7 +448,6 @@ function Reporte() {
     setGuardandoEdicion(true);
 
     try {
-      // 1) Obtener detalle anterior para calcular diferencias de inventario
       const detalleAnterior = (ventaEditando.detalle_venta || []).map((d) => ({
         item_id: d.item_id,
         cantidad: Number(d.cantidad || 0),
@@ -450,7 +467,6 @@ function Reporte() {
         new Set([...Object.keys(mapaAnterior), ...Object.keys(mapaNuevo)])
       );
 
-      // 2) Actualizar cabecera venta
       const fechaNuevaCompleta = `${editFecha}T12:00:00`;
 
       const { error: errorVenta } = await supabase
@@ -467,7 +483,6 @@ function Reporte() {
 
       if (errorVenta) throw errorVenta;
 
-      // 3) Reemplazar detalle venta
       const { error: errorDeleteDetalle } = await supabase
         .from("detalle_venta")
         .delete()
@@ -488,7 +503,6 @@ function Reporte() {
 
       if (errorInsertDetalle) throw errorInsertDetalle;
 
-      // 4) Reemplazar pagos
       const { error: errorDeletePagos } = await supabase
         .from("venta_pagos")
         .delete()
@@ -513,7 +527,6 @@ function Reporte() {
         if (errorInsertPagos) throw errorInsertPagos;
       }
 
-      // 5) Reemplazar movimiento en caja diaria
       const { error: errorDeleteCaja } = await supabase
         .from("caja_diaria_detalle")
         .delete()
@@ -549,7 +562,6 @@ function Reporte() {
         if (errorInsertCaja) throw errorInsertCaja;
       }
 
-      // 6) Ajustar stock y crear kardex de ajuste
       for (const itemId of todosLosItemIds) {
         const cantidadAnterior = Number(mapaAnterior[itemId] || 0);
         const cantidadNueva = Number(mapaNuevo[itemId] || 0);
@@ -558,10 +570,7 @@ function Reporte() {
         const itemInfo = items.find((it) => String(it.id) === String(itemId));
         if (!itemInfo || itemInfo.tipo !== "producto" || diferencia === 0) continue;
 
-        // diferencia > 0 => ahora se vendió más => stock baja
-        // diferencia < 0 => ahora se vendió menos => stock sube
         const ajusteStock = -diferencia;
-
         const nuevoStock = Number(itemInfo.stock || 0) + ajusteStock;
 
         if (nuevoStock < 0) {

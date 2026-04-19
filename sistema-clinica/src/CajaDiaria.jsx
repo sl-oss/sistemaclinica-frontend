@@ -283,14 +283,14 @@ export default function CajaDiaria() {
   };
 
   const irAEditarVenta = (fila) => {
-    if (!fila?.venta_id) return;
+  if (!fila?.venta_id) return;
 
-    localStorage.setItem("ventaEditarRapidoId", String(fila.venta_id));
-    localStorage.setItem("ventaEditarRapidoOrigen", "caja_diaria");
-    localStorage.setItem("ventaEditarRapidoFechaCaja", fechaLocal);
+  localStorage.setItem("ventaEditarRapidoId", String(fila.venta_id));
+  localStorage.setItem("ventaEditarRapidoOrigen", "caja_diaria");
+  localStorage.setItem("ventaEditarRapidoFechaCaja", fechaLocal);
 
-    window.location.href = "/reporte";
-  };
+  window.dispatchEvent(new Event("irAReporte"));
+};
 
   const agregarFila = () => {
     setFilas((prev) => [
