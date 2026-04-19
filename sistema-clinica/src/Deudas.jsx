@@ -22,9 +22,11 @@ function obtenerFechaHoraSVISO() {
 }
 
 function obtenerFechaLocalSV() {
-  return new Date().toLocaleString("en-CA", {
-    timeZone: "America/El_Salvador",
-  }).slice(0, 10);
+  return new Date()
+    .toLocaleString("en-CA", {
+      timeZone: "America/El_Salvador",
+    })
+    .slice(0, 10);
 }
 
 function formatearFecha(fecha) {
@@ -56,19 +58,21 @@ function obtenerRangoAntiguedad(dias) {
 }
 
 async function registrarPagosEnCajaDiaria({
+  empresaId,
+  ventaId,
   nombrePaciente,
   pagosValidos,
   fechaLocal,
 }) {
-  if (!nombrePaciente || pagosValidos.length === 0) return;
+  if (!empresaId || !ventaId || !nombrePaciente || pagosValidos.length === 0) return;
 
   const fechaSolo = fechaLocal.slice(0, 10);
-
   let cajaId = null;
 
   const { data: cajaExistente, error: errorBuscarCaja } = await supabase
     .from("cajas_diarias")
-    .select("*")
+    .select("id")
+    .eq("empresa_id", empresaId)
     .eq("fecha_local", fechaSolo)
     .maybeSingle();
 
@@ -84,12 +88,12 @@ async function registrarPagosEnCajaDiaria({
       .from("cajas_diarias")
       .insert([
         {
+          empresa_id: empresaId,
           fecha: fechaLocal,
           fecha_local: fechaSolo,
-          observacion: "",
         },
       ])
-      .select()
+      .select("id")
       .single();
 
     if (errorCrearCaja) {
@@ -102,6 +106,7 @@ async function registrarPagosEnCajaDiaria({
 
   const detalleCaja = pagosValidos.map((p) => ({
     caja_diaria_id: cajaId,
+    venta_id: ventaId,
     paciente: nombrePaciente,
     metodo_pago_id: Number(p.metodo_pago_id),
     monto: Number(p.monto),
@@ -130,16 +135,19 @@ function Deudas() {
   const empresa = JSON.parse(localStorage.getItem("empresa") || "null");
 
   useEffect(() => {
-    if (empresa) {
+    if (empresa?.id) {
       obtenerMetodosPago();
       obtenerCuentasPorCobrar();
     }
   }, []);
 
   const obtenerMetodosPago = async () => {
+    if (!empresa?.id) return;
+
     const { data, error } = await supabase
       .from("metodos_pago")
       .select("*")
+      .eq("empresa_id", empresa.id)
       .eq("activo", true)
       .order("orden", { ascending: true });
 
@@ -152,6 +160,8 @@ function Deudas() {
   };
 
   const obtenerCuentasPorCobrar = async () => {
+    if (!empresa?.id) return;
+
     const { data, error } = await supabase
       .from("ventas")
       .select("*, clientes(nombre), venta_pagos(monto)")
@@ -300,10 +310,7 @@ function Deudas() {
     const ws = XLSX.utils.json_to_sheet(rows);
     XLSX.utils.book_append_sheet(wb, ws, "Reporte CxC");
 
-    XLSX.writeFile(
-      wb,
-      `Reporte_CxC_${obtenerFechaLocalSV()}.xlsx`
-    );
+    XLSX.writeFile(wb, `Reporte_CxC_${obtenerFechaLocalSV()}.xlsx`);
   };
 
   const exportarCxcPDF = () => {
@@ -378,7 +385,7 @@ function Deudas() {
   };
 
   const registrarPago = async () => {
-    if (!ventaAbierta) return;
+    if (!ventaAbierta || !empresa?.id) return;
 
     const pagosValidos = pagos.filter(
       (p) =>
@@ -415,6 +422,7 @@ function Deudas() {
 
     const pagosParaGuardar = pagosValidos.map((p) => ({
       venta_id: ventaAbierta.id,
+      empresa_id: empresa.id,
       metodo_pago_id: Number(p.metodo_pago_id),
       monto: Number(p.monto),
       referencia: p.referencia?.trim() || null,
@@ -433,6 +441,8 @@ function Deudas() {
 
     try {
       await registrarPagosEnCajaDiaria({
+        empresaId: empresa.id,
+        ventaId: ventaAbierta.id,
         nombrePaciente: ventaAbierta.clientes?.nombre || "Cliente",
         pagosValidos,
         fechaLocal,
@@ -455,7 +465,8 @@ function Deudas() {
     const { error: errorVenta } = await supabase
       .from("ventas")
       .update({ estado: nuevoEstado })
-      .eq("id", ventaAbierta.id);
+      .eq("id", ventaAbierta.id)
+      .eq("empresa_id", empresa.id);
 
     setGuardando(false);
 

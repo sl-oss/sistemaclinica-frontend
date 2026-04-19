@@ -25,20 +25,20 @@ async function registrarPagosEnCajaDiaria({
   pagosValidos,
   fechaLocal,
 }) {
-  if (!empresaId || !nombrePaciente || pagosValidos.length === 0) return;
+  if (!empresaId || !ventaId || pagosValidos.length === 0) return;
 
   const fechaSolo = fechaLocal.slice(0, 10);
   let cajaId = null;
 
   const { data: cajaExistente, error: errorBuscarCaja } = await supabase
     .from("cajas_diarias")
-    .select("*")
+    .select("id")
     .eq("empresa_id", empresaId)
     .eq("fecha_local", fechaSolo)
     .maybeSingle();
 
   if (errorBuscarCaja) {
-    console.error(errorBuscarCaja);
+    console.error("Error buscando caja diaria:", errorBuscarCaja);
     throw new Error("Error al buscar caja diaria");
   }
 
@@ -52,14 +52,13 @@ async function registrarPagosEnCajaDiaria({
           empresa_id: empresaId,
           fecha: fechaLocal,
           fecha_local: fechaSolo,
-          observacion: "",
         },
       ])
-      .select()
+      .select("id")
       .single();
 
     if (errorCrearCaja) {
-      console.error(errorCrearCaja);
+      console.error("Error creando caja diaria:", errorCrearCaja);
       throw new Error("Error al crear caja diaria");
     }
 
@@ -69,7 +68,7 @@ async function registrarPagosEnCajaDiaria({
   const detalleCaja = pagosValidos.map((p) => ({
     caja_diaria_id: cajaId,
     venta_id: ventaId,
-    paciente: nombrePaciente,
+    paciente: (nombrePaciente || "Cliente de contado").trim(),
     metodo_pago_id: Number(p.metodo_pago_id),
     monto: Number(p.monto),
     referencia: p.referencia?.trim() || null,
@@ -80,7 +79,7 @@ async function registrarPagosEnCajaDiaria({
     .insert(detalleCaja);
 
   if (errorInsertarDetalle) {
-    console.error(errorInsertarDetalle);
+    console.error("Error insertando detalle en caja diaria:", errorInsertarDetalle);
     throw new Error("Error al pasar pagos a caja diaria");
   }
 }
@@ -106,6 +105,7 @@ function Venta() {
   const [nuevoClienteNombre, setNuevoClienteNombre] = useState("");
   const [nuevoClienteTelefono, setNuevoClienteTelefono] = useState("");
   const [guardandoCliente, setGuardandoCliente] = useState(false);
+  const [guardandoVenta, setGuardandoVenta] = useState(false);
 
   const empresa = JSON.parse(localStorage.getItem("empresa") || "null");
 
@@ -123,24 +123,34 @@ function Venta() {
   }, []);
 
   const obtenerItems = async () => {
-    if (!empresa) return;
+    if (!empresa?.id) return;
 
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("items")
       .select("*")
       .eq("empresa_id", empresa.id);
+
+    if (error) {
+      console.error(error);
+      return;
+    }
 
     setItems(data || []);
   };
 
   const obtenerClientes = async () => {
-    if (!empresa) return;
+    if (!empresa?.id) return;
 
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("clientes")
       .select("*")
       .eq("empresa_id", empresa.id)
       .order("nombre", { ascending: true });
+
+    if (error) {
+      console.error(error);
+      return;
+    }
 
     setClientes(data || []);
   };
@@ -177,7 +187,7 @@ function Venta() {
   };
 
   const guardarNuevoCliente = async () => {
-    if (!empresa) return alert("No hay empresa seleccionada");
+    if (!empresa?.id) return alert("No hay empresa seleccionada");
     if (!nuevoClienteNombre.trim()) return alert("Ingresa el nombre del cliente");
 
     setGuardandoCliente(true);
@@ -288,8 +298,10 @@ function Venta() {
   }, [total, totalPagado]);
 
   const guardarVenta = async () => {
+    if (guardandoVenta) return;
+
     if (seleccionados.length === 0) return alert("Agrega items");
-    if (!empresa) return alert("No hay empresa seleccionada");
+    if (!empresa?.id) return alert("No hay empresa seleccionada");
 
     const pagosValidos = pagos.filter(
       (p) =>
@@ -319,8 +331,11 @@ function Venta() {
       }
     }
 
+    setGuardandoVenta(true);
+
     const fechaLocal = obtenerFechaHoraSVISO();
-    const estadoFinal = totalPagado >= total && total > 0 ? "pagado" : "pendiente";
+    const estadoFinal =
+      totalPagado >= total && total > 0 ? "pagado" : "pendiente";
 
     const { data: venta, error: errorVenta } = await supabase
       .from("ventas")
@@ -331,12 +346,14 @@ function Venta() {
           total,
           estado: estadoFinal,
           fecha_local: fechaLocal,
+          fecha: fechaLocal,
         },
       ])
       .select()
       .single();
 
     if (errorVenta) {
+      setGuardandoVenta(false);
       console.error(errorVenta);
       return alert("Error al guardar venta");
     }
@@ -353,6 +370,7 @@ function Venta() {
       .insert(detalles);
 
     if (errorDetalle) {
+      setGuardandoVenta(false);
       console.error(errorDetalle);
       return alert("Error al guardar detalle de venta");
     }
@@ -372,6 +390,7 @@ function Venta() {
         .insert(pagosParaGuardar);
 
       if (errorPagos) {
+        setGuardandoVenta(false);
         console.error(errorPagos);
         return alert("Error al guardar pagos de la venta");
       }
@@ -392,6 +411,7 @@ function Venta() {
           fechaLocal,
         });
       } catch (error) {
+        setGuardandoVenta(false);
         console.error(error);
         return alert("La venta se guardó, pero hubo error al pasarla a caja diaria");
       }
@@ -411,6 +431,7 @@ function Venta() {
         ]);
 
         if (errorKardex) {
+          setGuardandoVenta(false);
           console.error(errorKardex);
           return alert(`Error al guardar kardex de "${i.nombre}"`);
         }
@@ -424,16 +445,26 @@ function Venta() {
           .eq("empresa_id", empresa.id);
 
         if (errorStock) {
+          setGuardandoVenta(false);
           console.error(errorStock);
           return alert(`Error al actualizar stock de "${i.nombre}"`);
         }
       }
     }
 
-    if (citaActiva) {
-      await supabase.from("citas").update({ estado: "atendida" }).eq("id", citaActiva.id);
+    if (citaActiva?.id) {
+      const { error: errorCita } = await supabase
+        .from("citas")
+        .update({ estado: "atendida" })
+        .eq("id", citaActiva.id)
+        .eq("empresa_id", empresa.id);
+
+      if (errorCita) {
+        console.error(errorCita);
+      }
     }
 
+    setGuardandoVenta(false);
     alert("Venta guardada 💰");
 
     setSeleccionados([]);
@@ -510,12 +541,18 @@ function Venta() {
               ))}
             </select>
 
-            <button type="button" style={styles.btnNuevoCliente} onClick={abrirModalCliente}>
+            <button
+              type="button"
+              style={styles.btnNuevoCliente}
+              onClick={abrirModalCliente}
+            >
               + Cliente
             </button>
           </div>
 
-          {citaActiva && <div style={styles.citaBox}>🦷 Cita activa: {citaActiva.servicio}</div>}
+          {citaActiva && (
+            <div style={styles.citaBox}>🦷 Cita activa: {citaActiva.servicio}</div>
+          )}
 
           <div style={styles.estadoBox}>
             <label style={styles.radioLabel}>
@@ -550,15 +587,21 @@ function Venta() {
                   <input
                     type="number"
                     value={item.precio}
-                    onChange={(e) => cambiarPrecio(item.id, Number(e.target.value))}
+                    onChange={(e) =>
+                      cambiarPrecio(item.id, Number(e.target.value))
+                    }
                     style={styles.precio}
                   />
                 </div>
 
                 <div style={styles.controls}>
-                  <button onClick={() => cambiarCantidad(item.id, item.cantidad - 1)}>-</button>
+                  <button onClick={() => cambiarCantidad(item.id, item.cantidad - 1)}>
+                    -
+                  </button>
                   <span>{item.cantidad}</span>
-                  <button onClick={() => cambiarCantidad(item.id, item.cantidad + 1)}>+</button>
+                  <button onClick={() => cambiarCantidad(item.id, item.cantidad + 1)}>
+                    +
+                  </button>
                 </div>
 
                 <div>
@@ -585,7 +628,9 @@ function Venta() {
                 <select
                   style={styles.pagoSelect}
                   value={pago.metodo_pago_id}
-                  onChange={(e) => actualizarPago(index, "metodo_pago_id", e.target.value)}
+                  onChange={(e) =>
+                    actualizarPago(index, "metodo_pago_id", e.target.value)
+                  }
                 >
                   <option value="">Método</option>
                   {metodosPago.map((metodo) => (
@@ -610,7 +655,9 @@ function Venta() {
                   placeholder="Voucher / referencia"
                   style={styles.referenciaInput}
                   value={pago.referencia}
-                  onChange={(e) => actualizarPago(index, "referencia", e.target.value)}
+                  onChange={(e) =>
+                    actualizarPago(index, "referencia", e.target.value)
+                  }
                 />
 
                 <button
@@ -633,8 +680,16 @@ function Venta() {
             </div>
           </div>
 
-          <button style={styles.btnGuardar} onClick={guardarVenta}>
-            💾 Guardar Venta
+          <button
+            style={{
+              ...styles.btnGuardar,
+              opacity: guardandoVenta ? 0.85 : 1,
+              cursor: guardandoVenta ? "not-allowed" : "pointer",
+            }}
+            onClick={guardarVenta}
+            disabled={guardandoVenta}
+          >
+            {guardandoVenta ? "Guardando..." : "💾 Guardar Venta"}
           </button>
         </div>
       </div>
@@ -644,7 +699,11 @@ function Venta() {
           <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
             <div style={styles.modalHeader}>
               <h3 style={{ margin: 0 }}>👤 Nuevo cliente</h3>
-              <button type="button" style={styles.btnCerrarModal} onClick={cerrarModalCliente}>
+              <button
+                type="button"
+                style={styles.btnCerrarModal}
+                onClick={cerrarModalCliente}
+              >
                 ✖
               </button>
             </div>
@@ -777,7 +836,6 @@ const styles = {
     border: "none",
     borderRadius: "10px",
     fontSize: "16px",
-    cursor: "pointer",
   },
   citaBox: {
     background: "#fef3c7",

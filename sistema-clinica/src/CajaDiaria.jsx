@@ -30,7 +30,8 @@ function obtenerFechaHoraSVISO() {
 
 function formatearFecha(fecha) {
   if (!fecha) return "";
-  const [yyyy, mm, dd] = fecha.split("-");
+  const fechaSolo = String(fecha).slice(0, 10);
+  const [yyyy, mm, dd] = fechaSolo.split("-");
   return `${dd}/${mm}/${yyyy}`;
 }
 
@@ -43,11 +44,8 @@ export default function CajaDiaria() {
   const hoy = obtenerFechaLocalSV();
 
   const [fechaLocal, setFechaLocal] = useState(hoy);
-  const [observacion, setObservacion] = useState("");
   const [metodos, setMetodos] = useState([]);
   const [filas, setFilas] = useState([]);
-  const [clientes, setClientes] = useState([]);
-  const [clienteSeleccionado, setClienteSeleccionado] = useState("");
   const [loading, setLoading] = useState(false);
 
   const [filtroDesde, setFiltroDesde] = useState(hoy);
@@ -63,18 +61,19 @@ export default function CajaDiaria() {
   const [elaboradoPor, setElaboradoPor] = useState("");
   const [revisadoPor, setRevisadoPor] = useState("");
 
+  const [historialCajas, setHistorialCajas] = useState([]);
+  const [loadingHistorial, setLoadingHistorial] = useState(false);
+
   useEffect(() => {
     if (!empresa?.id) {
       setMetodos([]);
-      setClientes([]);
       setFilas([]);
-      setObservacion("");
       limpiarFormularioCierre();
+      setHistorialCajas([]);
       return;
     }
 
     cargarMetodos();
-    cargarClientes();
   }, [empresa?.id]);
 
   useEffect(() => {
@@ -82,6 +81,12 @@ export default function CajaDiaria() {
       cargarCajaDelDia(fechaLocal);
     }
   }, [empresa?.id, metodos, fechaLocal]);
+
+  useEffect(() => {
+    if (empresa?.id) {
+      cargarHistorialCajas();
+    }
+  }, [empresa?.id, filtroDesde, filtroHasta]);
 
   const crearFilaVacia = (metodosActuales = metodos, nombrePaciente = "") => {
     const pagos = {};
@@ -110,6 +115,11 @@ export default function CajaDiaria() {
     setRevisadoPor("");
   };
 
+  const limpiarCajaActual = () => {
+    setFilas([]);
+    limpiarFormularioCierre();
+  };
+
   const cargarMetodos = async () => {
     if (!empresa?.id) return;
 
@@ -129,23 +139,6 @@ export default function CajaDiaria() {
     setMetodos(data || []);
   };
 
-  const cargarClientes = async () => {
-    if (!empresa?.id) return;
-
-    const { data, error } = await supabase
-      .from("clientes")
-      .select("id, nombre")
-      .eq("empresa_id", empresa.id)
-      .order("nombre", { ascending: true });
-
-    if (error) {
-      console.error(error);
-      return;
-    }
-
-    setClientes(data || []);
-  };
-
   const cargarCajaDelDia = async (fechaBuscada) => {
     if (!empresa?.id) return;
 
@@ -163,13 +156,11 @@ export default function CajaDiaria() {
     }
 
     if (!caja) {
-      setObservacion("");
       setFilas([]);
       limpiarFormularioCierre();
       return;
     }
 
-    setObservacion(caja.observacion || "");
     setCierreRealizado(Boolean(caja.cierre_realizado));
     setRemesaEfectivo(Boolean(caja.remesa_efectivo));
     setCuentaDestinoEfectivo(caja.cuenta_destino_efectivo || "");
@@ -181,7 +172,14 @@ export default function CajaDiaria() {
 
     const { data: detalle, error: errorDetalle } = await supabase
       .from("caja_diaria_detalle")
-      .select("id, paciente, metodo_pago_id, monto, referencia")
+      .select(`
+        id,
+        paciente,
+        metodo_pago_id,
+        monto,
+        referencia,
+        venta_id
+      `)
       .eq("caja_diaria_id", caja.id);
 
     if (errorDetalle) {
@@ -194,19 +192,26 @@ export default function CajaDiaria() {
 
     (detalle || []).forEach((item) => {
       const nombrePaciente = item.paciente?.trim() || "Sin nombre";
+      const llave = item.venta_id
+        ? `${nombrePaciente}__venta__${item.venta_id}`
+        : `${nombrePaciente}__manual`;
 
-      if (!mapa[nombrePaciente]) {
-        mapa[nombrePaciente] = crearFilaVacia(metodos, nombrePaciente);
+      if (!mapa[llave]) {
+        mapa[llave] = {
+          ...crearFilaVacia(metodos, nombrePaciente),
+          venta_id: item.venta_id || null,
+          origen: item.venta_id ? "venta" : "manual",
+        };
       }
 
       const montoActual = Number(
-        mapa[nombrePaciente].pagos[item.metodo_pago_id] || 0
+        mapa[llave].pagos[item.metodo_pago_id] || 0
       );
 
-      mapa[nombrePaciente].pagos[item.metodo_pago_id] =
+      mapa[llave].pagos[item.metodo_pago_id] =
         montoActual + Number(item.monto || 0);
 
-      const refActual = mapa[nombrePaciente].referencias[item.metodo_pago_id] || "";
+      const refActual = mapa[llave].referencias[item.metodo_pago_id] || "";
       const nuevaRef = item.referencia || "";
 
       if (nuevaRef) {
@@ -218,43 +223,83 @@ export default function CajaDiaria() {
           refs.push(nuevaRef);
         }
 
-        mapa[nombrePaciente].referencias[item.metodo_pago_id] = refs.join(" | ");
+        mapa[llave].referencias[item.metodo_pago_id] = refs.join(" | ");
       }
     });
 
     setFilas(Object.values(mapa));
   };
 
-  const agregarFila = () => {
-    setFilas((prev) => [...prev, crearFilaVacia()]);
+  const cargarHistorialCajas = async () => {
+    if (!empresa?.id || !filtroDesde || !filtroHasta) return;
+
+    setLoadingHistorial(true);
+
+    const { data, error } = await supabase
+      .from("cajas_diarias")
+      .select(`
+        id,
+        fecha_local,
+        cierre_realizado,
+        remesa_efectivo,
+        responsable_caja,
+        elaborado_por,
+        revisado_por,
+        comentario_cierre,
+        cuenta_destino_efectivo,
+        numero_remesa_efectivo,
+        caja_diaria_detalle (
+          monto
+        )
+      `)
+      .eq("empresa_id", empresa.id)
+      .gte("fecha_local", filtroDesde)
+      .lte("fecha_local", filtroHasta)
+      .order("fecha_local", { ascending: false });
+
+    setLoadingHistorial(false);
+
+    if (error) {
+      console.error(error);
+      alert("Error al cargar historial de cajas");
+      return;
+    }
+
+    const cajas = (data || []).map((caja) => ({
+      ...caja,
+      total: (caja.caja_diaria_detalle || []).reduce(
+        (acc, d) => acc + Number(d.monto || 0),
+        0
+      ),
+    }));
+
+    setHistorialCajas(cajas);
   };
 
-  const agregarClienteSeleccionado = () => {
-    if (!clienteSeleccionado) {
-      return alert("Seleccioná un cliente");
-    }
+  const abrirCajaHistorial = async (fecha) => {
+    setFechaLocal(fecha);
+    await cargarCajaDelDia(fecha);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
 
-    const cliente = clientes.find(
-      (c) => String(c.id) === String(clienteSeleccionado)
-    );
-
-    if (!cliente) return;
-
-    const yaExiste = filas.some(
-      (fila) =>
-        fila.paciente.trim().toLowerCase() ===
-        cliente.nombre.trim().toLowerCase()
-    );
-
-    if (yaExiste) {
-      return alert("Ese cliente ya está agregado");
-    }
-
-    setFilas((prev) => [...prev, crearFilaVacia(metodos, cliente.nombre)]);
-    setClienteSeleccionado("");
+  const agregarFila = () => {
+    setFilas((prev) => [
+      ...prev,
+      {
+        ...crearFilaVacia(),
+        venta_id: null,
+        origen: "manual",
+      },
+    ]);
   };
 
   const eliminarFila = (index) => {
+    const fila = filas[index];
+
+    if (fila?.origen === "venta") {
+      return alert("Esa fila viene de una venta. Editala desde el historial de ventas.");
+    }
+
     const nuevas = [...filas];
     nuevas.splice(index, 1);
     setFilas(nuevas);
@@ -262,18 +307,33 @@ export default function CajaDiaria() {
 
   const actualizarPaciente = (index, valor) => {
     const nuevas = [...filas];
+
+    if (nuevas[index]?.origen === "venta") {
+      return alert("Ese registro viene de una venta. Editalo desde ventas.");
+    }
+
     nuevas[index].paciente = valor;
     setFilas(nuevas);
   };
 
   const actualizarMonto = (filaIndex, metodoId, valor) => {
     const nuevas = [...filas];
+
+    if (nuevas[filaIndex]?.origen === "venta") {
+      return alert("Ese registro viene de una venta. Editalo desde ventas.");
+    }
+
     nuevas[filaIndex].pagos[metodoId] = valor;
     setFilas(nuevas);
   };
 
   const actualizarReferencia = (filaIndex, metodoId, valor) => {
     const nuevas = [...filas];
+
+    if (nuevas[filaIndex]?.origen === "venta") {
+      return alert("Ese registro viene de una venta. Editalo desde ventas.");
+    }
+
     nuevas[filaIndex].referencias[metodoId] = valor;
     setFilas(nuevas);
   };
@@ -284,6 +344,7 @@ export default function CajaDiaria() {
     }
 
     const filasValidas = filas.filter((fila) => fila.paciente.trim() !== "");
+    const filasManual = filasValidas.filter((fila) => !fila.venta_id);
 
     setLoading(true);
 
@@ -305,7 +366,6 @@ export default function CajaDiaria() {
 
     const payloadCaja = {
       empresa_id: empresa.id,
-      observacion,
       cierre_realizado: cierreRealizado,
       remesa_efectivo: remesaEfectivo,
       cuenta_destino_efectivo: cuentaDestinoEfectivo || null,
@@ -332,15 +392,17 @@ export default function CajaDiaria() {
         return;
       }
 
-      const { error: errorEliminarDetalle } = await supabase
+      // Solo elimina filas manuales, no las que vienen de ventas/cxc
+      const { error: errorEliminarDetalleManual } = await supabase
         .from("caja_diaria_detalle")
         .delete()
-        .eq("caja_diaria_id", cajaId);
+        .eq("caja_diaria_id", cajaId)
+        .is("venta_id", null);
 
-      if (errorEliminarDetalle) {
+      if (errorEliminarDetalleManual) {
         setLoading(false);
-        console.error(errorEliminarDetalle);
-        alert("Error al reemplazar el detalle");
+        console.error(errorEliminarDetalleManual);
+        alert("Error al reemplazar el detalle manual");
         return;
       }
     } else {
@@ -368,7 +430,7 @@ export default function CajaDiaria() {
 
     const detalleParaGuardar = [];
 
-    filasValidas.forEach((fila) => {
+    filasManual.forEach((fila) => {
       metodos.forEach((metodo) => {
         const valor = fila.pagos[metodo.id];
         const referencia = fila.referencias[metodo.id];
@@ -385,6 +447,7 @@ export default function CajaDiaria() {
             metodo_pago_id: metodo.id,
             monto: Number(valor),
             referencia: referencia?.trim() || null,
+            venta_id: null,
           });
         }
       });
@@ -405,7 +468,8 @@ export default function CajaDiaria() {
 
     setLoading(false);
     alert("Caja diaria guardada correctamente");
-    cargarCajaDelDia(fechaLocal);
+    await cargarCajaDelDia(fechaLocal);
+    await cargarHistorialCajas();
   };
 
   const obtenerDatosReporte = async () => {
@@ -429,7 +493,6 @@ export default function CajaDiaria() {
       .select(`
         id,
         fecha_local,
-        observacion,
         cierre_realizado,
         remesa_efectivo,
         cuenta_destino_efectivo,
@@ -443,6 +506,7 @@ export default function CajaDiaria() {
           monto,
           referencia,
           metodo_pago_id,
+          venta_id,
           metodos_pago (
             nombre
           )
@@ -471,27 +535,29 @@ export default function CajaDiaria() {
         const metodoNombre = d.metodos_pago?.nombre || "Sin método";
         const monto = Number(d.monto || 0);
         const referencia = d.referencia || "";
+        const origen = d.venta_id ? "Venta / CxC" : "Manual";
+        const llave = d.venta_id ? `${paciente}__${d.venta_id}` : `${paciente}__manual`;
 
-        if (!mapaPacientes[paciente]) {
-          mapaPacientes[paciente] = {
+        if (!mapaPacientes[llave]) {
+          mapaPacientes[llave] = {
             fecha: caja.fecha_local,
             paciente,
-            observacion: caja.observacion || "",
+            origen,
             metodos: {},
             referencias: {},
           };
 
           metodos.forEach((m) => {
-            mapaPacientes[paciente].metodos[m.nombre] = 0;
-            mapaPacientes[paciente].referencias[m.nombre] = "";
+            mapaPacientes[llave].metodos[m.nombre] = 0;
+            mapaPacientes[llave].referencias[m.nombre] = "";
           });
         }
 
-        mapaPacientes[paciente].metodos[metodoNombre] =
-          (mapaPacientes[paciente].metodos[metodoNombre] || 0) + monto;
+        mapaPacientes[llave].metodos[metodoNombre] =
+          (mapaPacientes[llave].metodos[metodoNombre] || 0) + monto;
 
         if (referencia) {
-          const actual = mapaPacientes[paciente].referencias[metodoNombre] || "";
+          const actual = mapaPacientes[llave].referencias[metodoNombre] || "";
           const refs = actual
             ? actual.split(" | ").map((x) => x.trim()).filter(Boolean)
             : [];
@@ -500,7 +566,7 @@ export default function CajaDiaria() {
             refs.push(referencia);
           }
 
-          mapaPacientes[paciente].referencias[metodoNombre] = refs.join(" | ");
+          mapaPacientes[llave].referencias[metodoNombre] = refs.join(" | ");
         }
 
         resumen[metodoNombre] = (resumen[metodoNombre] || 0) + monto;
@@ -520,7 +586,6 @@ export default function CajaDiaria() {
         cuentaDestinoEfectivo: caja.cuenta_destino_efectivo || "",
         numeroRemesaEfectivo: caja.numero_remesa_efectivo || "",
         comentarioCierre: caja.comentario_cierre || "",
-        observacion: caja.observacion || "",
         totalCaja,
       });
 
@@ -564,6 +629,7 @@ export default function CajaDiaria() {
       const fila = {
         Fecha: formatearFecha(item.fecha),
         Paciente: item.paciente,
+        Origen: item.origen || "",
       };
 
       metodos.forEach((m) => {
@@ -583,14 +649,13 @@ export default function CajaDiaria() {
         metodos.reduce((acc, m) => acc + Number(item.metodos[m.nombre] || 0), 0)
       );
 
-      fila["Observación"] = item.observacion || "";
-
       rows.push(fila);
     });
 
     const filaTotales = {
       Fecha: "",
       Paciente: "TOTALES",
+      Origen: "",
     };
 
     metodos.forEach((m) => {
@@ -601,7 +666,6 @@ export default function CajaDiaria() {
 
     filaTotales["Referencias"] = "";
     filaTotales["Total Paciente"] = formatearMonto(datos.totalGeneralResumen);
-    filaTotales["Observación"] = "";
 
     rows.push(filaTotales);
 
@@ -672,10 +736,10 @@ export default function CajaDiaria() {
     const head = [[
       "Fecha",
       "Paciente",
+      "Origen",
       ...metodos.map((m) => m.nombre),
       "Referencias",
       "Total Paciente",
-      "Observación",
     ]];
 
     const body = datos.detalle.map((item) => {
@@ -696,23 +760,23 @@ export default function CajaDiaria() {
       return [
         formatearFecha(item.fecha),
         item.paciente,
+        item.origen || "",
         ...metodos.map((m) => `$${formatearMonto(item.metodos[m.nombre] || 0)}`),
         referenciasTexto,
         `$${formatearMonto(totalPaciente)}`,
-        item.observacion || "",
       ];
     });
 
     const foot = [[
       "",
       "TOTALES",
+      "",
       ...metodos.map((m) => {
         const total = datos.resumen.find((r) => r.metodo === m.nombre)?.total || 0;
         return `$${formatearMonto(total)}`;
       }),
       "",
       `$${formatearMonto(datos.totalGeneralResumen)}`,
-      "",
     ]];
 
     autoTable(doc, {
@@ -784,7 +848,6 @@ export default function CajaDiaria() {
         cuentaDestinoEfectivo,
         numeroRemesaEfectivo,
         comentarioCierre,
-        observacion,
         totalCaja: totalGeneral,
       };
 
@@ -826,7 +889,6 @@ export default function CajaDiaria() {
       body: [
         ["Habrá remesa a depositar", remesaTexto],
         ["Detalle de remesa", remesaDetalle],
-        ["Observación del día", cajaActual.observacion || "-"],
         ["Comentario de cierre", cajaActual.comentarioCierre || "-"],
       ],
       theme: "grid",
@@ -913,43 +975,19 @@ export default function CajaDiaria() {
                 style={styles.input}
               />
             </div>
-
-            <div style={styles.formGroup}>
-              <label style={styles.label}>Observación</label>
-              <input
-                type="text"
-                value={observacion}
-                onChange={(e) => setObservacion(e.target.value)}
-                placeholder="Opcional"
-                style={styles.input}
-              />
-            </div>
           </div>
 
-          <div style={styles.actionGrid}>
+          <div style={styles.actionGridSimple}>
             <button type="button" onClick={agregarFila} style={styles.primarySoftBtn}>
               + Manual
             </button>
 
-            <select
-              value={clienteSeleccionado}
-              onChange={(e) => setClienteSeleccionado(e.target.value)}
-              style={styles.input}
-            >
-              <option value="">Seleccionar cliente</option>
-              {clientes.map((cliente) => (
-                <option key={cliente.id} value={cliente.id}>
-                  {cliente.nombre}
-                </option>
-              ))}
-            </select>
-
             <button
               type="button"
-              onClick={agregarClienteSeleccionado}
-              style={styles.secondarySoftBtn}
+              onClick={limpiarCajaActual}
+              style={styles.clearBtn}
             >
-              + Cliente
+              Limpiar formulario
             </button>
           </div>
         </div>
@@ -960,6 +998,7 @@ export default function CajaDiaria() {
               <thead>
                 <tr style={styles.theadRow}>
                   <th style={{ ...styles.th, minWidth: 190 }}>Paciente</th>
+                  <th style={{ ...styles.th, minWidth: 120 }}>Origen</th>
                   {metodos.map((metodo) => (
                     <th key={metodo.id} style={{ ...styles.th, minWidth: 190 }}>
                       {metodo.nombre}
@@ -972,7 +1011,7 @@ export default function CajaDiaria() {
               <tbody>
                 {filas.length === 0 && (
                   <tr>
-                    <td colSpan={metodos.length + 2} style={styles.emptyTd}>
+                    <td colSpan={metodos.length + 3} style={styles.emptyTd}>
                       No hay registros para esta fecha
                     </td>
                   </tr>
@@ -987,7 +1026,12 @@ export default function CajaDiaria() {
                         onChange={(e) => actualizarPaciente(index, e.target.value)}
                         placeholder="Nombre del paciente"
                         style={styles.input}
+                        disabled={fila.origen === "venta"}
                       />
+                    </td>
+
+                    <td style={styles.tdCenter}>
+                      {fila.origen === "venta" ? "Venta / CxC" : "Manual"}
                     </td>
 
                     {metodos.map((metodo) => (
@@ -1003,6 +1047,7 @@ export default function CajaDiaria() {
                             }
                             style={{ ...styles.input, textAlign: "right" }}
                             placeholder="0.00"
+                            disabled={fila.origen === "venta"}
                           />
                           <input
                             type="text"
@@ -1012,6 +1057,7 @@ export default function CajaDiaria() {
                             }
                             style={styles.subInput}
                             placeholder="Voucher / referencia"
+                            disabled={fila.origen === "venta"}
                           />
                         </div>
                       </td>
@@ -1021,7 +1067,11 @@ export default function CajaDiaria() {
                       <button
                         type="button"
                         onClick={() => eliminarFila(index)}
-                        style={styles.deleteBtn}
+                        style={{
+                          ...styles.deleteBtn,
+                          opacity: fila.origen === "venta" ? 0.55 : 1,
+                          cursor: fila.origen === "venta" ? "not-allowed" : "pointer",
+                        }}
                       >
                         Eliminar
                       </button>
@@ -1033,6 +1083,7 @@ export default function CajaDiaria() {
               <tfoot>
                 <tr style={styles.tfootRow}>
                   <td style={styles.totalTdLabel}>Totales</td>
+                  <td style={styles.totalTd}>—</td>
                   {metodos.map((metodo) => (
                     <td key={metodo.id} style={styles.totalTd}>
                       {Number(totalesPorMetodo[metodo.id] || 0).toFixed(2)}
@@ -1151,7 +1202,7 @@ export default function CajaDiaria() {
         </div>
 
         <div style={styles.card}>
-          <h2 style={styles.sectionTitle}>Informes</h2>
+          <h2 style={styles.sectionTitle}>Historial de cajas</h2>
 
           <div style={styles.reportTopGrid}>
             <input
@@ -1168,6 +1219,57 @@ export default function CajaDiaria() {
               style={styles.input}
             />
           </div>
+
+          <div style={styles.historialWrap}>
+            <table style={styles.historialTable}>
+              <thead>
+                <tr style={styles.theadRow}>
+                  <th style={styles.th}>Fecha</th>
+                  <th style={styles.th}>Total</th>
+                  <th style={styles.th}>Cierre</th>
+                  <th style={styles.th}>Responsable</th>
+                  <th style={styles.th}>Acción</th>
+                </tr>
+              </thead>
+              <tbody>
+                {loadingHistorial ? (
+                  <tr>
+                    <td colSpan="5" style={styles.emptyTd}>Cargando historial...</td>
+                  </tr>
+                ) : historialCajas.length === 0 ? (
+                  <tr>
+                    <td colSpan="5" style={styles.emptyTd}>No hay cajas en ese rango</td>
+                  </tr>
+                ) : (
+                  historialCajas.map((caja) => (
+                    <tr key={caja.id}>
+                      <td style={styles.tdCenter}>{formatearFecha(caja.fecha_local)}</td>
+                      <td style={styles.tdCenter}>${formatearMonto(caja.total)}</td>
+                      <td style={styles.tdCenter}>
+                        {caja.cierre_realizado ? "Sí" : "No"}
+                      </td>
+                      <td style={styles.tdCenter}>
+                        {caja.responsable_caja || "-"}
+                      </td>
+                      <td style={styles.tdCenter}>
+                        <button
+                          type="button"
+                          onClick={() => abrirCajaHistorial(caja.fecha_local)}
+                          style={styles.openBtn}
+                        >
+                          Abrir / Editar
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div style={styles.card}>
+          <h2 style={styles.sectionTitle}>Informes</h2>
 
           <div style={styles.reportButtons}>
             <button type="button" onClick={exportarDetallePDF} style={styles.reportBtnPdf}>
@@ -1279,10 +1381,10 @@ const styles = {
     gap: "14px",
     marginTop: "14px",
   },
-  actionGrid: {
+  actionGridSimple: {
     marginTop: "14px",
     display: "grid",
-    gridTemplateColumns: "170px minmax(220px, 1fr) 170px",
+    gridTemplateColumns: "170px 170px",
     gap: "12px",
     alignItems: "end",
   },
@@ -1336,10 +1438,10 @@ const styles = {
     cursor: "pointer",
     fontWeight: "600",
   },
-  secondarySoftBtn: {
-    background: "#e6f1ff",
-    color: "#1f66c2",
-    border: "1px solid #cbdffb",
+  clearBtn: {
+    background: "#fff7ed",
+    color: "#9a3412",
+    border: "1px solid #fed7aa",
     borderRadius: "12px",
     padding: "11px 14px",
     cursor: "pointer",
@@ -1353,7 +1455,17 @@ const styles = {
   table: {
     width: "100%",
     borderCollapse: "collapse",
-    minWidth: "1100px",
+    minWidth: "1180px",
+  },
+  historialWrap: {
+    overflowX: "auto",
+    border: "1px solid #e2e8f0",
+    borderRadius: "18px",
+  },
+  historialTable: {
+    width: "100%",
+    borderCollapse: "collapse",
+    minWidth: "700px",
   },
   theadRow: {
     background: "#f3f7fb",
@@ -1370,6 +1482,12 @@ const styles = {
     padding: "12px",
     borderBottom: "1px solid #edf2f7",
     verticalAlign: "top",
+  },
+  tdCenter: {
+    padding: "12px",
+    borderBottom: "1px solid #edf2f7",
+    textAlign: "center",
+    verticalAlign: "middle",
   },
   cellStack: {
     display: "grid",
@@ -1400,6 +1518,15 @@ const styles = {
     background: "#fff1f2",
     color: "#be123c",
     border: "1px solid #fecdd3",
+    borderRadius: "12px",
+    padding: "10px 12px",
+    cursor: "pointer",
+    fontWeight: "600",
+  },
+  openBtn: {
+    background: "#e0f2fe",
+    color: "#075985",
+    border: "1px solid #bae6fd",
     borderRadius: "12px",
     padding: "10px 12px",
     cursor: "pointer",
