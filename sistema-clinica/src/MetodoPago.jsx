@@ -35,6 +35,12 @@ export default function MetodoPago() {
     setMetodos(data || []);
   };
 
+  const existeNombreEnEmpresa = (nombreEvaluar) => {
+    return metodos.some(
+      (m) => m.nombre.trim().toLowerCase() === nombreEvaluar.trim().toLowerCase()
+    );
+  };
+
   const agregarMetodo = async (e) => {
     e.preventDefault();
 
@@ -43,8 +49,11 @@ export default function MetodoPago() {
     }
 
     if (!nombre.trim()) {
-      alert("Escribí el nombre del método de pago");
-      return;
+      return alert("Escribí el nombre del método de pago");
+    }
+
+    if (existeNombreEnEmpresa(nombre)) {
+      return alert("Ya existe un método con ese nombre en esta empresa");
     }
 
     setLoading(true);
@@ -73,6 +82,42 @@ export default function MetodoPago() {
     }
 
     setNombre("");
+    cargarMetodos();
+  };
+
+  const duplicarMetodo = async (metodo) => {
+    if (!empresa?.id) return;
+
+    const baseNombre = `${metodo.nombre} (Copia)`;
+    let nuevoNombre = baseNombre;
+    let contador = 2;
+
+    while (existeNombreEnEmpresa(nuevoNombre)) {
+      nuevoNombre = `${metodo.nombre} (Copia ${contador})`;
+      contador++;
+    }
+
+    const siguienteOrden =
+      metodos.length > 0
+        ? Math.max(...metodos.map((m) => Number(m.orden) || 0)) + 1
+        : 1;
+
+    const { error } = await supabase.from("metodos_pago").insert([
+      {
+        empresa_id: empresa.id,
+        nombre: nuevoNombre,
+        activo: metodo.activo,
+        orden: siguienteOrden,
+        es_fijo: false,
+      },
+    ]);
+
+    if (error) {
+      console.error(error);
+      alert("No se pudo duplicar el método");
+      return;
+    }
+
     cargarMetodos();
   };
 
@@ -132,9 +177,7 @@ export default function MetodoPago() {
       return;
     }
 
-    const confirmar = window.confirm(
-      `¿Eliminar el método "${metodo.nombre}"?`
-    );
+    const confirmar = window.confirm(`¿Eliminar el método "${metodo.nombre}"?`);
     if (!confirmar) return;
 
     const { error } = await supabase
@@ -200,7 +243,7 @@ export default function MetodoPago() {
                   <th style={styles.th}>Nombre</th>
                   <th style={{ ...styles.th, width: 110 }}>Activo</th>
                   <th style={{ ...styles.th, width: 90 }}>Fijo</th>
-                  <th style={{ ...styles.th, width: 320 }}>Acciones</th>
+                  <th style={{ ...styles.th, width: 420 }}>Acciones</th>
                 </tr>
               </thead>
 
@@ -263,10 +306,16 @@ export default function MetodoPago() {
 
                         <button
                           type="button"
+                          onClick={() => duplicarMetodo(metodo)}
+                          style={styles.duplicateBtn}
+                        >
+                          Duplicar
+                        </button>
+
+                        <button
+                          type="button"
                           onClick={() => cambiarActivo(metodo.id, metodo.activo)}
-                          style={
-                            metodo.activo ? styles.disableBtn : styles.enableBtn
-                          }
+                          style={metodo.activo ? styles.disableBtn : styles.enableBtn}
                         >
                           {metodo.activo ? "Desactivar" : "Activar"}
                         </button>
@@ -448,6 +497,15 @@ const styles = {
     padding: "8px 11px",
     cursor: "pointer",
     fontWeight: "700",
+  },
+  duplicateBtn: {
+    background: "#eef2ff",
+    color: "#4338ca",
+    border: "1px solid #c7d2fe",
+    borderRadius: "10px",
+    padding: "8px 12px",
+    cursor: "pointer",
+    fontWeight: "600",
   },
   disableBtn: {
     background: "#fff7ed",

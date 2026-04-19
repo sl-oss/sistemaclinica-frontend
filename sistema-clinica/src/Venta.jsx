@@ -18,16 +18,22 @@ function obtenerFechaHoraSVISO() {
   return `${yyyy}-${mm}-${dd}T${hh}:${mi}:${ss}`;
 }
 
-async function registrarPagosEnCajaDiaria({ nombrePaciente, pagosValidos, fechaLocal }) {
-  if (!nombrePaciente || pagosValidos.length === 0) return;
+async function registrarPagosEnCajaDiaria({
+  empresaId,
+  ventaId,
+  nombrePaciente,
+  pagosValidos,
+  fechaLocal,
+}) {
+  if (!empresaId || !nombrePaciente || pagosValidos.length === 0) return;
 
   const fechaSolo = fechaLocal.slice(0, 10);
-
   let cajaId = null;
 
   const { data: cajaExistente, error: errorBuscarCaja } = await supabase
     .from("cajas_diarias")
     .select("*")
+    .eq("empresa_id", empresaId)
     .eq("fecha_local", fechaSolo)
     .maybeSingle();
 
@@ -43,6 +49,7 @@ async function registrarPagosEnCajaDiaria({ nombrePaciente, pagosValidos, fechaL
       .from("cajas_diarias")
       .insert([
         {
+          empresa_id: empresaId,
           fecha: fechaLocal,
           fecha_local: fechaSolo,
           observacion: "",
@@ -61,6 +68,7 @@ async function registrarPagosEnCajaDiaria({ nombrePaciente, pagosValidos, fechaL
 
   const detalleCaja = pagosValidos.map((p) => ({
     caja_diaria_id: cajaId,
+    venta_id: ventaId,
     paciente: nombrePaciente,
     metodo_pago_id: Number(p.metodo_pago_id),
     monto: Number(p.monto),
@@ -138,9 +146,12 @@ function Venta() {
   };
 
   const obtenerMetodosPago = async () => {
+    if (!empresa?.id) return;
+
     const { data, error } = await supabase
       .from("metodos_pago")
       .select("*")
+      .eq("empresa_id", empresa.id)
       .eq("activo", true)
       .order("orden", { ascending: true });
 
@@ -200,8 +211,7 @@ function Venta() {
       .toLowerCase()
       .includes(busqueda.toLowerCase());
 
-    const coincideTipo =
-      filtroTipo === "todos" || item.tipo === filtroTipo;
+    const coincideTipo = filtroTipo === "todos" || item.tipo === filtroTipo;
 
     return coincideBusqueda && coincideTipo;
   });
@@ -222,10 +232,17 @@ function Venta() {
       return;
     }
 
+    const itemActual = seleccionados.find((i) => i.id === id);
+
+    if (
+      itemActual?.tipo === "producto" &&
+      cantidad > Number(itemActual.stock || 0)
+    ) {
+      return alert(`No hay suficiente stock para "${itemActual.nombre}"`);
+    }
+
     setSeleccionados(
-      seleccionados.map((i) =>
-        i.id === id ? { ...i, cantidad } : i
-      )
+      seleccionados.map((i) => (i.id === id ? { ...i, cantidad } : i))
     );
   };
 
@@ -235,9 +252,7 @@ function Venta() {
 
   const cambiarPrecio = (id, precio) => {
     setSeleccionados(
-      seleccionados.map((i) =>
-        i.id === id ? { ...i, precio } : i
-      )
+      seleccionados.map((i) => (i.id === id ? { ...i, precio } : i))
     );
   };
 
@@ -289,11 +304,19 @@ function Venta() {
     }
 
     if (estado === "pagado" && totalPagado < total) {
-      return alert("Si la venta está pagada, debés completar el total con los métodos de pago");
+      return alert(
+        "Si la venta está pagada, debés completar el total con los métodos de pago"
+      );
     }
 
     if (estado === "pendiente" && totalPagado > total) {
       return alert("El total pagado no puede ser mayor al total");
+    }
+
+    for (const i of seleccionados) {
+      if (i.tipo === "producto" && Number(i.cantidad) > Number(i.stock || 0)) {
+        return alert(`Stock insuficiente para "${i.nombre}"`);
+      }
     }
 
     const fechaLocal = obtenerFechaHoraSVISO();
@@ -337,6 +360,7 @@ function Venta() {
     if (pagosValidos.length > 0) {
       const pagosParaGuardar = pagosValidos.map((p) => ({
         venta_id: venta.id,
+        empresa_id: empresa.id,
         metodo_pago_id: Number(p.metodo_pago_id),
         monto: Number(p.monto),
         referencia: p.referencia?.trim() || null,
@@ -357,12 +381,12 @@ function Venta() {
       );
 
       const nombrePaciente =
-        clienteObj?.nombre ||
-        citaActiva?.cliente_nombre ||
-        "Cliente de contado";
+        clienteObj?.nombre || citaActiva?.cliente_nombre || "Cliente de contado";
 
       try {
         await registrarPagosEnCajaDiaria({
+          empresaId: empresa.id,
+          ventaId: venta.id,
           nombrePaciente,
           pagosValidos,
           fechaLocal,
@@ -373,10 +397,11 @@ function Venta() {
       }
     }
 
-    for (let i of seleccionados) {
+    for (const i of seleccionados) {
       if (i.tipo === "producto") {
-        await supabase.from("kardex").insert([
+        const { error: errorKardex } = await supabase.from("kardex").insert([
           {
+            empresa_id: empresa.id,
             item_id: i.id,
             tipo: "salida",
             cantidad: i.cantidad,
@@ -385,18 +410,28 @@ function Venta() {
           },
         ]);
 
-        await supabase
+        if (errorKardex) {
+          console.error(errorKardex);
+          return alert(`Error al guardar kardex de "${i.nombre}"`);
+        }
+
+        const nuevoStock = Number(i.stock || 0) - Number(i.cantidad || 0);
+
+        const { error: errorStock } = await supabase
           .from("items")
-          .update({ stock: (i.stock || 0) - i.cantidad })
-          .eq("id", i.id);
+          .update({ stock: nuevoStock })
+          .eq("id", i.id)
+          .eq("empresa_id", empresa.id);
+
+        if (errorStock) {
+          console.error(errorStock);
+          return alert(`Error al actualizar stock de "${i.nombre}"`);
+        }
       }
     }
 
     if (citaActiva) {
-      await supabase
-        .from("citas")
-        .update({ estado: "atendida" })
-        .eq("id", citaActiva.id);
+      await supabase.from("citas").update({ estado: "atendida" }).eq("id", citaActiva.id);
     }
 
     alert("Venta guardada 💰");
@@ -480,11 +515,7 @@ function Venta() {
             </button>
           </div>
 
-          {citaActiva && (
-            <div style={styles.citaBox}>
-              🦷 Cita activa: {citaActiva.servicio}
-            </div>
-          )}
+          {citaActiva && <div style={styles.citaBox}>🦷 Cita activa: {citaActiva.servicio}</div>}
 
           <div style={styles.estadoBox}>
             <label style={styles.radioLabel}>
@@ -519,21 +550,15 @@ function Venta() {
                   <input
                     type="number"
                     value={item.precio}
-                    onChange={(e) =>
-                      cambiarPrecio(item.id, Number(e.target.value))
-                    }
+                    onChange={(e) => cambiarPrecio(item.id, Number(e.target.value))}
                     style={styles.precio}
                   />
                 </div>
 
                 <div style={styles.controls}>
-                  <button onClick={() => cambiarCantidad(item.id, item.cantidad - 1)}>
-                    -
-                  </button>
+                  <button onClick={() => cambiarCantidad(item.id, item.cantidad - 1)}>-</button>
                   <span>{item.cantidad}</span>
-                  <button onClick={() => cambiarCantidad(item.id, item.cantidad + 1)}>
-                    +
-                  </button>
+                  <button onClick={() => cambiarCantidad(item.id, item.cantidad + 1)}>+</button>
                 </div>
 
                 <div>
@@ -560,9 +585,7 @@ function Venta() {
                 <select
                   style={styles.pagoSelect}
                   value={pago.metodo_pago_id}
-                  onChange={(e) =>
-                    actualizarPago(index, "metodo_pago_id", e.target.value)
-                  }
+                  onChange={(e) => actualizarPago(index, "metodo_pago_id", e.target.value)}
                 >
                   <option value="">Método</option>
                   {metodosPago.map((metodo) => (
@@ -579,9 +602,7 @@ function Venta() {
                   placeholder="Monto"
                   style={styles.pagoInput}
                   value={pago.monto}
-                  onChange={(e) =>
-                    actualizarPago(index, "monto", e.target.value)
-                  }
+                  onChange={(e) => actualizarPago(index, "monto", e.target.value)}
                 />
 
                 <input
@@ -589,9 +610,7 @@ function Venta() {
                   placeholder="Voucher / referencia"
                   style={styles.referenciaInput}
                   value={pago.referencia}
-                  onChange={(e) =>
-                    actualizarPago(index, "referencia", e.target.value)
-                  }
+                  onChange={(e) => actualizarPago(index, "referencia", e.target.value)}
                 />
 
                 <button
@@ -605,8 +624,12 @@ function Venta() {
             ))}
 
             <div style={styles.resumenPagos}>
-              <div>Total pagado: <strong>${totalPagado.toFixed(2)}</strong></div>
-              <div>Saldo pendiente: <strong>${saldoPendiente.toFixed(2)}</strong></div>
+              <div>
+                Total pagado: <strong>${totalPagado.toFixed(2)}</strong>
+              </div>
+              <div>
+                Saldo pendiente: <strong>${saldoPendiente.toFixed(2)}</strong>
+              </div>
             </div>
           </div>
 
@@ -621,11 +644,7 @@ function Venta() {
           <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
             <div style={styles.modalHeader}>
               <h3 style={{ margin: 0 }}>👤 Nuevo cliente</h3>
-              <button
-                type="button"
-                style={styles.btnCerrarModal}
-                onClick={cerrarModalCliente}
-              >
+              <button type="button" style={styles.btnCerrarModal} onClick={cerrarModalCliente}>
                 ✖
               </button>
             </div>
