@@ -808,31 +808,50 @@ function CajaChica() {
   };
 
   const exportarPDF = () => {
+    const colorPrincipal = [107, 90, 122];
+    const colorSecundario = [236, 236, 239];
+    const colorTexto = [31, 41, 55];
+
     const doc = new jsPDF("p", "mm", "a4");
 
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(14);
-    doc.text("LIQUIDACIÓN DE CAJA CHICA", 105, 12, { align: "center" });
+    doc.setFillColor(...colorSecundario);
+    doc.circle(185, 10, 35, "F");
+    doc.circle(10, 287, 28, "F");
 
-    doc.setFontSize(11);
-    doc.text(empresa?.nombre || "", 105, 19, { align: "center" });
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(...colorPrincipal);
+    doc.setFontSize(18);
+    doc.text("LIQUIDACIÓN DE CAJA CHICA", 14, 18);
 
     doc.setFont("helvetica", "normal");
+    doc.setTextColor(...colorTexto);
     doc.setFontSize(10);
-    doc.text(`Del: ${fechaDesde || ""}`, 14, 28);
-    doc.text(`Al: ${fechaHasta || ""}`, 60, 28);
+    doc.text(empresa?.nombre || "", 14, 25);
 
-    doc.setFontSize(9);
-    const correlativoTexto = `Correlativo: ${correlativo || ""}`;
-    const correlativoLineas = doc.splitTextToSize(correlativoTexto, 170);
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(...colorPrincipal);
+    doc.setFontSize(16);
+    doc.text(correlativo || "", 196, 18, { align: "right" });
 
-    doc.rect(14, 31, 182, correlativoLineas.length * 5 + 4);
-    doc.text(correlativoLineas, 16, 36);
+    doc.setTextColor(...colorTexto);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    doc.text(`Del: ${fechaDesde || ""}`, 14, 37);
+    doc.text(`Al: ${fechaHasta || ""}`, 60, 37);
 
-    const startYTabla = 31 + correlativoLineas.length * 5 + 8;
+    doc.setDrawColor(31, 41, 55);
+    doc.roundedRect(14, 42, 182, 16, 3, 3);
+
+    doc.setFont("helvetica", "bold");
+    doc.text("Saldo inicial", 18, 48);
+    doc.text("Fondo caja chica", 106, 48);
+
+    doc.setFont("helvetica", "normal");
+    doc.text(`$ ${money(numero(saldoInicial))}`, 18, 54);
+    doc.text(`$ ${money(numero(fondoCajaChica))}`, 106, 54);
 
     autoTable(doc, {
-      startY: startYTabla,
+      startY: 66,
       head: [["Billetes", "Cant.", "Total", "Monedas", "Cant.", "Total"]],
       body: Array.from(
         { length: Math.max(billetes.length, monedas.length) },
@@ -842,44 +861,45 @@ function CajaChica() {
           return [
             b ? b.denom : "",
             b ? numero(b.cantidad) : "",
-            b ? money(numero(b.denom) * numero(b.cantidad)) : "",
+            b ? `$ ${money(numero(b.denom) * numero(b.cantidad))}` : "",
             m ? m.denom : "",
             m ? numero(m.cantidad) : "",
-            m ? money(numero(m.denom) * numero(m.cantidad)) : "",
+            m ? `$ ${money(numero(m.denom) * numero(m.cantidad))}` : "",
           ];
         }
       ),
       theme: "grid",
-      styles: { fontSize: 9 },
-      headStyles: { fillColor: [28, 63, 95] },
+      styles: { fontSize: 8.5, textColor: [31, 41, 55] },
+      headStyles: { fillColor: colorPrincipal, textColor: [255, 255, 255] },
+      alternateRowStyles: { fillColor: [250, 250, 250] },
+      margin: { left: 14, right: 14 },
     });
 
-    const y1 = doc.lastAutoTable.finalY + 6;
-
     autoTable(doc, {
-      startY: y1,
+      startY: doc.lastAutoTable.finalY,
       body: [
-        ["Total billetes", money(totalBilletes)],
-        ["Total monedas", money(totalMonedas)],
-        ["Total efectivo disponible", money(totalEfectivoDisponible)],
-        ["Fondo de caja chica", money(numero(fondoCajaChica))],
+        ["TOTAL BILLETES", `$ ${money(totalBilletes)}`],
+        ["TOTAL MONEDAS", `$ ${money(totalMonedas)}`],
+        ["TOTAL EFECTIVO DISPONIBLE", `$ ${money(totalEfectivoDisponible)}`],
       ],
       theme: "grid",
-      styles: { fontSize: 9 },
-      columnStyles: { 0: { fontStyle: "bold" } },
+      styles: { fontSize: 9, textColor: [31, 41, 55] },
+      columnStyles: {
+        0: { fontStyle: "bold" },
+        1: { halign: "right" },
+      },
+      margin: { left: 106, right: 14 },
     });
 
-    let y2 = doc.lastAutoTable.finalY + 6;
-
     autoTable(doc, {
-      startY: y2,
+      startY: doc.lastAutoTable.finalY + 8,
       head: [[
         "#",
         "Tipo",
         "Fecha",
         "Concepto",
         "Proveedor",
-        "Comprobante",
+        "Comp.",
         "Ingreso",
         "Egreso",
         "Balance",
@@ -891,19 +911,20 @@ function CajaChica() {
         g.concepto,
         g.proveedor,
         g.comprobante,
-        money(g.ingresoNum),
-        money(g.egresoNum),
-        money(g.balance),
+        `$ ${money(g.ingresoNum)}`,
+        `$ ${money(g.egresoNum)}`,
+        `$ ${money(g.balance)}`,
       ]),
       theme: "grid",
-      styles: { fontSize: 8 },
-      headStyles: { fillColor: [28, 63, 95] },
+      styles: { fontSize: 7.8, cellPadding: 2, textColor: [31, 41, 55] },
+      headStyles: { fillColor: colorPrincipal, textColor: [255, 255, 255] },
+      alternateRowStyles: { fillColor: [250, 250, 250] },
       margin: { left: 8, right: 8 },
     });
 
-    let y3 = doc.lastAutoTable.finalY + 6;
+    let y3 = doc.lastAutoTable.finalY + 8;
 
-    if (y3 > 245) {
+    if (y3 > 240) {
       doc.addPage();
       y3 = 20;
     }
@@ -911,29 +932,38 @@ function CajaChica() {
     autoTable(doc, {
       startY: y3,
       body: [
-        ["Saldo inicial del periodo", money(numero(saldoInicial))],
-        ["(+) Ingresos / reintegros (reposiciones)", money(totalIngresos)],
-        ["(=) Monto total disponible para gastos", money(montoTotalDisponible)],
-        ["(-) Total comprobado (gastos válidos)", money(totalEgresos)],
-        ["(=) Monto que debería quedar de efectivo", money(montoDeberiaQuedar)],
-        ["Efectivo contado al cierre", money(efectivoContadoCierre)],
-        ["Diferencia (faltante / sobrante)", money(diferencia)],
+        ["Saldo inicial del periodo", `$ ${money(numero(saldoInicial))}`],
+        ["(+) Ingresos / reintegros (reposiciones)", `$ ${money(totalIngresos)}`],
+        ["(=) Monto total disponible para gastos", `$ ${money(montoTotalDisponible)}`],
+        ["(-) Total comprobado (gastos válidos)", `$ ${money(totalEgresos)}`],
+        ["(=) Monto que debería quedar de efectivo", `$ ${money(montoDeberiaQuedar)}`],
+        ["Efectivo contado al cierre", `$ ${money(efectivoContadoCierre)}`],
+        ["Diferencia (faltante / sobrante)", `$ ${money(diferencia)}`],
       ],
       theme: "grid",
-      styles: { fontSize: 9 },
-      columnStyles: { 0: { fontStyle: "bold" } },
+      styles: { fontSize: 9, textColor: [31, 41, 55] },
+      columnStyles: {
+        0: { fontStyle: "bold" },
+        1: { halign: "right" },
+      },
+      margin: { left: 100, right: 14 },
     });
 
     const yObs = doc.lastAutoTable.finalY + 8;
     doc.setFont("helvetica", "bold");
+    doc.setTextColor(...colorTexto);
     doc.text("Observaciones / explicación de la diferencia:", 14, yObs);
-    doc.setFont("helvetica", "normal");
-    doc.text(observaciones || "-", 14, yObs + 6, { maxWidth: 180 });
 
-    let yFirmas = yObs + 25;
+    doc.setFont("helvetica", "normal");
+    doc.text(observaciones || "-", 14, yObs + 6, {
+      maxWidth: 180,
+    });
+
+    let yFirmas = yObs + 28;
+
     if (yFirmas > 260) {
       doc.addPage();
-      yFirmas = 30;
+      yFirmas = 34;
     }
 
     const anchoPagina = 210;
@@ -942,15 +972,15 @@ function CajaChica() {
 
     const firmas = [
       {
-        nombre: elaboradoPor || "________________________",
+        nombre: elaboradoPor || "",
         cargo: "Elabora caja chica",
       },
       {
-        nombre: revisadoPor || "________________________",
+        nombre: revisadoPor || "",
         cargo: "Revisa",
       },
       {
-        nombre: autorizadoPor || "________________________",
+        nombre: autorizadoPor || "",
         cargo: "Autoriza",
       },
     ];
@@ -959,12 +989,12 @@ function CajaChica() {
 
     firmas.forEach((firma, i) => {
       const x = margen + espacio * i + espacio / 2;
-
       doc.line(x - 28, yFirmas, x + 28, yFirmas);
-
       doc.setFont("helvetica", "normal");
-      doc.text(firma.nombre, x, yFirmas + 6, { align: "center", maxWidth: 52 });
-
+      doc.text(firma.nombre || " ", x, yFirmas + 6, {
+        align: "center",
+        maxWidth: 52,
+      });
       doc.setFont("helvetica", "bold");
       doc.text(firma.cargo, x, yFirmas + 12, { align: "center" });
     });
@@ -973,446 +1003,461 @@ function CajaChica() {
   };
 
   if (!empresa) {
-    return <div>No hay empresa seleccionada</div>;
+    return <div style={{ padding: 20 }}>No hay empresa seleccionada</div>;
   }
+
+  const colorDiferencia =
+    Math.abs(diferencia) < 0.009
+      ? "#ecfdf5"
+      : diferencia > 0
+      ? "#fef2f2"
+      : "#fef9c3";
+
+  const borderDiferencia =
+    Math.abs(diferencia) < 0.009
+      ? "#bbf7d0"
+      : diferencia > 0
+      ? "#fecaca"
+      : "#fde68a";
 
   return (
     <>
-      <div style={styles.page}>
-        <h2 style={styles.titulo}>💵 Caja Chica</h2>
+      <div className="invoice-page">
+        <div className="invoice-sheet">
+          <div className="invoice-content">
+            <div className="invoice-header">
+              <div className="invoice-brand">
+                <h1>Caja Chica</h1>
+                <p>Control y liquidación de efectivo</p>
+              </div>
 
-        <div>
-          <div style={styles.card}>
-            <div style={styles.headerBox}>
-              <div style={styles.headerTitle}>LIQUIDACIÓN DE CAJA CHICA</div>
-              <div style={styles.headerCompany}>{empresa?.nombre || ""}</div>
+              <div className="invoice-company">
+                <div><strong>{empresa?.nombre || ""}</strong></div>
+                <div>Liquidación de caja chica</div>
+                <div>Período administrativo</div>
+              </div>
             </div>
 
-            <div style={styles.headerGrid}>
-              <div>
-                <label style={styles.label}>Del</label>
+            <div className="invoice-client-row">
+              <div className="invoice-client">
+                <div><strong>Empresa:</strong> {empresa?.nombre || ""}</div>
+                <div><strong>Período:</strong> {fechaDesde || ""} al {fechaHasta || ""}</div>
+                <div><strong>Prefijo:</strong> {prefijoEmpresa || ""}</div>
+              </div>
+
+              <div className="invoice-number">{correlativo || "Caja Chica"}</div>
+            </div>
+
+            <div className="invoice-info-box">
+              <div className="invoice-info-item">
+                <strong>Del</strong>
                 <input
-                  style={styles.input}
                   type="date"
                   value={fechaDesde}
                   onChange={(e) => setFechaDesde(e.target.value)}
                 />
               </div>
 
-              <div>
-                <label style={styles.label}>Al</label>
+              <div className="invoice-info-item">
+                <strong>Al</strong>
                 <input
-                  style={styles.input}
                   type="date"
                   value={fechaHasta}
                   onChange={(e) => setFechaHasta(e.target.value)}
                 />
               </div>
 
-              <div>
-                <label style={styles.label}>Correlativo No.</label>
+              <div className="invoice-info-item">
+                <strong>Correlativo No.</strong>
                 <input
-                  style={styles.input}
                   value={correlativoNum}
                   onChange={(e) => setCorrelativoNum(soloEntero(e.target.value))}
                 />
               </div>
 
-              <div>
-                <label style={styles.label}>Correlativo</label>
-                <input
-                  style={styles.inputReadOnly}
-                  value={correlativo}
-                  readOnly
-                />
+              <div className="invoice-info-item">
+                <strong>Correlativo</strong>
+                <input value={correlativo} readOnly style={{ background: "#f8f8fa" }} />
               </div>
             </div>
-          </div>
 
-          <div style={styles.sectionTitle}>ARQUEO DE CAJA CHICA</div>
+            <div style={ui.sectionHeader}>ARQUEO DE CAJA CHICA</div>
 
-          <div style={styles.twoCols}>
-            <div style={styles.card}>
-              <h3 style={styles.subtitulo}>Detalle de efectivo / billetes</h3>
-              <table style={styles.table}>
-                <thead>
-                  <tr>
-                    <th style={styles.th}>Denom.</th>
-                    <th style={styles.th}>Cant.</th>
-                    <th style={styles.th}>Total</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {billetes.map((b, i) => (
-                    <tr key={b.denom}>
-                      <td style={styles.td}>{b.denom}</td>
-                      <td style={styles.td}>
-                        <input
-                          style={styles.inputTable}
-                          value={b.cantidad}
-                          onChange={(e) => setCantidadBillete(i, e.target.value)}
-                        />
-                      </td>
-                      <td style={styles.tdRight}>
-                        ${money(numero(b.denom) * numero(b.cantidad))}
-                      </td>
-                    </tr>
-                  ))}
-                  <tr>
-                    <td style={styles.totalLabel} colSpan={2}>
-                      TOTAL BILLETES
-                    </td>
-                    <td style={styles.totalValue}>${money(totalBilletes)}</td>
-                  </tr>
-                </tbody>
-              </table>
+            <div style={ui.twoCols}>
+              <div className="card" style={ui.cardPad}>
+                <h3 style={ui.subtitulo}>Detalle de efectivo / billetes</h3>
+
+                <div className="invoice-table-wrap">
+                  <table className="invoice-table">
+                    <thead>
+                      <tr>
+                        <th>Denom.</th>
+                        <th>Cant.</th>
+                        <th className="invoice-text-right">Total</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {billetes.map((b, i) => (
+                        <tr key={b.denom}>
+                          <td>{b.denom}</td>
+                          <td>
+                            <input
+                              value={b.cantidad}
+                              onChange={(e) => setCantidadBillete(i, e.target.value)}
+                            />
+                          </td>
+                          <td className="invoice-text-right">
+                            $ {money(numero(b.denom) * numero(b.cantidad))}
+                          </td>
+                        </tr>
+                      ))}
+                      <tr>
+                        <td colSpan={2} className="invoice-text-right"><strong>TOTAL BILLETES</strong></td>
+                        <td className="invoice-text-right"><strong>$ {money(totalBilletes)}</strong></td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div className="card" style={ui.cardPad}>
+                <h3 style={ui.subtitulo}>Detalle de efectivo / monedas</h3>
+
+                <div className="invoice-table-wrap">
+                  <table className="invoice-table">
+                    <thead>
+                      <tr>
+                        <th>Denom.</th>
+                        <th>Cant.</th>
+                        <th className="invoice-text-right">Total</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {monedas.map((m, i) => (
+                        <tr key={m.denom}>
+                          <td>{m.denom}</td>
+                          <td>
+                            <input
+                              value={m.cantidad}
+                              onChange={(e) => setCantidadMoneda(i, e.target.value)}
+                            />
+                          </td>
+                          <td className="invoice-text-right">
+                            $ {money(numero(m.denom) * numero(m.cantidad))}
+                          </td>
+                        </tr>
+                      ))}
+                      <tr>
+                        <td colSpan={2} className="invoice-text-right"><strong>TOTAL MONEDAS</strong></td>
+                        <td className="invoice-text-right"><strong>$ {money(totalMonedas)}</strong></td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                <div style={ui.summaryMini}>
+                  <div style={ui.summaryMiniRow}>
+                    <span>Total efectivo disponible</span>
+                    <strong>$ {money(totalEfectivoDisponible)}</strong>
+                  </div>
+
+                  <div style={ui.summaryMiniRow}>
+                    <span>Fondo de caja chica</span>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={fondoCajaChica}
+                      onChange={(e) =>
+                        setFondoCajaChica(limpiarDecimalInput(e.target.value))
+                      }
+                      style={{ width: 140, textAlign: "right" }}
+                    />
+                  </div>
+                </div>
+              </div>
             </div>
 
-            <div style={styles.card}>
-              <h3 style={styles.subtitulo}>Detalle de efectivo / monedas</h3>
-              <table style={styles.table}>
-                <thead>
-                  <tr>
-                    <th style={styles.th}>Denom.</th>
-                    <th style={styles.th}>Cant.</th>
-                    <th style={styles.th}>Total</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {monedas.map((m, i) => (
-                    <tr key={m.denom}>
-                      <td style={styles.td}>{m.denom}</td>
-                      <td style={styles.td}>
-                        <input
-                          style={styles.inputTable}
-                          value={m.cantidad}
-                          onChange={(e) => setCantidadMoneda(i, e.target.value)}
-                        />
+            <div style={ui.sectionHeader}>LISTADO DE GASTOS</div>
+
+            <div className="card" style={ui.cardPad}>
+              <div style={{ marginBottom: 14, maxWidth: 300 }}>
+                <label style={ui.label}>Saldo inicial</label>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={saldoInicial}
+                  onChange={(e) => setSaldoInicial(limpiarDecimalInput(e.target.value))}
+                  placeholder="0.00"
+                />
+              </div>
+
+              <div style={{ overflowX: "auto" }}>
+                <table className="invoice-table" style={{ minWidth: 1150 }}>
+                  <thead>
+                    <tr>
+                      <th>#</th>
+                      <th>TIPO DE DOC.</th>
+                      <th>FECHA</th>
+                      <th>CONCEPTO</th>
+                      <th>PROVEEDOR</th>
+                      <th>No. COMPROBANTE</th>
+                      <th>INGRESO</th>
+                      <th>EGRESO</th>
+                      <th>BALANCE</th>
+                      <th>ACC.</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td colSpan={8}><strong>SALDO INICIAL</strong></td>
+                      <td className="invoice-text-right">
+                        <strong>$ {money(numero(saldoInicial))}</strong>
                       </td>
-                      <td style={styles.tdRight}>
-                        ${money(numero(m.denom) * numero(m.cantidad))}
+                      <td></td>
+                    </tr>
+
+                    {gastosConBalance.map((g) => (
+                      <tr key={g.id}>
+                        <td className="invoice-text-center">{g.index}</td>
+                        <td>
+                          <input
+                            value={g.tipoDoc}
+                            onChange={(e) =>
+                              actualizarGasto(g.id, "tipoDoc", e.target.value)
+                            }
+                          />
+                        </td>
+                        <td>
+                          <input
+                            type="date"
+                            value={g.fecha}
+                            onChange={(e) =>
+                              actualizarGasto(g.id, "fecha", e.target.value)
+                            }
+                          />
+                        </td>
+                        <td>
+                          <input
+                            value={g.concepto}
+                            onChange={(e) =>
+                              actualizarGasto(g.id, "concepto", e.target.value)
+                            }
+                          />
+                        </td>
+                        <td>
+                          <input
+                            value={g.proveedor}
+                            onChange={(e) =>
+                              actualizarGasto(g.id, "proveedor", e.target.value)
+                            }
+                          />
+                        </td>
+                        <td>
+                          <input
+                            value={g.comprobante}
+                            onChange={(e) =>
+                              actualizarGasto(g.id, "comprobante", e.target.value)
+                            }
+                          />
+                        </td>
+                        <td>
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            value={g.ingreso}
+                            onChange={(e) =>
+                              actualizarGasto(g.id, "ingreso", e.target.value)
+                            }
+                          />
+                        </td>
+                        <td>
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            value={g.egreso}
+                            onChange={(e) =>
+                              actualizarGasto(g.id, "egreso", e.target.value)
+                            }
+                          />
+                        </td>
+                        <td className="invoice-text-right">$ {money(g.balance)}</td>
+                        <td className="invoice-text-center">
+                          <button
+                            onClick={() => eliminarFila(g.id)}
+                            style={ui.btnDelete}
+                            title="Eliminar fila"
+                          >
+                            ✖
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+
+                    <tr>
+                      <td colSpan={6}><strong>Total</strong></td>
+                      <td className="invoice-text-right"><strong>$ {money(totalIngresos)}</strong></td>
+                      <td className="invoice-text-right"><strong>$ {money(totalEgresos)}</strong></td>
+                      <td></td>
+                      <td></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <div style={{ marginTop: 14 }}>
+                <button onClick={agregarFila} style={ui.btnOutlinePrimary}>
+                  + Agregar fila
+                </button>
+              </div>
+            </div>
+
+            <div style={ui.sectionHeader}>LIQUIDACIÓN</div>
+
+            <div className="card" style={ui.cardPad}>
+              <div className="invoice-summary" style={{ justifyContent: "flex-end" }}>
+                <table>
+                  <tbody>
+                    <tr>
+                      <td>Saldo inicial del periodo</td>
+                      <td className="invoice-text-right">$ {money(numero(saldoInicial))}</td>
+                    </tr>
+                    <tr>
+                      <td>(+) Ingresos / reintegros (reposiciones)</td>
+                      <td className="invoice-text-right">$ {money(totalIngresos)}</td>
+                    </tr>
+                    <tr>
+                      <td>(=) Monto total disponible para gastos</td>
+                      <td className="invoice-text-right">$ {money(montoTotalDisponible)}</td>
+                    </tr>
+                    <tr>
+                      <td>(-) Total comprobado (gastos válidos)</td>
+                      <td className="invoice-text-right">$ {money(totalEgresos)}</td>
+                    </tr>
+                    <tr>
+                      <td>(=) Monto que debería quedar de efectivo</td>
+                      <td className="invoice-text-right">$ {money(montoDeberiaQuedar)}</td>
+                    </tr>
+                    <tr>
+                      <td>Efectivo contado al cierre</td>
+                      <td className="invoice-text-right">$ {money(efectivoContadoCierre)}</td>
+                    </tr>
+                    <tr>
+                      <td
+                        style={{
+                          background: colorDiferencia,
+                          borderColor: borderDiferencia,
+                          fontWeight: 700,
+                          color: "#1f2937",
+                        }}
+                      >
+                        Diferencia (faltante / sobrante)
+                      </td>
+                      <td
+                        className="invoice-text-right"
+                        style={{
+                          background: colorDiferencia,
+                          borderColor: borderDiferencia,
+                          fontWeight: 700,
+                          color: "#1f2937",
+                        }}
+                      >
+                        $ {money(diferencia)}
                       </td>
                     </tr>
-                  ))}
-                  <tr>
-                    <td style={styles.totalLabel} colSpan={2}>
-                      TOTAL MONEDAS
-                    </td>
-                    <td style={styles.totalValue}>${money(totalMonedas)}</td>
-                  </tr>
-                </tbody>
-              </table>
+                  </tbody>
+                </table>
+              </div>
+            </div>
 
-              <div style={styles.summaryMini}>
-                <div style={styles.summaryMiniRow}>
-                  <span>Total efectivo disponible</span>
-                  <strong>${money(totalEfectivoDisponible)}</strong>
-                </div>
-                <div style={styles.summaryMiniRow}>
-                  <span>Fondo de caja chica</span>
+            <div className="card" style={ui.cardPad}>
+              <label style={ui.label}>Observaciones / explicación de la diferencia</label>
+              <textarea
+                value={observaciones}
+                onChange={(e) => setObservaciones(e.target.value)}
+                rows={4}
+              />
+            </div>
+
+            <div className="card" style={ui.cardPad}>
+              <div style={ui.firmasGrid}>
+                <div>
+                  <label style={ui.label}>Elabora caja chica</label>
                   <input
-                    style={styles.inputMini}
-                    type="text"
-                    inputMode="decimal"
-                    value={fondoCajaChica}
-                    onChange={(e) =>
-                      setFondoCajaChica(limpiarDecimalInput(e.target.value))
-                    }
+                    value={elaboradoPor}
+                    onChange={(e) => setElaboradoPor(e.target.value)}
+                    placeholder="Nombre de quien elabora"
+                  />
+                </div>
+
+                <div>
+                  <label style={ui.label}>Revisa</label>
+                  <input
+                    value={revisadoPor}
+                    onChange={(e) => setRevisadoPor(e.target.value)}
+                    placeholder="Nombre de quien revisa"
+                  />
+                </div>
+
+                <div>
+                  <label style={ui.label}>Autoriza</label>
+                  <input
+                    value={autorizadoPor}
+                    onChange={(e) => setAutorizadoPor(e.target.value)}
+                    placeholder="Nombre de quien autoriza"
                   />
                 </div>
               </div>
             </div>
-          </div>
 
-          <div style={styles.sectionTitle}>LISTADO DE GASTOS</div>
+            <div style={ui.actions} className="no-print">
+              <button style={ui.btnPrimary} onClick={guardarLiquidacion}>
+                {idActual ? "Actualizar" : "Guardar"}
+              </button>
 
-          <div style={styles.card}>
-            <div style={{ marginBottom: 12 }}>
-              <label style={styles.label}>Saldo inicial</label>
-              <input
-                style={styles.input}
-                type="text"
-                inputMode="decimal"
-                value={saldoInicial}
-                onChange={(e) =>
-                  setSaldoInicial(limpiarDecimalInput(e.target.value))
-                }
-                placeholder="0.00"
-              />
-            </div>
+              <button style={ui.btnSecondary} onClick={exportarPDF}>
+                Exportar PDF
+              </button>
 
-            <div style={{ overflowX: "auto" }}>
-              <table style={styles.tableWide}>
-                <thead>
-                  <tr>
-                    <th style={styles.th}>#</th>
-                    <th style={styles.th}>TIPO DE DOC.</th>
-                    <th style={styles.th}>FECHA</th>
-                    <th style={styles.th}>CONCEPTO</th>
-                    <th style={styles.th}>PROVEEDOR</th>
-                    <th style={styles.th}>No. COMPROBANTE</th>
-                    <th style={styles.th}>INGRESO</th>
-                    <th style={styles.th}>EGRESO</th>
-                    <th style={styles.th}>BALANCE</th>
-                    <th style={styles.th}>ACC.</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr>
-                    <td style={styles.td} colSpan={8}>
-                      <strong>SALDO INICIAL</strong>
-                    </td>
-                    <td style={styles.tdRight}>
-                      <strong>${money(numero(saldoInicial))}</strong>
-                    </td>
-                    <td style={styles.td}></td>
-                  </tr>
+              <button style={ui.btnSecondary} onClick={exportarExcel}>
+                Exportar Excel
+              </button>
 
-                  {gastosConBalance.map((g) => (
-                    <tr key={g.id}>
-                      <td style={styles.tdCenter}>{g.index}</td>
-                      <td style={styles.td}>
-                        <input
-                          style={styles.inputTable}
-                          value={g.tipoDoc}
-                          onChange={(e) =>
-                            actualizarGasto(g.id, "tipoDoc", e.target.value)
-                          }
-                        />
-                      </td>
-                      <td style={styles.td}>
-                        <input
-                          style={styles.inputTable}
-                          type="date"
-                          value={g.fecha}
-                          onChange={(e) =>
-                            actualizarGasto(g.id, "fecha", e.target.value)
-                          }
-                        />
-                      </td>
-                      <td style={styles.td}>
-                        <input
-                          style={styles.inputTable}
-                          value={g.concepto}
-                          onChange={(e) =>
-                            actualizarGasto(g.id, "concepto", e.target.value)
-                          }
-                        />
-                      </td>
-                      <td style={styles.td}>
-                        <input
-                          style={styles.inputTable}
-                          value={g.proveedor}
-                          onChange={(e) =>
-                            actualizarGasto(g.id, "proveedor", e.target.value)
-                          }
-                        />
-                      </td>
-                      <td style={styles.td}>
-                        <input
-                          style={styles.inputTable}
-                          value={g.comprobante}
-                          onChange={(e) =>
-                            actualizarGasto(g.id, "comprobante", e.target.value)
-                          }
-                        />
-                      </td>
-                      <td style={styles.td}>
-                        <input
-                          style={styles.inputTable}
-                          type="text"
-                          inputMode="decimal"
-                          value={g.ingreso}
-                          onChange={(e) =>
-                            actualizarGasto(g.id, "ingreso", e.target.value)
-                          }
-                        />
-                      </td>
-                      <td style={styles.td}>
-                        <input
-                          style={styles.inputTable}
-                          type="text"
-                          inputMode="decimal"
-                          value={g.egreso}
-                          onChange={(e) =>
-                            actualizarGasto(g.id, "egreso", e.target.value)
-                          }
-                        />
-                      </td>
-                      <td style={styles.tdRight}>${money(g.balance)}</td>
-                      <td style={styles.tdCenter}>
-                        <button
-                          style={styles.btnEliminarFila}
-                          onClick={() => eliminarFila(g.id)}
-                        >
-                          ✖
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+              <button
+                style={ui.btnSecondary}
+                onClick={() => prepararNuevaLiquidacion()}
+              >
+                Nuevo
+              </button>
 
-                  <tr>
-                    <td style={styles.td} colSpan={6}>
-                      <strong>Total</strong>
-                    </td>
-                    <td style={styles.tdRight}>
-                      <strong>${money(totalIngresos)}</strong>
-                    </td>
-                    <td style={styles.tdRight}>
-                      <strong>${money(totalEgresos)}</strong>
-                    </td>
-                    <td style={styles.td}></td>
-                    <td style={styles.td}></td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-
-            <div style={{ marginTop: 12 }}>
-              <button style={styles.btnAgregar} onClick={agregarFila}>
-                + Agregar fila
+              <button style={ui.btnBlue} onClick={abrirHistorial}>
+                📚 Ver historial
               </button>
             </div>
-          </div>
 
-          <div style={styles.sectionTitle}>LIQUIDACIÓN</div>
-
-          <div style={styles.card}>
-            <div style={styles.summaryBox}>
-              <div style={styles.summaryRow}>
-                <span>Saldo inicial del periodo</span>
-                <strong>${money(numero(saldoInicial))}</strong>
+            <div className="invoice-footer">
+              <div>
+                {elaboradoPor || "Elabora caja chica"} &nbsp;&nbsp;|&nbsp;&nbsp;
+                {revisadoPor || "Revisa"} &nbsp;&nbsp;|&nbsp;&nbsp;
+                {autorizadoPor || "Autoriza"}
               </div>
-
-              <div style={styles.summaryRow}>
-                <span>(+) Ingresos / reintegros (reposiciones)</span>
-                <strong>${money(totalIngresos)}</strong>
-              </div>
-
-              <div style={styles.summaryRow}>
-                <span>(=) Monto total disponible para gastos</span>
-                <strong>${money(montoTotalDisponible)}</strong>
-              </div>
-
-              <div style={styles.summaryRow}>
-                <span>(-) Total comprobado (gastos válidos)</span>
-                <strong>${money(totalEgresos)}</strong>
-              </div>
-
-              <div style={styles.summaryRow}>
-                <span>(=) Monto que debería quedar de efectivo</span>
-                <strong>${money(montoDeberiaQuedar)}</strong>
-              </div>
-
-              <div style={styles.summaryRow}>
-                <span>Efectivo contado al cierre</span>
-                <strong>${money(efectivoContadoCierre)}</strong>
-              </div>
-
-              <div
-                style={{
-                  ...styles.summaryRow,
-                  background:
-                    Math.abs(diferencia) < 0.009
-                      ? "#ecfdf5"
-                      : diferencia > 0
-                      ? "#fef2f2"
-                      : "#fef9c3",
-                  borderColor:
-                    Math.abs(diferencia) < 0.009
-                      ? "#bbf7d0"
-                      : diferencia > 0
-                      ? "#fecaca"
-                      : "#fde68a",
-                }}
-              >
-                <span>Diferencia (faltante (rojo) / sobrante (amarillo))</span>
-                <strong>${money(diferencia)}</strong>
-              </div>
+              <small>Liquidación interna de caja chica</small>
             </div>
-          </div>
-
-          <div style={styles.card}>
-            <label style={styles.label}>
-              Observaciones / explicación de la diferencia
-            </label>
-            <textarea
-              style={styles.textarea}
-              value={observaciones}
-              onChange={(e) => setObservaciones(e.target.value)}
-              rows={4}
-            />
-          </div>
-
-          <div style={styles.card}>
-            <div style={styles.firmasGrid}>
-              <div>
-                <label style={styles.label}>Elabora caja chica</label>
-                <input
-                  style={styles.input}
-                  value={elaboradoPor}
-                  onChange={(e) => setElaboradoPor(e.target.value)}
-                  placeholder="Nombre de quien elabora"
-                />
-              </div>
-
-              <div>
-                <label style={styles.label}>Revisa</label>
-                <input
-                  style={styles.input}
-                  value={revisadoPor}
-                  onChange={(e) => setRevisadoPor(e.target.value)}
-                  placeholder="Nombre de quien revisa"
-                />
-              </div>
-
-              <div>
-                <label style={styles.label}>Autoriza</label>
-                <input
-                  style={styles.input}
-                  value={autorizadoPor}
-                  onChange={(e) => setAutorizadoPor(e.target.value)}
-                  placeholder="Nombre de quien autoriza"
-                />
-              </div>
-            </div>
-          </div>
-
-          <div style={styles.actions}>
-            <button style={styles.btnGuardar} onClick={guardarLiquidacion}>
-              {idActual ? "Actualizar" : "Guardar"}
-            </button>
-            <button style={styles.btnSecundario} onClick={exportarPDF}>
-              Exportar PDF
-            </button>
-            <button style={styles.btnSecundario} onClick={exportarExcel}>
-              Exportar Excel
-            </button>
-            <button
-              style={styles.btnSecundario}
-              onClick={() => prepararNuevaLiquidacion()}
-            >
-              Nuevo
-            </button>
-            <button style={styles.btnHistorial} onClick={abrirHistorial}>
-              📚 Ver historial
-            </button>
           </div>
         </div>
       </div>
 
       {mostrarHistorial && (
-        <div style={styles.modalOverlay} onClick={cerrarHistorial}>
-          <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
-            <div style={styles.modalHeader}>
-              <h3 style={{ margin: 0 }}>📚 Historial de Caja Chica</h3>
-              <button style={styles.btnCerrarModal} onClick={cerrarHistorial}>
+        <div style={ui.modalOverlay} onClick={cerrarHistorial}>
+          <div style={ui.modal} onClick={(e) => e.stopPropagation()}>
+            <div style={ui.modalHeader}>
+              <h3 style={{ margin: 0, color: "#574866" }}>📚 Historial de Caja Chica</h3>
+              <button style={ui.btnClose} onClick={cerrarHistorial}>
                 ✖
               </button>
             </div>
 
             <div style={{ marginBottom: 12 }}>
-              <button style={styles.btnSecundario} onClick={cargarHistorial}>
+              <button style={ui.btnSecondary} onClick={cargarHistorial}>
                 Actualizar historial
               </button>
             </div>
@@ -1423,21 +1468,20 @@ function CajaChica() {
               <p>No hay liquidaciones guardadas.</p>
             )}
 
-            <div style={styles.historialGrid}>
+            <div style={ui.historialGrid}>
               {historial.map((liq) => (
-                <div key={liq.id} style={styles.historialCard}>
-                  <div style={styles.historialTitle}>{liq.correlativo}</div>
-                  <div style={styles.historialText}>
-                    {liq.fecha_desde || liq.fecha} al{" "}
-                    {liq.fecha_hasta || liq.fecha}
+                <div key={liq.id} style={ui.historialCard}>
+                  <div style={ui.historialTitle}>{liq.correlativo}</div>
+                  <div style={ui.historialText}>
+                    {liq.fecha_desde || liq.fecha} al {liq.fecha_hasta || liq.fecha}
                   </div>
-                  <div style={styles.historialText}>
-                    Cierre: ${money(liq.efectivo_contado_cierre)}
+                  <div style={ui.historialText}>
+                    Cierre: $ {money(liq.efectivo_contado_cierre)}
                   </div>
 
-                  <div style={styles.historialActions}>
+                  <div style={ui.historialActions}>
                     <button
-                      style={styles.btnMini}
+                      style={ui.btnOutlinePrimary}
                       onClick={() => cargarLiquidacionEnPantalla(liq)}
                     >
                       Cargar
@@ -1453,206 +1497,50 @@ function CajaChica() {
   );
 }
 
-const styles = {
-  page: {
-    width: "100%",
-    padding: 20,
-    boxSizing: "border-box",
-    background: "#f1f5f9",
-    minHeight: "100vh",
-  },
-  titulo: {
-    marginBottom: 16,
-    color: "#0f172a",
-  },
-  card: {
-    background: "#ffffff",
-    border: "1px solid #e2e8f0",
-    borderRadius: 14,
-    padding: 16,
-    marginBottom: 16,
-    boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
-  },
-  headerBox: {
-    textAlign: "center",
+const ui = {
+  cardPad: {
+    padding: 18,
     marginBottom: 18,
   },
-  headerTitle: {
-    fontWeight: "700",
-    fontSize: 22,
-    color: "#0f172a",
-  },
-  headerCompany: {
-    fontWeight: "600",
-    fontSize: 17,
-    color: "#334155",
-    marginTop: 4,
-  },
-  headerGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-    gap: 12,
-  },
-  sectionTitle: {
-    fontWeight: "700",
-    color: "#0f172a",
-    margin: "14px 0 10px",
+  sectionHeader: {
+    fontWeight: 700,
+    color: "#574866",
     fontSize: 16,
-  },
-  twoCols: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
-    gap: 16,
+    margin: "18px 0 12px",
+    letterSpacing: "0.5px",
   },
   subtitulo: {
     marginTop: 0,
-    marginBottom: 12,
-    color: "#1e293b",
+    marginBottom: 14,
+    color: "#1f2937",
     fontSize: 16,
   },
   label: {
     display: "block",
-    fontSize: 13,
-    fontWeight: "600",
-    color: "#334155",
     marginBottom: 6,
-  },
-  input: {
-    width: "100%",
-    boxSizing: "border-box",
-    border: "1px solid #cbd5e1",
-    borderRadius: 10,
-    padding: "10px 12px",
-    fontSize: 14,
-    outline: "none",
-    background: "#fff",
-  },
-  inputReadOnly: {
-    width: "100%",
-    boxSizing: "border-box",
-    border: "1px solid #cbd5e1",
-    borderRadius: 10,
-    padding: "10px 12px",
-    fontSize: 14,
-    background: "#f8fafc",
+    fontSize: 13,
+    fontWeight: 700,
     color: "#334155",
   },
-  inputTable: {
-    width: "100%",
-    boxSizing: "border-box",
-    border: "1px solid #cbd5e1",
-    borderRadius: 8,
-    padding: "7px 8px",
-    fontSize: 13,
-    background: "#fff",
-  },
-  inputMini: {
-    width: 120,
-    boxSizing: "border-box",
-    border: "1px solid #cbd5e1",
-    borderRadius: 8,
-    padding: "7px 8px",
-    fontSize: 13,
-    textAlign: "right",
-    background: "#fff",
-  },
-  textarea: {
-    width: "100%",
-    boxSizing: "border-box",
-    border: "1px solid #cbd5e1",
-    borderRadius: 10,
-    padding: 12,
-    fontSize: 14,
-    resize: "vertical",
-    outline: "none",
-  },
-  table: {
-    width: "100%",
-    borderCollapse: "collapse",
-  },
-  tableWide: {
-    width: "100%",
-    minWidth: 1100,
-    borderCollapse: "collapse",
-  },
-  th: {
-    background: "#1e3a5f",
-    color: "#fff",
-    padding: 10,
-    fontSize: 13,
-    textAlign: "center",
-    border: "1px solid #dbeafe",
-  },
-  td: {
-    padding: 8,
-    border: "1px solid #e2e8f0",
-    fontSize: 13,
-    color: "#334155",
-    background: "#fff",
-    verticalAlign: "middle",
-  },
-  tdCenter: {
-    padding: 8,
-    border: "1px solid #e2e8f0",
-    fontSize: 13,
-    color: "#334155",
-    background: "#fff",
-    textAlign: "center",
-    verticalAlign: "middle",
-  },
-  tdRight: {
-    padding: 8,
-    border: "1px solid #e2e8f0",
-    fontSize: 13,
-    color: "#334155",
-    background: "#fff",
-    textAlign: "right",
-    verticalAlign: "middle",
-  },
-  totalLabel: {
-    padding: 10,
-    border: "1px solid #e2e8f0",
-    fontWeight: "700",
-    background: "#f8fafc",
-    textAlign: "right",
-  },
-  totalValue: {
-    padding: 10,
-    border: "1px solid #e2e8f0",
-    fontWeight: "700",
-    background: "#f8fafc",
-    textAlign: "right",
+  twoCols: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
+    gap: 18,
   },
   summaryMini: {
     marginTop: 14,
-    border: "1px solid #e2e8f0",
-    borderRadius: 10,
+    border: "1px solid #d7dbe2",
+    borderRadius: 12,
     overflow: "hidden",
+    background: "#f8f8fa",
   },
   summaryMiniRow: {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
+    gap: 12,
     padding: "10px 12px",
-    borderBottom: "1px solid #e2e8f0",
-    gap: 12,
-    fontSize: 14,
-  },
-  summaryBox: {
-    display: "flex",
-    flexDirection: "column",
-    gap: 10,
-  },
-  summaryRow: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    gap: 12,
-    padding: "12px 14px",
-    border: "1px solid #e2e8f0",
-    borderRadius: 10,
-    background: "#f8fafc",
-    color: "#1e293b",
+    borderBottom: "1px solid #d7dbe2",
   },
   firmasGrid: {
     display: "grid",
@@ -1665,43 +1553,43 @@ const styles = {
     gap: 10,
     marginTop: 8,
   },
-  btnGuardar: {
-    background: "#0f766e",
+  btnPrimary: {
+    background: "#6b5a7a",
     color: "#fff",
     border: "none",
     borderRadius: 10,
     padding: "10px 16px",
+    fontWeight: 700,
     cursor: "pointer",
-    fontWeight: "700",
   },
-  btnSecundario: {
+  btnSecondary: {
     background: "#fff",
-    color: "#0f172a",
-    border: "1px solid #cbd5e1",
+    color: "#1f2937",
+    border: "1px solid #d7dbe2",
     borderRadius: 10,
     padding: "10px 16px",
+    fontWeight: 600,
     cursor: "pointer",
-    fontWeight: "600",
   },
-  btnHistorial: {
-    background: "#1d4ed8",
+  btnBlue: {
+    background: "#574866",
     color: "#fff",
     border: "none",
     borderRadius: 10,
     padding: "10px 16px",
+    fontWeight: 700,
     cursor: "pointer",
-    fontWeight: "700",
   },
-  btnAgregar: {
-    background: "#eff6ff",
-    color: "#1d4ed8",
-    border: "1px solid #bfdbfe",
+  btnOutlinePrimary: {
+    background: "#f4f0f7",
+    color: "#574866",
+    border: "1px solid #cfc5d7",
     borderRadius: 10,
     padding: "10px 14px",
+    fontWeight: 700,
     cursor: "pointer",
-    fontWeight: "700",
   },
-  btnEliminarFila: {
+  btnDelete: {
     border: "none",
     padding: "7px 10px",
     background: "#fee2e2",
@@ -1720,11 +1608,11 @@ const styles = {
   },
   modal: {
     width: "100%",
-    maxWidth: 900,
+    maxWidth: 920,
     maxHeight: "85vh",
     overflowY: "auto",
     background: "#fff",
-    borderRadius: 16,
+    borderRadius: 18,
     padding: 20,
     boxShadow: "0 20px 50px rgba(0,0,0,0.25)",
   },
@@ -1734,9 +1622,9 @@ const styles = {
     alignItems: "center",
     marginBottom: 16,
   },
-  btnCerrarModal: {
+  btnClose: {
     border: "none",
-    background: "#e2e8f0",
+    background: "#ececef",
     borderRadius: 8,
     padding: "8px 10px",
     cursor: "pointer",
@@ -1748,14 +1636,14 @@ const styles = {
     gap: 12,
   },
   historialCard: {
-    border: "1px solid #e2e8f0",
-    borderRadius: 10,
-    padding: 12,
-    background: "#f8fafc",
+    border: "1px solid #d7dbe2",
+    borderRadius: 14,
+    padding: 14,
+    background: "#f8f8fa",
   },
   historialTitle: {
-    fontWeight: "700",
-    color: "#0f172a",
+    fontWeight: 700,
+    color: "#574866",
     marginBottom: 6,
   },
   historialText: {
@@ -1767,13 +1655,6 @@ const styles = {
     marginTop: 8,
     display: "flex",
     gap: 8,
-  },
-  btnMini: {
-    padding: "6px 10px",
-    borderRadius: 8,
-    border: "1px solid #cbd5e1",
-    background: "#fff",
-    cursor: "pointer",
   },
 };
 

@@ -478,219 +478,278 @@ function Venta() {
 
   return (
     <>
-      <div style={styles.container}>
-        <div style={styles.left}>
-          <h3>🛒 Productos / Servicios</h3>
+      <div style={styles.page}>
+        <div style={styles.header}>
+          <div>
+            <h1 style={styles.title}>Venta</h1>
+            <p style={styles.subtitle}>Registro de productos y servicios</p>
+          </div>
 
-          <input
-            style={styles.input}
-            placeholder="Buscar..."
-            value={busqueda}
-            onChange={(e) => setBusqueda(e.target.value)}
-          />
-
-          <select
-            style={styles.input}
-            value={filtroTipo}
-            onChange={(e) => setFiltroTipo(e.target.value)}
-          >
-            <option value="todos">Todos</option>
-            <option value="producto">Productos</option>
-            <option value="servicio">Servicios</option>
-          </select>
-
-          <div style={styles.grid}>
-            {itemsFiltrados.map((item) => (
-              <button
-                key={item.id}
-                style={{
-                  ...styles.itemBtn,
-                  background:
-                    item.tipo === "producto" && item.stock <= 3
-                      ? "#fecaca"
-                      : "#dbeafe",
-                }}
-                onClick={() => agregarItem(item)}
-              >
-                {item.nombre}
-                <br />
-                <strong>${Number(item.precio || 0).toFixed(2)}</strong>
-
-                {item.tipo === "producto" && (
-                  <div style={styles.stock}>Stock: {item.stock}</div>
-                )}
-              </button>
-            ))}
+          <div style={styles.headerInfo}>
+            <div><strong>{empresa?.nombre || "Empresa"}</strong></div>
+            <div>Módulo de ventas</div>
+            <div>Total actual: <strong>${total.toFixed(2)}</strong></div>
           </div>
         </div>
 
-        <div style={styles.right}>
-          <h3>🧾 Venta</h3>
-
-          <div style={styles.clienteRow}>
-            <select
-              style={{ ...styles.input, marginBottom: 0 }}
-              value={clienteSeleccionado}
-              onChange={(e) => setClienteSeleccionado(e.target.value)}
-            >
-              <option value="">Seleccionar cliente</option>
-              {clientes.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.nombre}
-                </option>
-              ))}
-            </select>
-
-            <button
-              type="button"
-              style={styles.btnNuevoCliente}
-              onClick={abrirModalCliente}
-            >
-              + Cliente
-            </button>
-          </div>
-
-          {citaActiva && (
-            <div style={styles.citaBox}>🦷 Cita activa: {citaActiva.servicio}</div>
-          )}
-
-          <div style={styles.estadoBox}>
-            <label style={styles.radioLabel}>
-              <input
-                type="radio"
-                name="estadoVenta"
-                value="pagado"
-                checked={estado === "pagado"}
-                onChange={(e) => setEstado(e.target.value)}
-              />
-              Pagado
-            </label>
-
-            <label style={styles.radioLabel}>
-              <input
-                type="radio"
-                name="estadoVenta"
-                value="pendiente"
-                checked={estado === "pendiente"}
-                onChange={(e) => setEstado(e.target.value)}
-              />
-              Pendiente
-            </label>
-          </div>
-
-          <div style={styles.lista}>
-            {seleccionados.map((item) => (
-              <div key={item.id} style={styles.row}>
+        <div style={styles.layout}>
+          <section style={styles.left}>
+            <div style={styles.panel}>
+              <div style={styles.panelHeader}>
                 <div>
-                  <strong>{item.nombre}</strong>
-
-                  <input
-                    type="number"
-                    value={item.precio}
-                    onChange={(e) =>
-                      cambiarPrecio(item.id, Number(e.target.value))
-                    }
-                    style={styles.precio}
-                  />
+                  <h3 style={styles.panelTitle}>🛒 Productos / Servicios</h3>
+                  <p style={styles.panelSubtitle}>Buscá y agregá items a la venta</p>
                 </div>
-
-                <div style={styles.controls}>
-                  <button onClick={() => cambiarCantidad(item.id, item.cantidad - 1)}>
-                    -
-                  </button>
-                  <span>{item.cantidad}</span>
-                  <button onClick={() => cambiarCantidad(item.id, item.cantidad + 1)}>
-                    +
-                  </button>
-                </div>
-
-                <div>
-                  ${(Number(item.precio || 0) * Number(item.cantidad || 0)).toFixed(2)}
-                </div>
-
-                <button onClick={() => eliminarItem(item.id)}>❌</button>
               </div>
-            ))}
-          </div>
 
-          <h2>Total: ${total.toFixed(2)}</h2>
+              <div style={styles.filters}>
+                <input
+                  style={styles.input}
+                  placeholder="Buscar..."
+                  value={busqueda}
+                  onChange={(e) => setBusqueda(e.target.value)}
+                />
 
-          <div style={styles.pagosBox}>
-            <div style={styles.pagosHeader}>
-              <h3 style={{ margin: 0 }}>💳 Métodos de pago</h3>
-              <button type="button" style={styles.btnPago} onClick={agregarFilaPago}>
-                + Agregar pago
-              </button>
-            </div>
-
-            {pagos.map((pago, index) => (
-              <div key={index} style={styles.pagoRow}>
                 <select
-                  style={styles.pagoSelect}
-                  value={pago.metodo_pago_id}
-                  onChange={(e) =>
-                    actualizarPago(index, "metodo_pago_id", e.target.value)
-                  }
+                  style={styles.input}
+                  value={filtroTipo}
+                  onChange={(e) => setFiltroTipo(e.target.value)}
                 >
-                  <option value="">Método</option>
-                  {metodosPago.map((metodo) => (
-                    <option key={metodo.id} value={metodo.id}>
-                      {metodo.nombre}
+                  <option value="todos">Todos</option>
+                  <option value="producto">Productos</option>
+                  <option value="servicio">Servicios</option>
+                </select>
+              </div>
+
+              <div style={styles.grid}>
+                {itemsFiltrados.map((item) => (
+                  <button
+                    key={item.id}
+                    style={{
+                      ...styles.itemBtn,
+                      background:
+                        item.tipo === "producto" && Number(item.stock || 0) <= 3
+                          ? "#fef2f2"
+                          : "#f8f8fa",
+                      borderColor:
+                        item.tipo === "producto" && Number(item.stock || 0) <= 3
+                          ? "#fecaca"
+                          : "#d7dbe2",
+                    }}
+                    onClick={() => agregarItem(item)}
+                  >
+                    <div style={styles.itemTipo}>
+                      {item.tipo === "producto" ? "📦 Producto" : "🧾 Servicio"}
+                    </div>
+
+                    <div style={styles.itemNombre}>{item.nombre}</div>
+
+                    <div style={styles.itemPrecio}>
+                      ${Number(item.precio || 0).toFixed(2)}
+                    </div>
+
+                    {item.tipo === "producto" && (
+                      <div style={styles.stock}>Stock: {item.stock}</div>
+                    )}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </section>
+
+          <aside style={styles.right}>
+            <div style={styles.panel}>
+              <div style={styles.panelHeader}>
+                <div>
+                  <h3 style={styles.panelTitle}>🧾 Venta</h3>
+                  <p style={styles.panelSubtitle}>Detalle, cliente y cobro</p>
+                </div>
+              </div>
+
+              <div style={styles.clienteRow}>
+                <select
+                  style={{ ...styles.input, marginBottom: 0 }}
+                  value={clienteSeleccionado}
+                  onChange={(e) => setClienteSeleccionado(e.target.value)}
+                >
+                  <option value="">Seleccionar cliente</option>
+                  {clientes.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.nombre}
                     </option>
                   ))}
                 </select>
 
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  placeholder="Monto"
-                  style={styles.pagoInput}
-                  value={pago.monto}
-                  onChange={(e) => actualizarPago(index, "monto", e.target.value)}
-                />
-
-                <input
-                  type="text"
-                  placeholder="Voucher / referencia"
-                  style={styles.referenciaInput}
-                  value={pago.referencia}
-                  onChange={(e) =>
-                    actualizarPago(index, "referencia", e.target.value)
-                  }
-                />
-
                 <button
                   type="button"
-                  style={styles.btnEliminarPago}
-                  onClick={() => eliminarFilaPago(index)}
+                  style={styles.btnSoftPrimary}
+                  onClick={abrirModalCliente}
                 >
-                  ❌
+                  + Cliente
                 </button>
               </div>
-            ))}
 
-            <div style={styles.resumenPagos}>
-              <div>
-                Total pagado: <strong>${totalPagado.toFixed(2)}</strong>
+              {citaActiva && (
+                <div style={styles.citaBox}>🦷 Cita activa: {citaActiva.servicio}</div>
+              )}
+
+              <div style={styles.estadoBox}>
+                <label style={styles.radioLabel}>
+                  <input
+                    type="radio"
+                    name="estadoVenta"
+                    value="pagado"
+                    checked={estado === "pagado"}
+                    onChange={(e) => setEstado(e.target.value)}
+                  />
+                  Pagado
+                </label>
+
+                <label style={styles.radioLabel}>
+                  <input
+                    type="radio"
+                    name="estadoVenta"
+                    value="pendiente"
+                    checked={estado === "pendiente"}
+                    onChange={(e) => setEstado(e.target.value)}
+                  />
+                  Pendiente
+                </label>
               </div>
-              <div>
-                Saldo pendiente: <strong>${saldoPendiente.toFixed(2)}</strong>
+
+              <div style={styles.lista}>
+                {seleccionados.length === 0 ? (
+                  <div style={styles.emptyBox}>No has agregado items todavía.</div>
+                ) : (
+                  seleccionados.map((item) => (
+                    <div key={item.id} style={styles.row}>
+                      <div style={styles.rowMain}>
+                        <strong style={{ color: "#1f2937" }}>{item.nombre}</strong>
+
+                        <input
+                          type="number"
+                          value={item.precio}
+                          onChange={(e) =>
+                            cambiarPrecio(item.id, Number(e.target.value))
+                          }
+                          style={styles.precio}
+                        />
+                      </div>
+
+                      <div style={styles.controls}>
+                        <button
+                          style={styles.btnQty}
+                          onClick={() => cambiarCantidad(item.id, item.cantidad - 1)}
+                        >
+                          -
+                        </button>
+                        <span style={styles.qtyNumber}>{item.cantidad}</span>
+                        <button
+                          style={styles.btnQty}
+                          onClick={() => cambiarCantidad(item.id, item.cantidad + 1)}
+                        >
+                          +
+                        </button>
+                      </div>
+
+                      <div style={styles.rowAmount}>
+                        ${(Number(item.precio || 0) * Number(item.cantidad || 0)).toFixed(2)}
+                      </div>
+
+                      <button style={styles.btnDelete} onClick={() => eliminarItem(item.id)}>
+                        ✖
+                      </button>
+                    </div>
+                  ))
+                )}
               </div>
+
+              <div style={styles.totalBox}>
+                <span>Total venta</span>
+                <strong>${total.toFixed(2)}</strong>
+              </div>
+
+              <div style={styles.pagosBox}>
+                <div style={styles.pagosHeader}>
+                  <h3 style={{ margin: 0, color: "#574866" }}>💳 Métodos de pago</h3>
+                  <button type="button" style={styles.btnSoftPrimary} onClick={agregarFilaPago}>
+                    + Agregar pago
+                  </button>
+                </div>
+
+                {pagos.map((pago, index) => (
+                  <div key={index} style={styles.pagoRow}>
+                    <select
+                      style={styles.pagoSelect}
+                      value={pago.metodo_pago_id}
+                      onChange={(e) =>
+                        actualizarPago(index, "metodo_pago_id", e.target.value)
+                      }
+                    >
+                      <option value="">Método</option>
+                      {metodosPago.map((metodo) => (
+                        <option key={metodo.id} value={metodo.id}>
+                          {metodo.nombre}
+                        </option>
+                      ))}
+                    </select>
+
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      placeholder="Monto"
+                      style={styles.pagoInput}
+                      value={pago.monto}
+                      onChange={(e) => actualizarPago(index, "monto", e.target.value)}
+                    />
+
+                    <input
+                      type="text"
+                      placeholder="Voucher / referencia"
+                      style={styles.referenciaInput}
+                      value={pago.referencia}
+                      onChange={(e) =>
+                        actualizarPago(index, "referencia", e.target.value)
+                      }
+                    />
+
+                    <button
+                      type="button"
+                      style={styles.btnEliminarPago}
+                      onClick={() => eliminarFilaPago(index)}
+                    >
+                      ✖
+                    </button>
+                  </div>
+                ))}
+
+                <div style={styles.resumenPagos}>
+                  <div style={styles.resumenPagoRow}>
+                    <span>Total pagado</span>
+                    <strong>${totalPagado.toFixed(2)}</strong>
+                  </div>
+
+                  <div style={styles.resumenPagoRow}>
+                    <span>Saldo pendiente</span>
+                    <strong>${saldoPendiente.toFixed(2)}</strong>
+                  </div>
+                </div>
+              </div>
+
+              <button
+                style={{
+                  ...styles.btnGuardar,
+                  opacity: guardandoVenta ? 0.85 : 1,
+                  cursor: guardandoVenta ? "not-allowed" : "pointer",
+                }}
+                onClick={guardarVenta}
+                disabled={guardandoVenta}
+              >
+                {guardandoVenta ? "Guardando..." : "💾 Guardar Venta"}
+              </button>
             </div>
-          </div>
-
-          <button
-            style={{
-              ...styles.btnGuardar,
-              opacity: guardandoVenta ? 0.85 : 1,
-              cursor: guardandoVenta ? "not-allowed" : "pointer",
-            }}
-            onClick={guardarVenta}
-            disabled={guardandoVenta}
-          >
-            {guardandoVenta ? "Guardando..." : "💾 Guardar Venta"}
-          </button>
+          </aside>
         </div>
       </div>
 
@@ -698,7 +757,7 @@ function Venta() {
         <div style={styles.modalOverlay} onClick={cerrarModalCliente}>
           <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
             <div style={styles.modalHeader}>
-              <h3 style={{ margin: 0 }}>👤 Nuevo cliente</h3>
+              <h3 style={{ margin: 0, color: "#574866" }}>👤 Nuevo cliente</h3>
               <button
                 type="button"
                 style={styles.btnCerrarModal}
@@ -749,180 +808,375 @@ function Venta() {
 }
 
 const styles = {
-  container: {
+  page: {
+    width: "100%",
+    minHeight: "100%",
+  },
+
+  header: {
+    background: "#ffffff",
+    border: "1px solid #d7dbe2",
+    borderRadius: 22,
+    padding: 22,
+    marginBottom: 18,
     display: "flex",
-    gap: "20px",
+    justifyContent: "space-between",
+    gap: 18,
     flexWrap: "wrap",
+    boxShadow: "0 10px 30px rgba(15, 23, 42, 0.06)",
   },
+
+  title: {
+    margin: 0,
+    fontSize: 26,
+    color: "#574866",
+  },
+
+  subtitle: {
+    margin: "6px 0 0",
+    color: "#64748b",
+    fontSize: 15,
+  },
+
+  headerInfo: {
+    textAlign: "right",
+    color: "#1f2937",
+    fontSize: 14,
+    lineHeight: 1.6,
+  },
+
+  layout: {
+    display: "grid",
+    gridTemplateColumns: "minmax(0, 1.5fr) minmax(340px, 1fr)",
+    gap: 18,
+    alignItems: "start",
+  },
+
   left: {
-    flex: 2,
-    minWidth: "300px",
+    minWidth: 0,
   },
+
   right: {
-    flex: 1,
-    minWidth: "320px",
-    background: "#f8fafc",
-    padding: "15px",
-    borderRadius: "10px",
+    minWidth: 0,
   },
+
+  panel: {
+    background: "#ffffff",
+    border: "1px solid #d7dbe2",
+    borderRadius: 22,
+    padding: 20,
+    boxShadow: "0 10px 30px rgba(15, 23, 42, 0.06)",
+  },
+
+  panelHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: 12,
+    marginBottom: 14,
+  },
+
+  panelTitle: {
+    margin: 0,
+    color: "#1f2937",
+    fontSize: 20,
+  },
+
+  panelSubtitle: {
+    margin: "4px 0 0",
+    color: "#64748b",
+    fontSize: 14,
+  },
+
+  filters: {
+    display: "grid",
+    gridTemplateColumns: "1.3fr 220px",
+    gap: 12,
+    marginBottom: 16,
+  },
+
   grid: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fill, minmax(130px, 1fr))",
-    gap: "10px",
+    gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))",
+    gap: 12,
   },
+
   itemBtn: {
-    padding: "15px",
-    borderRadius: "10px",
-    border: "none",
+    padding: "16px",
+    borderRadius: "16px",
+    border: "1px solid #d7dbe2",
     cursor: "pointer",
+    textAlign: "left",
+    transition: "0.2s ease",
+    minHeight: 120,
   },
+
+  itemTipo: {
+    fontSize: 12,
+    color: "#64748b",
+    marginBottom: 10,
+  },
+
+  itemNombre: {
+    fontWeight: 700,
+    color: "#1f2937",
+    marginBottom: 10,
+    lineHeight: 1.3,
+  },
+
+  itemPrecio: {
+    fontSize: 20,
+    fontWeight: 700,
+    color: "#574866",
+  },
+
   stock: {
-    fontSize: "12px",
-    marginTop: "5px",
-    color: "#374151",
+    fontSize: 12,
+    marginTop: "8px",
+    color: "#475569",
   },
+
   input: {
     width: "100%",
-    padding: "10px",
+    padding: "12px 14px",
     marginBottom: "10px",
-    borderRadius: "8px",
-    border: "1px solid #ddd",
+    borderRadius: "12px",
+    border: "1px solid #d7dbe2",
     boxSizing: "border-box",
+    background: "#fff",
+    fontSize: 14,
+    outline: "none",
   },
+
   clienteRow: {
     display: "grid",
     gridTemplateColumns: "1fr auto",
-    gap: "8px",
+    gap: "10px",
     alignItems: "stretch",
-    marginBottom: "10px",
+    marginBottom: "12px",
   },
-  btnNuevoCliente: {
-    background: "#2563eb",
-    color: "#fff",
-    border: "none",
-    borderRadius: "8px",
-    padding: "10px 14px",
+
+  btnSoftPrimary: {
+    background: "#f4f0f7",
+    color: "#574866",
+    border: "1px solid #d3c7dd",
+    borderRadius: "12px",
+    padding: "12px 14px",
     cursor: "pointer",
-    fontWeight: "600",
+    fontWeight: "700",
     whiteSpace: "nowrap",
   },
+
   lista: {
-    maxHeight: "300px",
+    maxHeight: "340px",
     overflow: "auto",
+    border: "1px solid #e5e7eb",
+    borderRadius: 16,
+    padding: 12,
+    background: "#fafafa",
+    marginBottom: 16,
   },
+
+  emptyBox: {
+    padding: 20,
+    textAlign: "center",
+    color: "#64748b",
+  },
+
   row: {
-    display: "flex",
-    justifyContent: "space-between",
+    display: "grid",
+    gridTemplateColumns: "minmax(160px, 1fr) auto auto auto",
     alignItems: "center",
-    marginBottom: "10px",
     gap: "10px",
-    flexWrap: "wrap",
+    marginBottom: "10px",
+    padding: "10px",
+    background: "#fff",
+    border: "1px solid #e5e7eb",
+    borderRadius: 14,
   },
+
+  rowMain: {
+    minWidth: 0,
+  },
+
   controls: {
     display: "flex",
     alignItems: "center",
-    gap: "5px",
+    gap: "8px",
   },
+
+  btnQty: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    border: "1px solid #d7dbe2",
+    background: "#f8f8fa",
+    cursor: "pointer",
+    fontWeight: 700,
+  },
+
+  qtyNumber: {
+    minWidth: 18,
+    textAlign: "center",
+    fontWeight: 700,
+    color: "#1f2937",
+  },
+
   precio: {
-    width: "70px",
-    marginTop: "6px",
+    width: "110px",
+    marginTop: "8px",
+    padding: "10px 12px",
+    borderRadius: 10,
+    border: "1px solid #d7dbe2",
+    background: "#fff",
   },
-  btnGuardar: {
-    width: "100%",
-    padding: "15px",
-    marginTop: "10px",
-    background: "#10b981",
-    color: "white",
+
+  rowAmount: {
+    fontWeight: 700,
+    color: "#1f2937",
+    whiteSpace: "nowrap",
+  },
+
+  btnDelete: {
+    background: "#fee2e2",
+    color: "#991b1b",
     border: "none",
     borderRadius: "10px",
-    fontSize: "16px",
+    padding: "10px 12px",
+    cursor: "pointer",
+    fontWeight: 700,
   },
+
+  totalBox: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: "14px 16px",
+    borderRadius: 14,
+    background: "#574866",
+    color: "#fff",
+    fontSize: 18,
+    marginBottom: 16,
+  },
+
   citaBox: {
-    background: "#fef3c7",
-    padding: "10px",
-    borderRadius: "8px",
-    marginBottom: "10px",
+    background: "#fff7ed",
+    border: "1px solid #fed7aa",
+    padding: "12px 14px",
+    borderRadius: "12px",
+    marginBottom: "12px",
+    color: "#9a3412",
+    fontWeight: 600,
   },
+
   estadoBox: {
     display: "flex",
     gap: "16px",
     marginBottom: "14px",
-    padding: "10px",
-    background: "#eef2ff",
-    borderRadius: "8px",
+    padding: "12px 14px",
+    background: "#f4f0f7",
+    border: "1px solid #d3c7dd",
+    borderRadius: "12px",
     flexWrap: "wrap",
   },
+
   radioLabel: {
     display: "flex",
     alignItems: "center",
     gap: "6px",
-    fontWeight: "500",
+    fontWeight: "600",
+    color: "#574866",
   },
+
   pagosBox: {
-    marginTop: "16px",
-    padding: "12px",
-    background: "#ecfeff",
-    borderRadius: "10px",
-    border: "1px solid #bae6fd",
+    marginTop: "6px",
+    padding: "14px",
+    background: "#f8f8fa",
+    borderRadius: "16px",
+    border: "1px solid #d7dbe2",
   },
+
   pagosHeader: {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
     gap: "10px",
-    marginBottom: "10px",
+    marginBottom: "12px",
     flexWrap: "wrap",
   },
+
   pagoRow: {
-    display: "flex",
+    display: "grid",
+    gridTemplateColumns: "minmax(140px, 1fr) 120px minmax(180px, 1fr) auto",
     gap: "8px",
     marginBottom: "8px",
     alignItems: "center",
-    flexWrap: "wrap",
   },
+
   pagoSelect: {
-    flex: 1,
-    minWidth: "150px",
-    padding: "10px",
-    borderRadius: "8px",
-    border: "1px solid #ddd",
+    width: "100%",
+    padding: "10px 12px",
+    borderRadius: "10px",
+    border: "1px solid #d7dbe2",
+    background: "#fff",
   },
+
   pagoInput: {
-    width: "120px",
-    padding: "10px",
-    borderRadius: "8px",
-    border: "1px solid #ddd",
+    width: "100%",
+    padding: "10px 12px",
+    borderRadius: "10px",
+    border: "1px solid #d7dbe2",
+    background: "#fff",
   },
+
   referenciaInput: {
-    flex: 1,
-    minWidth: "180px",
-    padding: "10px",
-    borderRadius: "8px",
-    border: "1px solid #ddd",
+    width: "100%",
+    padding: "10px 12px",
+    borderRadius: "10px",
+    border: "1px solid #d7dbe2",
+    background: "#fff",
   },
-  btnPago: {
-    background: "#0284c7",
-    color: "white",
-    border: "none",
-    borderRadius: "8px",
-    padding: "8px 12px",
-    cursor: "pointer",
-  },
+
   btnEliminarPago: {
-    background: "#dc2626",
+    background: "#ef4444",
     color: "white",
     border: "none",
-    borderRadius: "8px",
-    padding: "8px 10px",
+    borderRadius: "10px",
+    padding: "10px 12px",
     cursor: "pointer",
+    fontWeight: 700,
   },
+
   resumenPagos: {
-    marginTop: "12px",
+    marginTop: "14px",
     display: "grid",
-    gap: "6px",
+    gap: "8px",
     fontSize: "15px",
     color: "#0f172a",
   },
+
+  resumenPagoRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    gap: 10,
+    background: "#fff",
+    border: "1px solid #e5e7eb",
+    borderRadius: 12,
+    padding: "10px 12px",
+  },
+
+  btnGuardar: {
+    width: "100%",
+    padding: "15px",
+    marginTop: "16px",
+    background: "#6b5a7a",
+    color: "white",
+    border: "none",
+    borderRadius: "14px",
+    fontSize: "16px",
+    fontWeight: 700,
+  },
+
   modalOverlay: {
     position: "fixed",
     inset: 0,
@@ -933,51 +1187,59 @@ const styles = {
     padding: "20px",
     zIndex: 9999,
   },
+
   modal: {
     width: "100%",
     maxWidth: "420px",
     background: "#fff",
-    borderRadius: "14px",
+    borderRadius: "18px",
     padding: "18px",
     boxShadow: "0 20px 45px rgba(0,0,0,0.22)",
+    border: "1px solid #d7dbe2",
   },
+
   modalHeader: {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
     marginBottom: "12px",
   },
+
   btnCerrarModal: {
-    background: "#e2e8f0",
+    background: "#ececef",
     border: "none",
-    borderRadius: "8px",
+    borderRadius: "10px",
     padding: "8px 10px",
     cursor: "pointer",
     fontWeight: "700",
   },
+
   modalActions: {
     display: "flex",
     gap: "10px",
     justifyContent: "flex-end",
     marginTop: "8px",
+    flexWrap: "wrap",
   },
+
   btnGuardarModal: {
-    background: "#10b981",
+    background: "#6b5a7a",
     color: "#fff",
     border: "none",
-    borderRadius: "8px",
+    borderRadius: "10px",
     padding: "10px 14px",
     cursor: "pointer",
-    fontWeight: "600",
+    fontWeight: "700",
   },
+
   btnCancelarModal: {
     background: "#ef4444",
     color: "#fff",
     border: "none",
-    borderRadius: "8px",
+    borderRadius: "10px",
     padding: "10px 14px",
     cursor: "pointer",
-    fontWeight: "600",
+    fontWeight: "700",
   },
 };
 

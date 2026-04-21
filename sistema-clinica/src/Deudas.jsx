@@ -323,19 +323,34 @@ function Deudas() {
       0
     );
 
-    const doc = new jsPDF("landscape");
+    const doc = new jsPDF("landscape", "mm", "a4");
 
-    doc.setFontSize(16);
-    doc.text("Reporte de Cuentas por Cobrar", 14, 15);
+    const colorPrincipal = [107, 90, 122];
+    const colorSecundario = [236, 236, 239];
+    const colorTexto = [31, 41, 55];
 
-    doc.setFontSize(11);
-    doc.text(`${empresa?.nombre || "Empresa activa"}`, 14, 22);
+    doc.setFillColor(...colorSecundario);
+    doc.circle(275, 12, 34, "F");
+    doc.circle(8, 198, 26, "F");
 
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(...colorPrincipal);
+    doc.setFontSize(20);
+    doc.text("Reporte de Cuentas por Cobrar", 14, 18);
+
+    doc.setFont("helvetica", "normal");
+    doc.setTextColor(...colorTexto);
     doc.setFontSize(10);
-    doc.text(`Fecha de emisión: ${formatearFecha(obtenerFechaLocalSV())}`, 14, 28);
+    doc.text(empresa?.nombre || "Empresa activa", 14, 25);
+    doc.text(`Fecha de emisión: ${formatearFecha(obtenerFechaLocalSV())}`, 14, 31);
+
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(...colorPrincipal);
+    doc.setFontSize(16);
+    doc.text("CxC", 283, 18, { align: "right" });
 
     autoTable(doc, {
-      startY: 34,
+      startY: 40,
       head: [[
         "Cliente",
         "Fecha venta",
@@ -364,20 +379,42 @@ function Deudas() {
         "",
         "",
         "",
-        "",
+        "TOTAL",
         `$${totalSaldo.toFixed(2)}`,
         "",
         "",
       ]],
+      theme: "grid",
       styles: {
-        fontSize: 9,
+        fontSize: 8.8,
+        textColor: colorTexto,
+        lineColor: [210, 214, 220],
+        lineWidth: 0.2,
       },
       headStyles: {
-        fillColor: [39, 67, 98],
+        fillColor: colorPrincipal,
+        textColor: [255, 255, 255],
+        fontStyle: "bold",
       },
       footStyles: {
-        fillColor: [232, 240, 248],
-        textColor: 20,
+        fillColor: [244, 240, 247],
+        textColor: colorTexto,
+        fontStyle: "bold",
+      },
+      alternateRowStyles: {
+        fillColor: [250, 250, 250],
+      },
+      margin: { left: 10, right: 10 },
+      columnStyles: {
+        0: { cellWidth: 55 },
+        1: { cellWidth: 24, halign: "center" },
+        2: { cellWidth: 15, halign: "center" },
+        3: { cellWidth: 30, halign: "center" },
+        4: { cellWidth: 24, halign: "right" },
+        5: { cellWidth: 24, halign: "right" },
+        6: { cellWidth: 24, halign: "right" },
+        7: { cellWidth: 22, halign: "center" },
+        8: { cellWidth: 22, halign: "center" },
       },
     });
 
@@ -485,10 +522,16 @@ function Deudas() {
       <div style={styles.container}>
         <div style={styles.headerCard}>
           <div>
-            <h1 style={styles.title}>Cuentas por Cobrar</h1>
+            <h1 style={styles.title}>Deudas</h1>
             <p style={styles.subtitle}>
-              Control de saldos pendientes, abonos y reporte de antigüedad.
+              Control de saldos pendientes, abonos y antigüedad de cuentas por cobrar.
             </p>
+          </div>
+
+          <div style={styles.headerInfo}>
+            <div><strong>{empresa?.nombre || "Empresa"}</strong></div>
+            <div>Módulo de cuentas por cobrar</div>
+            <div>Registros pendientes: <strong>{ventas.length}</strong></div>
           </div>
         </div>
 
@@ -724,73 +767,92 @@ function Deudas() {
 
 const styles = {
   page: {
-    background: "#f4f7fb",
-    minHeight: "100vh",
-    padding: "18px",
+    width: "100%",
+    minHeight: "100%",
   },
+
   container: {
-    maxWidth: "1220px",
-    margin: "0 auto",
+    width: "100%",
     display: "grid",
     gap: "18px",
   },
+
   headerCard: {
     background: "#ffffff",
-    border: "1px solid #e2e8f0",
-    borderRadius: "20px",
+    border: "1px solid #d7dbe2",
+    borderRadius: "22px",
     padding: "22px",
-    boxShadow: "0 4px 18px rgba(15, 23, 42, 0.04)",
+    display: "flex",
+    justifyContent: "space-between",
+    gap: "18px",
+    flexWrap: "wrap",
+    boxShadow: "0 10px 30px rgba(15, 23, 42, 0.06)",
   },
+
   title: {
     margin: 0,
-    color: "#10243e",
-    fontSize: "36px",
+    color: "#574866",
+    fontSize: "30px",
     fontWeight: "700",
   },
+
   subtitle: {
     margin: "6px 0 0 0",
     color: "#64748b",
     fontSize: "14px",
   },
+
+  headerInfo: {
+    textAlign: "right",
+    color: "#1f2937",
+    fontSize: 14,
+    lineHeight: 1.6,
+  },
+
   reportCard: {
     background: "#ffffff",
-    border: "1px solid #e2e8f0",
-    borderRadius: "20px",
+    border: "1px solid #d7dbe2",
+    borderRadius: "22px",
     padding: "18px 20px",
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
     gap: "16px",
     flexWrap: "wrap",
-    boxShadow: "0 4px 18px rgba(15, 23, 42, 0.04)",
+    boxShadow: "0 10px 30px rgba(15, 23, 42, 0.06)",
   },
+
   reportTitle: {
     margin: 0,
     fontSize: "24px",
-    color: "#10243e",
+    color: "#574866",
     fontWeight: "700",
   },
+
   reportText: {
     margin: "6px 0 0 0",
     color: "#64748b",
     fontSize: "14px",
   },
+
   reportButtons: {
     display: "flex",
     gap: "10px",
     flexWrap: "wrap",
   },
+
   pdfBtn: {
-    background: "#ffe2e2",
-    color: "#b42318",
-    border: "1px solid #ffc7c7",
+    background: "#f4f0f7",
+    color: "#574866",
+    border: "1px solid #d3c7dd",
     borderRadius: "12px",
     padding: "11px 14px",
     cursor: "pointer",
     fontWeight: "700",
   },
+
   excelBtn: {
-    background: "#e3f8eb",
+    background: "#eefcf3",
     color: "#0f7a4d",
     border: "1px solid #c7eed5",
     borderRadius: "12px",
@@ -798,25 +860,30 @@ const styles = {
     cursor: "pointer",
     fontWeight: "700",
   },
+
   emptyBox: {
     background: "#ffffff",
-    border: "1px solid #e2e8f0",
-    borderRadius: "16px",
-    padding: "20px",
+    border: "1px solid #d7dbe2",
+    borderRadius: "18px",
+    padding: "24px",
     color: "#64748b",
     textAlign: "center",
+    boxShadow: "0 10px 30px rgba(15, 23, 42, 0.04)",
   },
+
   listaVentas: {
     display: "grid",
     gap: "14px",
   },
+
   card: {
     background: "#ffffff",
-    border: "1px solid #e2e8f0",
-    borderRadius: "18px",
+    border: "1px solid #d7dbe2",
+    borderRadius: "20px",
     padding: "16px",
-    boxShadow: "0 2px 10px rgba(15, 23, 42, 0.04)",
+    boxShadow: "0 8px 24px rgba(15, 23, 42, 0.05)",
   },
+
   cardTop: {
     display: "flex",
     justifyContent: "space-between",
@@ -825,50 +892,59 @@ const styles = {
     flexWrap: "wrap",
     marginBottom: "14px",
   },
+
   nombreCliente: {
     margin: 0,
     fontSize: "18px",
-    color: "#0f172a",
+    color: "#1f2937",
   },
+
   estadoBadge: {
     marginTop: "6px",
     display: "inline-block",
-    background: "#eef2ff",
-    color: "#4338ca",
+    background: "#f4f0f7",
+    color: "#574866",
     padding: "4px 10px",
     borderRadius: "999px",
     fontSize: "12px",
-    fontWeight: "600",
+    fontWeight: "700",
+    border: "1px solid #d3c7dd",
   },
+
   btnCobrar: {
     padding: "10px 14px",
     borderRadius: "12px",
     border: "none",
-    background: "#0ea5e9",
+    background: "#6b5a7a",
     color: "white",
     cursor: "pointer",
-    fontWeight: "600",
+    fontWeight: "700",
   },
+
   cardResumen: {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
     gap: "10px",
   },
+
   resumenItem: {
-    background: "#f8fafc",
-    border: "1px solid #e2e8f0",
+    background: "#f8f8fa",
+    border: "1px solid #d7dbe2",
     borderRadius: "14px",
     padding: "12px",
     display: "grid",
     gap: "4px",
   },
+
   resumenLabel: {
     fontSize: "12px",
     color: "#64748b",
   },
+
   saldoTexto: {
     color: "#b45309",
   },
+
   modalOverlay: {
     position: "fixed",
     inset: 0,
@@ -879,6 +955,7 @@ const styles = {
     padding: "16px",
     zIndex: 999,
   },
+
   modal: {
     width: "100%",
     maxWidth: "860px",
@@ -888,7 +965,9 @@ const styles = {
     boxShadow: "0 20px 60px rgba(15, 23, 42, 0.18)",
     maxHeight: "90vh",
     overflowY: "auto",
+    border: "1px solid #d7dbe2",
   },
+
   modalHeader: {
     display: "flex",
     justifyContent: "space-between",
@@ -896,19 +975,22 @@ const styles = {
     gap: "12px",
     marginBottom: "18px",
   },
+
   modalTitle: {
     margin: 0,
     fontSize: "24px",
-    color: "#0f172a",
+    color: "#574866",
   },
+
   modalSubtitle: {
     margin: "4px 0 0 0",
     color: "#64748b",
     fontSize: "14px",
   },
+
   btnCerrar: {
     border: "none",
-    background: "#f1f5f9",
+    background: "#ececef",
     color: "#334155",
     width: "36px",
     height: "36px",
@@ -916,24 +998,28 @@ const styles = {
     cursor: "pointer",
     fontSize: "18px",
   },
+
   resumenBox: {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))",
     gap: "12px",
     marginBottom: "20px",
   },
+
   resumenCard: {
-    background: "#f8fafc",
-    border: "1px solid #e2e8f0",
+    background: "#f8f8fa",
+    border: "1px solid #d7dbe2",
     borderRadius: "16px",
     padding: "14px",
     display: "grid",
     gap: "4px",
   },
+
   resumenMiniLabel: {
     fontSize: "12px",
     color: "#64748b",
   },
+
   pagosHeader: {
     display: "flex",
     justifyContent: "space-between",
@@ -942,35 +1028,41 @@ const styles = {
     flexWrap: "wrap",
     marginBottom: "12px",
   },
+
   sectionTitle: {
     margin: 0,
     fontSize: "17px",
-    color: "#1e293b",
+    color: "#1f2937",
   },
+
   btnAgregar: {
-    background: "#e0f2fe",
-    color: "#0369a1",
-    border: "1px solid #bae6fd",
+    background: "#f4f0f7",
+    color: "#574866",
+    border: "1px solid #d3c7dd",
     borderRadius: "12px",
     padding: "9px 14px",
     cursor: "pointer",
-    fontWeight: "600",
+    fontWeight: "700",
   },
+
   pagosLista: {
     display: "grid",
     gap: "12px",
   },
+
   pagoCard: {
-    border: "1px solid #e2e8f0",
+    border: "1px solid #d7dbe2",
     background: "#fcfdff",
     borderRadius: "16px",
     padding: "14px",
   },
+
   pagoGrid: {
     display: "grid",
     gridTemplateColumns: "2fr 1fr 2fr",
     gap: "12px",
   },
+
   label: {
     display: "block",
     marginBottom: "6px",
@@ -978,6 +1070,7 @@ const styles = {
     color: "#64748b",
     fontWeight: "600",
   },
+
   select: {
     width: "100%",
     padding: "11px 12px",
@@ -986,6 +1079,7 @@ const styles = {
     background: "white",
     boxSizing: "border-box",
   },
+
   input: {
     width: "100%",
     padding: "11px 12px",
@@ -994,11 +1088,13 @@ const styles = {
     background: "white",
     boxSizing: "border-box",
   },
+
   pagoAcciones: {
     display: "flex",
     justifyContent: "flex-end",
     marginTop: "10px",
   },
+
   btnEliminar: {
     background: "#fff1f2",
     color: "#be123c",
@@ -1006,24 +1102,27 @@ const styles = {
     borderRadius: "10px",
     padding: "8px 12px",
     cursor: "pointer",
-    fontWeight: "600",
+    fontWeight: "700",
   },
+
   totalesBox: {
     marginTop: "18px",
-    background: "#f8fafc",
-    border: "1px solid #e2e8f0",
+    background: "#f8f8fa",
+    border: "1px solid #d7dbe2",
     borderRadius: "16px",
     padding: "14px",
     display: "grid",
     gap: "8px",
   },
+
   totalRow: {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
     gap: "12px",
-    color: "#0f172a",
+    color: "#1f2937",
   },
+
   botones: {
     display: "flex",
     justifyContent: "flex-end",
@@ -1031,6 +1130,7 @@ const styles = {
     marginTop: "18px",
     flexWrap: "wrap",
   },
+
   btnCancelar: {
     padding: "11px 16px",
     borderRadius: "12px",
@@ -1038,16 +1138,17 @@ const styles = {
     background: "white",
     cursor: "pointer",
     color: "#334155",
-    fontWeight: "600",
+    fontWeight: "700",
   },
+
   btnGuardar: {
     padding: "11px 16px",
     borderRadius: "12px",
     border: "none",
-    background: "#16a34a",
+    background: "#6b5a7a",
     color: "white",
     cursor: "pointer",
-    fontWeight: "600",
+    fontWeight: "700",
   },
 };
 

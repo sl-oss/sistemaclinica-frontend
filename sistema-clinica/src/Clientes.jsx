@@ -7,13 +7,15 @@ function Clientes() {
   const [telefono, setTelefono] = useState("");
   const [busqueda, setBusqueda] = useState("");
 
-  const empresa = JSON.parse(localStorage.getItem("empresa"));
+  const empresa = JSON.parse(localStorage.getItem("empresa") || "null");
 
   useEffect(() => {
-    obtenerClientes();
+    if (empresa?.id) obtenerClientes();
   }, []);
 
   const obtenerClientes = async () => {
+    if (!empresa?.id) return;
+
     const { data } = await supabase
       .from("clientes")
       .select("*")
@@ -24,6 +26,7 @@ function Clientes() {
   };
 
   const guardarCliente = async () => {
+    if (!empresa?.id) return;
     if (!nombre) return alert("Nombre requerido");
 
     await supabase.from("clientes").insert([
@@ -36,16 +39,24 @@ function Clientes() {
 
     setNombre("");
     setTelefono("");
-
     obtenerClientes();
   };
 
   const eliminarCliente = async (id) => {
-    await supabase.from("clientes").delete().eq("id", id);
+    if (!empresa?.id) return;
+
+    const confirmar = window.confirm("¿Eliminar este cliente?");
+    if (!confirmar) return;
+
+    await supabase
+      .from("clientes")
+      .delete()
+      .eq("id", id)
+      .eq("empresa_id", empresa.id);
+
     obtenerClientes();
   };
 
-  // 🔥 BUSCADOR INTELIGENTE
   const clientesFiltrados = clientes.filter((c) => {
     const texto = busqueda.toLowerCase();
 
@@ -56,62 +67,219 @@ function Clientes() {
   });
 
   return (
-    <div>
-      <h2>👤 Pacientes</h2>
-
-      {/* 🔥 FORM */}
-      <div style={{ display: "flex", gap: 10 }}>
-        <input
-          placeholder="Nombre"
-          value={nombre}
-          onChange={(e) => setNombre(e.target.value)}
-        />
-
-        <input
-          placeholder="Teléfono"
-          value={telefono}
-          onChange={(e) => setTelefono(e.target.value)}
-        />
-
-        <button onClick={guardarCliente}>Guardar</button>
-      </div>
-
-      <hr />
-
-      {/* 🔥 BUSCADOR */}
-      <input
-        style={{ marginBottom: 10, width: "100%", padding: 8 }}
-        placeholder="🔍 Buscar cliente por nombre o teléfono..."
-        value={busqueda}
-        onChange={(e) => setBusqueda(e.target.value)}
-      />
-
-      {/* 🔥 LISTA */}
-      {clientesFiltrados.map((c) => (
-        <div
-          key={c.id}
-          style={{
-            marginBottom: 10,
-            padding: 10,
-            border: "1px solid #eee",
-            borderRadius: 8,
-          }}
-        >
-          <strong>{c.nombre}</strong>
-          <br />
-          📞 {c.telefono || "Sin teléfono"}
-
+    <div style={styles.page}>
+      <div style={styles.container}>
+        {/* HEADER */}
+        <div style={styles.headerCard}>
           <div>
-            <button onClick={() => eliminarCliente(c.id)}>❌ Eliminar</button>
+            <h1 style={styles.title}>Pacientes</h1>
+            <p style={styles.subtitle}>
+              Administrá tu base de clientes/pacientes.
+            </p>
+          </div>
+
+          <div style={styles.headerInfo}>
+            <div><strong>{empresa?.nombre || "Empresa"}</strong></div>
+            <div>Total registros</div>
+            <div><strong>{clientes.length}</strong></div>
           </div>
         </div>
-      ))}
 
-      {clientesFiltrados.length === 0 && (
-        <p>No se encontraron clientes</p>
-      )}
+        {/* FORM */}
+        <div style={styles.card}>
+          <div style={styles.cardHeader}>
+            <h3 style={styles.sectionTitle}>Nuevo paciente</h3>
+            <p style={styles.sectionSubtitle}>
+              Registrá un nuevo cliente en el sistema.
+            </p>
+          </div>
+
+          <div style={styles.form}>
+            <input
+              style={styles.input}
+              placeholder="Nombre"
+              value={nombre}
+              onChange={(e) => setNombre(e.target.value)}
+            />
+
+            <input
+              style={styles.input}
+              placeholder="Teléfono"
+              value={telefono}
+              onChange={(e) => setTelefono(e.target.value)}
+            />
+
+            <button style={styles.saveBtn} onClick={guardarCliente}>
+              Guardar
+            </button>
+          </div>
+        </div>
+
+        {/* BUSCADOR */}
+        <div style={styles.card}>
+          <input
+            style={styles.input}
+            placeholder="🔍 Buscar cliente por nombre o teléfono..."
+            value={busqueda}
+            onChange={(e) => setBusqueda(e.target.value)}
+          />
+        </div>
+
+        {/* LISTA */}
+        <div style={styles.grid}>
+          {clientesFiltrados.map((c) => (
+            <div key={c.id} style={styles.cardCliente}>
+              <div>
+                <strong style={styles.nombre}>{c.nombre}</strong>
+                <div style={styles.telefono}>
+                  📞 {c.telefono || "Sin teléfono"}
+                </div>
+              </div>
+
+              <button
+                style={styles.deleteBtn}
+                onClick={() => eliminarCliente(c.id)}
+              >
+                Eliminar
+              </button>
+            </div>
+          ))}
+        </div>
+
+        {clientesFiltrados.length === 0 && (
+          <div style={styles.empty}>No se encontraron clientes</div>
+        )}
+      </div>
     </div>
   );
 }
+
+const styles = {
+  page: {
+    width: "100%",
+    minHeight: "100%",
+  },
+
+  container: {
+    width: "100%",
+    display: "grid",
+    gap: "18px",
+  },
+
+  headerCard: {
+    background: "#ffffff",
+    border: "1px solid #d7dbe2",
+    borderRadius: "22px",
+    padding: "22px",
+    display: "flex",
+    justifyContent: "space-between",
+    flexWrap: "wrap",
+    boxShadow: "0 10px 30px rgba(15, 23, 42, 0.06)",
+  },
+
+  title: {
+    margin: 0,
+    color: "#574866",
+    fontSize: "30px",
+    fontWeight: "700",
+  },
+
+  subtitle: {
+    margin: "6px 0 0 0",
+    color: "#64748b",
+    fontSize: "14px",
+  },
+
+  headerInfo: {
+    textAlign: "right",
+    fontSize: "14px",
+    color: "#1f2937",
+  },
+
+  card: {
+    background: "#ffffff",
+    border: "1px solid #d7dbe2",
+    borderRadius: "22px",
+    padding: "18px",
+    boxShadow: "0 10px 30px rgba(15, 23, 42, 0.06)",
+  },
+
+  cardHeader: {
+    marginBottom: "10px",
+  },
+
+  sectionTitle: {
+    margin: 0,
+    fontSize: "18px",
+  },
+
+  sectionSubtitle: {
+    margin: "4px 0 0 0",
+    color: "#64748b",
+    fontSize: "14px",
+  },
+
+  form: {
+    display: "grid",
+    gridTemplateColumns: "1fr 1fr 150px",
+    gap: "12px",
+  },
+
+  input: {
+    padding: "12px",
+    borderRadius: "12px",
+    border: "1px solid #cfd9e5",
+  },
+
+  saveBtn: {
+    background: "#6b5a7a",
+    color: "#fff",
+    border: "none",
+    borderRadius: "12px",
+    fontWeight: "700",
+  },
+
+  grid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+    gap: "14px",
+  },
+
+  cardCliente: {
+    background: "#fff",
+    border: "1px solid #e2e8f0",
+    borderRadius: "16px",
+    padding: "16px",
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+
+  nombre: {
+    fontSize: "16px",
+    color: "#1f2937",
+  },
+
+  telefono: {
+    marginTop: "4px",
+    color: "#64748b",
+    fontSize: "14px",
+  },
+
+  deleteBtn: {
+    background: "#fff1f2",
+    color: "#be123c",
+    border: "1px solid #fecdd3",
+    borderRadius: "10px",
+    padding: "8px 12px",
+    fontWeight: "600",
+  },
+
+  empty: {
+    textAlign: "center",
+    padding: "20px",
+    color: "#64748b",
+  },
+};
 
 export default Clientes;

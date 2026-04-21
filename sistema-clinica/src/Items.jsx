@@ -266,17 +266,34 @@ function Items() {
     if (!itemKardex) return alert("Seleccioná un item");
     if (kardexConSaldo.length === 0) return alert("No hay movimientos para exportar");
 
-    const doc = new jsPDF("landscape");
+    const doc = new jsPDF("landscape", "mm", "a4");
 
+    const colorPrincipal = [107, 90, 122];
+    const colorSecundario = [236, 236, 239];
+    const colorTexto = [31, 41, 55];
+
+    doc.setFillColor(...colorSecundario);
+    doc.circle(275, 12, 34, "F");
+    doc.circle(8, 198, 26, "F");
+
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(...colorPrincipal);
+    doc.setFontSize(20);
+    doc.text("Kardex de Inventario", 14, 18);
+
+    doc.setFont("helvetica", "normal");
+    doc.setTextColor(...colorTexto);
+    doc.setFontSize(10);
+    doc.text(`Producto: ${itemKardex.nombre}`, 14, 25);
+    doc.text(`Empresa: ${empresa?.nombre || "Empresa activa"}`, 14, 31);
+
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(...colorPrincipal);
     doc.setFontSize(16);
-    doc.text("Kardex de Inventario", 14, 15);
-
-    doc.setFontSize(11);
-    doc.text(`Producto: ${itemKardex.nombre}`, 14, 23);
-    doc.text(`Empresa: ${empresa?.nombre || "Empresa activa"}`, 14, 30);
+    doc.text("KARDEX", 283, 18, { align: "right" });
 
     autoTable(doc, {
-      startY: 36,
+      startY: 40,
       head: [["Fecha", "Tipo", "Entrada", "Salida", "Saldo", "Motivo"]],
       body: kardexConSaldo.map((k) => [
         formatearFechaHora(k.fecha_local || k.created_at),
@@ -286,8 +303,30 @@ function Items() {
         Number(k.saldo || 0).toFixed(2),
         k.motivo || "",
       ]),
-      styles: { fontSize: 9 },
-      headStyles: { fillColor: [39, 67, 98] },
+      theme: "grid",
+      styles: {
+        fontSize: 9,
+        textColor: colorTexto,
+        lineColor: [210, 214, 220],
+        lineWidth: 0.2,
+      },
+      headStyles: {
+        fillColor: colorPrincipal,
+        textColor: [255, 255, 255],
+        fontStyle: "bold",
+      },
+      alternateRowStyles: {
+        fillColor: [250, 250, 250],
+      },
+      margin: { left: 10, right: 10 },
+      columnStyles: {
+        0: { cellWidth: 48 },
+        1: { cellWidth: 22, halign: "center" },
+        2: { cellWidth: 22, halign: "right" },
+        3: { cellWidth: 22, halign: "right" },
+        4: { cellWidth: 22, halign: "right" },
+        5: { cellWidth: 120 },
+      },
     });
 
     doc.save(`kardex_${itemKardex.nombre}.pdf`);
@@ -308,14 +347,29 @@ function Items() {
       <div style={styles.container}>
         <div style={styles.headerCard}>
           <div>
-            <h2 style={styles.title}>📦 Inventario</h2>
+            <h1 style={styles.title}>Inventario</h1>
             <p style={styles.subtitle}>
               Administrá productos, servicios, stock y kardex.
             </p>
           </div>
+
+          <div style={styles.headerInfo}>
+            <div><strong>{empresa?.nombre || "Empresa"}</strong></div>
+            <div>Módulo de inventario</div>
+            <div>Registros: <strong>{items.length}</strong></div>
+          </div>
         </div>
 
         <div style={styles.card}>
+          <div style={styles.cardHeader}>
+            <div>
+              <h3 style={styles.sectionTitle}>Nuevo item</h3>
+              <p style={styles.sectionSubtitle}>
+                Creá productos o servicios y registrá stock inicial si aplica.
+              </p>
+            </div>
+          </div>
+
           <div style={styles.formRow}>
             <input
               style={styles.input}
@@ -358,6 +412,15 @@ function Items() {
         </div>
 
         <div style={styles.card}>
+          <div style={styles.cardHeader}>
+            <div>
+              <h3 style={styles.sectionTitle}>Listado</h3>
+              <p style={styles.sectionSubtitle}>
+                Filtrá y gestioná productos o servicios registrados.
+              </p>
+            </div>
+          </div>
+
           <div style={styles.filterRow}>
             <input
               style={styles.input}
@@ -386,22 +449,29 @@ function Items() {
                 ...styles.itemCard,
                 background:
                   item.tipo === "producto"
-                    ? item.stock <= 3
-                      ? "#fee2e2"
-                      : "#f8fafc"
-                    : "#e0f2fe",
+                    ? Number(item.stock || 0) <= 3
+                      ? "#fff7f7"
+                      : "#ffffff"
+                    : "#faf8fc",
               }}
             >
+              <div style={styles.itemTop}>
+                <div style={styles.itemTypeBadge}>
+                  {item.tipo === "producto" ? "📦 Producto" : "🧾 Servicio"}
+                </div>
+              </div>
+
               <div>
                 <strong style={styles.itemName}>{item.nombre}</strong>
                 <div style={styles.itemPrice}>${Number(item.precio || 0).toFixed(2)}</div>
               </div>
 
               {item.tipo === "producto" && (
-                <div>
-                  Stock: <strong>{item.stock}</strong>
+                <div style={styles.stockBox}>
+                  <span>Stock:</span>
+                  <strong>{item.stock}</strong>
 
-                  {item.stock <= 3 && (
+                  {Number(item.stock || 0) <= 3 && (
                     <div style={styles.lowStock}>⚠️ Stock bajo</div>
                   )}
                 </div>
@@ -434,7 +504,7 @@ function Items() {
             <div style={styles.modalHeader}>
               <div>
                 <h3 style={styles.modalTitle}>
-                  📊 Kardex - {itemKardex?.nombre}
+                  Kardex - {itemKardex?.nombre}
                 </h3>
                 <p style={styles.modalSubtitle}>
                   Movimientos de inventario del producto seleccionado
@@ -505,53 +575,86 @@ function Items() {
 
 const styles = {
   page: {
-    background: "#f4f7fb",
-    minHeight: "100vh",
-    padding: "18px",
+    width: "100%",
+    minHeight: "100%",
   },
+
   container: {
-    maxWidth: "1200px",
-    margin: "0 auto",
+    width: "100%",
     display: "grid",
     gap: "18px",
   },
+
   headerCard: {
     background: "#ffffff",
-    border: "1px solid #e2e8f0",
-    borderRadius: "20px",
+    border: "1px solid #d7dbe2",
+    borderRadius: "22px",
     padding: "22px",
-    boxShadow: "0 4px 18px rgba(15, 23, 42, 0.04)",
+    display: "flex",
+    justifyContent: "space-between",
+    gap: "18px",
+    flexWrap: "wrap",
+    boxShadow: "0 10px 30px rgba(15, 23, 42, 0.06)",
   },
+
   title: {
     margin: 0,
-    color: "#10243e",
-    fontSize: "34px",
+    color: "#574866",
+    fontSize: "30px",
     fontWeight: "700",
   },
+
   subtitle: {
     margin: "6px 0 0 0",
     color: "#64748b",
     fontSize: "14px",
   },
+
+  headerInfo: {
+    textAlign: "right",
+    color: "#1f2937",
+    fontSize: 14,
+    lineHeight: 1.6,
+  },
+
   card: {
     background: "#ffffff",
-    border: "1px solid #e2e8f0",
-    borderRadius: "20px",
+    border: "1px solid #d7dbe2",
+    borderRadius: "22px",
     padding: "18px",
-    boxShadow: "0 4px 18px rgba(15, 23, 42, 0.04)",
+    boxShadow: "0 10px 30px rgba(15, 23, 42, 0.06)",
   },
+
+  cardHeader: {
+    marginBottom: 14,
+  },
+
+  sectionTitle: {
+    margin: 0,
+    fontSize: "20px",
+    color: "#1f2937",
+  },
+
+  sectionSubtitle: {
+    margin: "4px 0 0 0",
+    color: "#64748b",
+    fontSize: "14px",
+  },
+
   formRow: {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
     gap: "12px",
     alignItems: "center",
   },
+
   filterRow: {
     display: "grid",
     gridTemplateColumns: "1fr 220px",
     gap: "12px",
     alignItems: "center",
   },
+
   input: {
     width: "100%",
     padding: "11px 12px",
@@ -562,8 +665,9 @@ const styles = {
     outline: "none",
     fontSize: "14px",
   },
+
   saveBtn: {
-    background: "#16a34a",
+    background: "#6b5a7a",
     color: "#fff",
     border: "none",
     borderRadius: "12px",
@@ -571,56 +675,98 @@ const styles = {
     cursor: "pointer",
     fontWeight: "700",
   },
+
   itemsGrid: {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
     gap: "14px",
   },
+
   itemCard: {
-    border: "1px solid #e2e8f0",
-    borderRadius: "18px",
+    border: "1px solid #d7dbe2",
+    borderRadius: "20px",
     padding: "16px",
     display: "grid",
     gap: "12px",
+    boxShadow: "0 6px 18px rgba(15, 23, 42, 0.04)",
   },
+
+  itemTop: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: 10,
+  },
+
+  itemTypeBadge: {
+    display: "inline-block",
+    background: "#f4f0f7",
+    color: "#574866",
+    padding: "6px 10px",
+    borderRadius: "999px",
+    fontSize: "12px",
+    fontWeight: "700",
+    border: "1px solid #d3c7dd",
+  },
+
   itemName: {
-    fontSize: "18px",
-    color: "#0f172a",
+    fontSize: "19px",
+    color: "#1f2937",
+    lineHeight: 1.25,
   },
+
   itemPrice: {
-    marginTop: "4px",
-    color: "#334155",
-    fontWeight: "600",
+    marginTop: "6px",
+    color: "#574866",
+    fontWeight: "700",
+    fontSize: "18px",
   },
+
+  stockBox: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    flexWrap: "wrap",
+    color: "#334155",
+    fontSize: "14px",
+  },
+
   lowStock: {
     color: "#dc2626",
     fontSize: "12px",
-    marginTop: "4px",
-    fontWeight: "600",
+    fontWeight: "700",
+    background: "#fee2e2",
+    border: "1px solid #fecaca",
+    padding: "4px 8px",
+    borderRadius: 999,
   },
+
   actions: {
     display: "flex",
     gap: "8px",
     flexWrap: "wrap",
   },
+
   actionBtn: {
-    background: "#ecfdf5",
-    color: "#166534",
-    border: "1px solid #bbf7d0",
+    background: "#eefcf3",
+    color: "#0f7a4d",
+    border: "1px solid #c7eed5",
     borderRadius: "10px",
     padding: "8px 12px",
     cursor: "pointer",
-    fontWeight: "600",
+    fontWeight: "700",
   },
+
   actionBtnBlue: {
-    background: "#e0f2fe",
-    color: "#075985",
-    border: "1px solid #bae6fd",
+    background: "#f4f0f7",
+    color: "#574866",
+    border: "1px solid #d3c7dd",
     borderRadius: "10px",
     padding: "8px 12px",
     cursor: "pointer",
-    fontWeight: "600",
+    fontWeight: "700",
   },
+
   deleteBtn: {
     background: "#fff1f2",
     color: "#be123c",
@@ -628,8 +774,9 @@ const styles = {
     borderRadius: "10px",
     padding: "8px 12px",
     cursor: "pointer",
-    fontWeight: "600",
+    fontWeight: "700",
   },
+
   modalOverlay: {
     position: "fixed",
     inset: 0,
@@ -640,49 +787,57 @@ const styles = {
     padding: "20px",
     zIndex: 9999,
   },
+
   modal: {
     width: "100%",
-    maxWidth: "1050px",
+    maxWidth: "1100px",
     maxHeight: "88vh",
     overflow: "hidden",
     background: "#fff",
-    borderRadius: "18px",
+    borderRadius: "20px",
     padding: "18px",
     boxShadow: "0 20px 45px rgba(0,0,0,0.22)",
     display: "grid",
     gap: "14px",
+    border: "1px solid #d7dbe2",
   },
+
   modalHeader: {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "flex-start",
     gap: "12px",
   },
+
   modalTitle: {
     margin: 0,
     fontSize: "28px",
-    color: "#10243e",
+    color: "#574866",
   },
+
   modalSubtitle: {
     margin: "4px 0 0 0",
     color: "#64748b",
     fontSize: "14px",
   },
+
   closeBtn: {
-    background: "#e2e8f0",
+    background: "#ececef",
     border: "none",
-    borderRadius: "8px",
+    borderRadius: "10px",
     padding: "8px 10px",
     cursor: "pointer",
     fontWeight: "700",
   },
+
   modalActions: {
     display: "flex",
     gap: "10px",
     flexWrap: "wrap",
   },
+
   excelBtn: {
-    background: "#e3f8eb",
+    background: "#eefcf3",
     color: "#0f7a4d",
     border: "1px solid #c7eed5",
     borderRadius: "12px",
@@ -690,39 +845,44 @@ const styles = {
     cursor: "pointer",
     fontWeight: "700",
   },
+
   pdfBtn: {
-    background: "#ffe2e2",
-    color: "#b42318",
-    border: "1px solid #ffc7c7",
+    background: "#f4f0f7",
+    color: "#574866",
+    border: "1px solid #d3c7dd",
     borderRadius: "12px",
     padding: "10px 14px",
     cursor: "pointer",
     fontWeight: "700",
   },
+
   kardexTableWrap: {
     overflow: "auto",
-    border: "1px solid #e2e8f0",
+    border: "1px solid #d7dbe2",
     borderRadius: "16px",
     maxHeight: "58vh",
     background: "#fff",
   },
+
   table: {
     width: "100%",
     borderCollapse: "collapse",
     minWidth: "900px",
   },
+
   th: {
     position: "sticky",
     top: 0,
-    background: "#f3f7fb",
+    background: "#f4f0f7",
     padding: "14px 12px",
     textAlign: "left",
-    color: "#20364f",
+    color: "#574866",
     fontWeight: "700",
     fontSize: "14px",
-    borderBottom: "1px solid #e2e8f0",
+    borderBottom: "1px solid #d7dbe2",
     zIndex: 1,
   },
+
   td: {
     padding: "12px",
     borderBottom: "1px solid #edf2f7",
@@ -730,6 +890,7 @@ const styles = {
     fontSize: "14px",
     color: "#334155",
   },
+
   tdMotivo: {
     padding: "12px",
     borderBottom: "1px solid #edf2f7",
@@ -739,6 +900,7 @@ const styles = {
     whiteSpace: "pre-wrap",
     wordBreak: "break-word",
   },
+
   emptyState: {
     padding: "30px",
     textAlign: "center",

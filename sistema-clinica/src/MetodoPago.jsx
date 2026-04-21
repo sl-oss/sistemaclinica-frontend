@@ -205,12 +205,27 @@ export default function MetodoPago() {
               Administrá los métodos que usarás en ventas, deudas y caja diaria.
             </p>
           </div>
+
+          <div style={styles.headerInfo}>
+            <div><strong>{empresa?.nombre || "Empresa"}</strong></div>
+            <div>Módulo de métodos de pago</div>
+            <div>Registros: <strong>{metodos.length}</strong></div>
+          </div>
         </div>
 
         <div style={styles.card}>
+          <div style={styles.cardHeader}>
+            <div>
+              <h3 style={styles.sectionTitle}>Nuevo método</h3>
+              <p style={styles.sectionSubtitle}>
+                Agregá formas de cobro para usarlas en ventas, abonos y caja diaria.
+              </p>
+            </div>
+          </div>
+
           <form onSubmit={agregarMetodo} style={styles.form}>
             <div style={styles.inputWrap}>
-              <label style={styles.label}>Nuevo método</label>
+              <label style={styles.label}>Nombre del método</label>
               <input
                 type="text"
                 value={nombre}
@@ -225,7 +240,7 @@ export default function MetodoPago() {
               disabled={loading}
               style={{
                 ...styles.addBtn,
-                opacity: loading ? 0.8 : 1,
+                opacity: loading ? 0.85 : 1,
                 cursor: loading ? "not-allowed" : "pointer",
               }}
             >
@@ -235,6 +250,15 @@ export default function MetodoPago() {
         </div>
 
         <div style={styles.card}>
+          <div style={styles.cardHeader}>
+            <div>
+              <h3 style={styles.sectionTitle}>Listado de métodos</h3>
+              <p style={styles.sectionSubtitle}>
+                Podés ordenar, duplicar, activar, desactivar o eliminar métodos.
+              </p>
+            </div>
+          </div>
+
           <div style={styles.tableWrap}>
             <table style={styles.table}>
               <thead>
@@ -262,9 +286,9 @@ export default function MetodoPago() {
                       <span
                         style={{
                           ...styles.statusBadge,
-                          background: metodo.activo ? "#e7f8ee" : "#f1f5f9",
-                          color: metodo.activo ? "#15803d" : "#475569",
-                          borderColor: metodo.activo ? "#bbf7d0" : "#cbd5e1",
+                          background: metodo.activo ? "#eefcf3" : "#f8f8fa",
+                          color: metodo.activo ? "#0f7a4d" : "#475569",
+                          borderColor: metodo.activo ? "#c7eed5" : "#d7dbe2",
                         }}
                       >
                         {metodo.activo ? "Sí" : "No"}
@@ -275,9 +299,9 @@ export default function MetodoPago() {
                       <span
                         style={{
                           ...styles.statusBadge,
-                          background: metodo.es_fijo ? "#eef2ff" : "#fff7ed",
-                          color: metodo.es_fijo ? "#4338ca" : "#9a3412",
-                          borderColor: metodo.es_fijo ? "#c7d2fe" : "#fed7aa",
+                          background: metodo.es_fijo ? "#f4f0f7" : "#fff7ed",
+                          color: metodo.es_fijo ? "#574866" : "#9a3412",
+                          borderColor: metodo.es_fijo ? "#d3c7dd" : "#fed7aa",
                         }}
                       >
                         {metodo.es_fijo ? "Sí" : "No"}
@@ -355,56 +379,91 @@ export default function MetodoPago() {
 
 const styles = {
   page: {
-    background: "#f4f7fb",
-    minHeight: "100vh",
-    padding: "18px",
+    width: "100%",
+    minHeight: "100%",
   },
+
   container: {
-    maxWidth: "1080px",
-    margin: "0 auto",
+    width: "100%",
     display: "grid",
     gap: "18px",
   },
+
   headerCard: {
     background: "#ffffff",
-    border: "1px solid #e2e8f0",
-    borderRadius: "20px",
+    border: "1px solid #d7dbe2",
+    borderRadius: "22px",
     padding: "22px",
-    boxShadow: "0 4px 18px rgba(15, 23, 42, 0.04)",
+    boxShadow: "0 10px 30px rgba(15, 23, 42, 0.06)",
+    display: "flex",
+    justifyContent: "space-between",
+    gap: "16px",
+    flexWrap: "wrap",
+    alignItems: "center",
   },
+
   title: {
     margin: 0,
-    color: "#10243e",
-    fontSize: "36px",
+    color: "#574866",
+    fontSize: "30px",
     fontWeight: "700",
   },
+
   subtitle: {
     margin: "6px 0 0 0",
     color: "#64748b",
     fontSize: "14px",
   },
+
+  headerInfo: {
+    textAlign: "right",
+    color: "#1f2937",
+    fontSize: 14,
+    lineHeight: 1.6,
+  },
+
   card: {
     background: "#ffffff",
-    border: "1px solid #e2e8f0",
-    borderRadius: "20px",
+    border: "1px solid #d7dbe2",
+    borderRadius: "22px",
     padding: "20px",
-    boxShadow: "0 4px 18px rgba(15, 23, 42, 0.04)",
+    boxShadow: "0 10px 30px rgba(15, 23, 42, 0.06)",
   },
+
+  cardHeader: {
+    marginBottom: 14,
+  },
+
+  sectionTitle: {
+    margin: 0,
+    fontSize: "20px",
+    color: "#1f2937",
+  },
+
+  sectionSubtitle: {
+    margin: "4px 0 0 0",
+    color: "#64748b",
+    fontSize: "14px",
+  },
+
   form: {
     display: "grid",
     gridTemplateColumns: "1fr 170px",
     gap: "14px",
     alignItems: "end",
   },
+
   inputWrap: {
     display: "grid",
     gap: "6px",
   },
+
   label: {
     fontSize: "13px",
     color: "#4b5f78",
     fontWeight: "600",
   },
+
   input: {
     width: "100%",
     padding: "12px 14px",
@@ -415,8 +474,9 @@ const styles = {
     outline: "none",
     fontSize: "14px",
   },
+
   addBtn: {
-    background: "#255dcf",
+    background: "#6b5a7a",
     color: "#fff",
     border: "none",
     borderRadius: "12px",
@@ -424,36 +484,43 @@ const styles = {
     fontWeight: "700",
     fontSize: "14px",
   },
+
   tableWrap: {
     overflowX: "auto",
-    border: "1px solid #e2e8f0",
+    border: "1px solid #d7dbe2",
     borderRadius: "18px",
   },
+
   table: {
     width: "100%",
     borderCollapse: "collapse",
     minWidth: "820px",
   },
+
   theadRow: {
-    background: "#f3f7fb",
+    background: "#f4f0f7",
   },
+
   th: {
     padding: "14px 12px",
     textAlign: "left",
-    color: "#20364f",
+    color: "#574866",
     fontWeight: "700",
     fontSize: "14px",
-    borderBottom: "1px solid #e2e8f0",
+    borderBottom: "1px solid #d7dbe2",
   },
+
   tr: {
     borderBottom: "1px solid #eef2f7",
   },
+
   td: {
     padding: "14px 12px",
     color: "#334155",
     fontSize: "14px",
     verticalAlign: "middle",
   },
+
   tdCenter: {
     padding: "14px 12px",
     color: "#334155",
@@ -461,6 +528,7 @@ const styles = {
     textAlign: "center",
     verticalAlign: "middle",
   },
+
   orderBadge: {
     display: "inline-flex",
     minWidth: "34px",
@@ -468,14 +536,17 @@ const styles = {
     alignItems: "center",
     justifyContent: "center",
     borderRadius: "999px",
-    background: "#e0f2fe",
-    color: "#075985",
+    background: "#f4f0f7",
+    color: "#574866",
     fontWeight: "700",
+    border: "1px solid #d3c7dd",
   },
+
   nombreMetodo: {
-    fontWeight: "600",
-    color: "#0f172a",
+    fontWeight: "700",
+    color: "#1f2937",
   },
+
   statusBadge: {
     display: "inline-block",
     padding: "6px 10px",
@@ -484,29 +555,33 @@ const styles = {
     fontWeight: "700",
     border: "1px solid transparent",
   },
+
   actions: {
     display: "flex",
     gap: "8px",
     flexWrap: "wrap",
   },
+
   moveBtn: {
-    background: "#f8fafc",
-    color: "#0f172a",
-    border: "1px solid #cbd5e1",
+    background: "#f8f8fa",
+    color: "#1f2937",
+    border: "1px solid #d7dbe2",
     borderRadius: "10px",
     padding: "8px 11px",
     cursor: "pointer",
     fontWeight: "700",
   },
+
   duplicateBtn: {
-    background: "#eef2ff",
-    color: "#4338ca",
-    border: "1px solid #c7d2fe",
+    background: "#f4f0f7",
+    color: "#574866",
+    border: "1px solid #d3c7dd",
     borderRadius: "10px",
     padding: "8px 12px",
     cursor: "pointer",
-    fontWeight: "600",
+    fontWeight: "700",
   },
+
   disableBtn: {
     background: "#fff7ed",
     color: "#9a3412",
@@ -514,25 +589,28 @@ const styles = {
     borderRadius: "10px",
     padding: "8px 12px",
     cursor: "pointer",
-    fontWeight: "600",
+    fontWeight: "700",
   },
+
   enableBtn: {
-    background: "#ecfdf5",
-    color: "#166534",
-    border: "1px solid #bbf7d0",
+    background: "#eefcf3",
+    color: "#0f7a4d",
+    border: "1px solid #c7eed5",
     borderRadius: "10px",
     padding: "8px 12px",
     cursor: "pointer",
-    fontWeight: "600",
+    fontWeight: "700",
   },
+
   deleteBtn: {
     background: "#fff1f2",
     color: "#be123c",
     border: "1px solid #fecdd3",
     borderRadius: "10px",
     padding: "8px 12px",
-    fontWeight: "600",
+    fontWeight: "700",
   },
+
   emptyTd: {
     textAlign: "center",
     padding: "24px",

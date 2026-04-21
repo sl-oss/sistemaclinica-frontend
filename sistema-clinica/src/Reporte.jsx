@@ -356,13 +356,25 @@ function Reporte() {
   const exportarPDF = () => {
     if (ventas.length === 0) return alert("No hay ventas para exportar");
 
-    const doc = new jsPDF("landscape");
+    const doc = new jsPDF("landscape", "mm", "a4");
 
-    doc.setFontSize(16);
-    doc.text("Reporte de Ventas", 14, 15);
+    const colorPrincipal = [107, 90, 122];
+    const colorSecundario = [236, 236, 239];
+    const colorTexto = [31, 41, 55];
 
-    doc.setFontSize(11);
-    doc.text(`Empresa: ${empresa?.nombre || "Empresa activa"}`, 14, 22);
+    doc.setFillColor(...colorSecundario);
+    doc.circle(275, 12, 34, "F");
+    doc.circle(8, 198, 26, "F");
+
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(...colorPrincipal);
+    doc.setFontSize(20);
+    doc.text("Reporte de Ventas", 14, 18);
+
+    doc.setFont("helvetica", "normal");
+    doc.setTextColor(...colorTexto);
+    doc.setFontSize(10);
+    doc.text(`Empresa: ${empresa?.nombre || "Empresa activa"}`, 14, 25);
 
     const periodoTexto =
       fechaInicio || fechaFin
@@ -371,7 +383,12 @@ function Reporte() {
           }`
         : "Período: Todas las ventas";
 
-    doc.text(periodoTexto, 14, 28);
+    doc.text(periodoTexto, 14, 31);
+
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(...colorPrincipal);
+    doc.setFontSize(16);
+    doc.text("VENTAS", 283, 18, { align: "right" });
 
     const body = ventas.map((v) => {
       const detalle = (v.detalle_venta || [])
@@ -379,13 +396,18 @@ function Reporte() {
         .join(", ");
 
       const pagos = (v.venta_pagos || [])
-        .map((p) => `${p.metodos_pago?.nombre || "Método"}: $${Number(p.monto || 0).toFixed(2)}`)
+        .map(
+          (p) =>
+            `${p.metodos_pago?.nombre || "Método"}: $${Number(
+              p.monto || 0
+            ).toFixed(2)}`
+        )
         .join(" | ");
 
       return [
         formatearFechaHora(v.fecha_local),
         v.clientes?.nombre || "Consumidor final",
-        detalle,
+        detalle || "-",
         pagos || "-",
         v.estado || "",
         `$${Number(v.total || 0).toFixed(2)}`,
@@ -393,7 +415,7 @@ function Reporte() {
     });
 
     autoTable(doc, {
-      startY: 34,
+      startY: 40,
       head: [[
         "Fecha",
         "Cliente",
@@ -411,9 +433,35 @@ function Reporte() {
         "TOTAL",
         `$${Number(totalGeneral || 0).toFixed(2)}`,
       ]],
-      styles: { fontSize: 8 },
-      headStyles: { fillColor: [39, 67, 98] },
-      footStyles: { fillColor: [232, 240, 248], textColor: 20 },
+      theme: "grid",
+      styles: {
+        fontSize: 8,
+        textColor: colorTexto,
+        lineColor: [210, 214, 220],
+        lineWidth: 0.2,
+      },
+      headStyles: {
+        fillColor: colorPrincipal,
+        textColor: [255, 255, 255],
+        fontStyle: "bold",
+      },
+      footStyles: {
+        fillColor: [244, 240, 247],
+        textColor: colorTexto,
+        fontStyle: "bold",
+      },
+      alternateRowStyles: {
+        fillColor: [250, 250, 250],
+      },
+      margin: { left: 10, right: 10 },
+      columnStyles: {
+        0: { cellWidth: 34 },
+        1: { cellWidth: 42 },
+        2: { cellWidth: 78 },
+        3: { cellWidth: 78 },
+        4: { cellWidth: 24, halign: "center" },
+        5: { cellWidth: 24, halign: "right" },
+      },
     });
 
     doc.save("reporte_ventas.pdf");
@@ -726,7 +774,7 @@ function Reporte() {
       <div style={styles.container}>
         <div style={styles.headerCard}>
           <div>
-            <h1 style={styles.title}>Historial / Reporte de Ventas</h1>
+            <h1 style={styles.title}>Reporte de Ventas</h1>
             <p style={styles.subtitle}>
               Filtrá, revisá, editá y exportá ventas anteriores.
             </p>
@@ -934,6 +982,7 @@ function Reporte() {
                     <div style={styles.qtyBox}>
                       <button
                         type="button"
+                        style={styles.qtyBtn}
                         onClick={() => cambiarCantidadEdit(item.item_id, item.cantidad - 1)}
                       >
                         -
@@ -941,6 +990,7 @@ function Reporte() {
                       <span>{item.cantidad}</span>
                       <button
                         type="button"
+                        style={styles.qtyBtn}
                         onClick={() => cambiarCantidadEdit(item.item_id, item.cantidad + 1)}
                       >
                         +
@@ -1073,78 +1123,88 @@ function Reporte() {
 
 const styles = {
   page: {
-    background: "#f4f7fb",
-    minHeight: "100vh",
-    padding: "18px",
+    width: "100%",
+    minHeight: "100%",
   },
+
   container: {
-    maxWidth: "1250px",
-    margin: "0 auto",
+    width: "100%",
     display: "grid",
     gap: "18px",
   },
+
   headerCard: {
     background: "#ffffff",
-    border: "1px solid #e2e8f0",
-    borderRadius: "20px",
+    border: "1px solid #d7dbe2",
+    borderRadius: "22px",
     padding: "22px",
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
     gap: "16px",
     flexWrap: "wrap",
-    boxShadow: "0 4px 18px rgba(15, 23, 42, 0.04)",
+    boxShadow: "0 10px 30px rgba(15, 23, 42, 0.06)",
   },
+
   title: {
     margin: 0,
-    color: "#10243e",
-    fontSize: "36px",
+    color: "#574866",
+    fontSize: "30px",
     fontWeight: "700",
   },
+
   subtitle: {
     margin: "6px 0 0 0",
     color: "#64748b",
     fontSize: "14px",
   },
+
   totalBadge: {
-    background: "#eef6ff",
-    border: "1px solid #d7e8fb",
+    background: "#f4f0f7",
+    border: "1px solid #d3c7dd",
     borderRadius: "18px",
     padding: "14px 18px",
     minWidth: "180px",
   },
+
   totalBadgeLabel: {
     display: "block",
     fontSize: "12px",
-    color: "#5b708b",
+    color: "#64748b",
     marginBottom: "4px",
   },
+
   totalBadgeValue: {
     fontSize: "26px",
-    color: "#16324f",
+    color: "#574866",
   },
+
   card: {
     background: "#ffffff",
-    border: "1px solid #e2e8f0",
-    borderRadius: "20px",
+    border: "1px solid #d7dbe2",
+    borderRadius: "22px",
     padding: "20px",
-    boxShadow: "0 4px 18px rgba(15, 23, 42, 0.04)",
+    boxShadow: "0 10px 30px rgba(15, 23, 42, 0.06)",
   },
+
   filtros: {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
     gap: "12px",
     alignItems: "end",
   },
+
   formGroup: {
     display: "grid",
     gap: "6px",
   },
+
   label: {
     fontSize: "13px",
     color: "#4b5f78",
     fontWeight: "600",
   },
+
   input: {
     width: "100%",
     padding: "11px 12px",
@@ -1155,8 +1215,9 @@ const styles = {
     outline: "none",
     fontSize: "14px",
   },
+
   primaryBtn: {
-    background: "#255dcf",
+    background: "#6b5a7a",
     color: "#fff",
     border: "none",
     borderRadius: "12px",
@@ -1164,34 +1225,39 @@ const styles = {
     cursor: "pointer",
     fontWeight: "700",
   },
+
   pdfBtn: {
-    background: "#ffe2e2",
-    color: "#b42318",
-    border: "1px solid #ffc7c7",
+    background: "#f4f0f7",
+    color: "#574866",
+    border: "1px solid #d3c7dd",
     borderRadius: "12px",
     padding: "12px 16px",
     cursor: "pointer",
     fontWeight: "700",
   },
+
   emptyBox: {
     background: "#ffffff",
-    border: "1px solid #e2e8f0",
+    border: "1px solid #d7dbe2",
     borderRadius: "16px",
     padding: "20px",
     color: "#64748b",
     textAlign: "center",
   },
+
   listaVentas: {
     display: "grid",
     gap: "14px",
   },
+
   ventaCard: {
     background: "#ffffff",
-    border: "1px solid #e2e8f0",
-    borderRadius: "18px",
+    border: "1px solid #d7dbe2",
+    borderRadius: "20px",
     padding: "16px",
-    boxShadow: "0 2px 10px rgba(15, 23, 42, 0.04)",
+    boxShadow: "0 8px 24px rgba(15, 23, 42, 0.05)",
   },
+
   ventaHeader: {
     display: "flex",
     justifyContent: "space-between",
@@ -1200,47 +1266,55 @@ const styles = {
     flexWrap: "wrap",
     marginBottom: "12px",
   },
+
   ventaTotal: {
     margin: 0,
     fontSize: "22px",
-    color: "#0f172a",
+    color: "#1f2937",
   },
+
   badge: {
     marginTop: "6px",
     display: "inline-block",
-    background: "#eef2ff",
-    color: "#4338ca",
+    background: "#f4f0f7",
+    color: "#574866",
     padding: "4px 10px",
     borderRadius: "999px",
     fontSize: "12px",
-    fontWeight: "600",
+    fontWeight: "700",
     textTransform: "capitalize",
+    border: "1px solid #d3c7dd",
   },
+
   editBtn: {
-    background: "#e0f2fe",
-    color: "#075985",
-    border: "1px solid #bae6fd",
+    background: "#f4f0f7",
+    color: "#574866",
+    border: "1px solid #d3c7dd",
     borderRadius: "12px",
     padding: "10px 14px",
     cursor: "pointer",
     fontWeight: "700",
   },
+
   ventaMeta: {
     display: "grid",
     gap: "6px",
     marginBottom: "10px",
     color: "#334155",
   },
+
   detalleBox: {
     marginTop: "10px",
-    background: "#f8fafc",
-    border: "1px solid #e2e8f0",
+    background: "#f8f8fa",
+    border: "1px solid #d7dbe2",
     borderRadius: "14px",
     padding: "12px",
   },
+
   ul: {
     margin: "8px 0 0 18px",
   },
+
   modalOverlay: {
     position: "fixed",
     inset: 0,
@@ -1251,16 +1325,19 @@ const styles = {
     padding: "20px",
     zIndex: 9999,
   },
+
   modal: {
     width: "100%",
     maxWidth: "1100px",
     maxHeight: "92vh",
     overflowY: "auto",
     background: "#fff",
-    borderRadius: "18px",
+    borderRadius: "20px",
     padding: "20px",
     boxShadow: "0 20px 45px rgba(0,0,0,0.22)",
+    border: "1px solid #d7dbe2",
   },
+
   modalHeader: {
     display: "flex",
     justifyContent: "space-between",
@@ -1268,63 +1345,76 @@ const styles = {
     marginBottom: "16px",
     gap: "12px",
   },
+
   modalTitle: {
     margin: 0,
     fontSize: "28px",
-    color: "#10243e",
+    color: "#574866",
   },
+
   modalSub: {
     margin: "4px 0 0 0",
     color: "#64748b",
   },
+
   closeBtn: {
-    background: "#e2e8f0",
+    background: "#ececef",
     border: "none",
-    borderRadius: "8px",
+    borderRadius: "10px",
     padding: "8px 10px",
     cursor: "pointer",
     fontWeight: "700",
   },
+
   editGridTop: {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
     gap: "12px",
     marginBottom: "18px",
   },
+
   editSection: {
     marginTop: "18px",
     padding: "14px",
-    border: "1px solid #e2e8f0",
+    border: "1px solid #d7dbe2",
     borderRadius: "16px",
     background: "#fcfdff",
   },
+
   sectionTitle: {
     margin: "0 0 12px 0",
     fontSize: "18px",
-    color: "#10243e",
+    color: "#1f2937",
   },
+
   filtrosItems: {
     display: "grid",
     gridTemplateColumns: "1fr 220px",
     gap: "10px",
     marginBottom: "12px",
   },
+
   itemsGrid: {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))",
     gap: "10px",
   },
+
   itemBtn: {
     padding: "12px",
-    borderRadius: "10px",
-    border: "1px solid #dbeafe",
-    background: "#eff6ff",
+    borderRadius: "12px",
+    border: "1px solid #d3c7dd",
+    background: "#f4f0f7",
     cursor: "pointer",
+    fontWeight: "600",
+    color: "#574866",
   },
+
   emptyMini: {
     color: "#64748b",
     padding: "10px 0",
   },
+
   rowEdit: {
     display: "flex",
     alignItems: "center",
@@ -1334,17 +1424,30 @@ const styles = {
     paddingBottom: "10px",
     borderBottom: "1px solid #edf2f7",
   },
+
   qtyBox: {
     display: "flex",
     alignItems: "center",
     gap: "6px",
   },
+
+  qtyBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    border: "1px solid #d7dbe2",
+    background: "#f8f8fa",
+    cursor: "pointer",
+    fontWeight: 700,
+  },
+
   priceInput: {
     width: "90px",
     padding: "8px 10px",
     borderRadius: "8px",
     border: "1px solid #cfd9e5",
   },
+
   deleteBtn: {
     background: "#fff1f2",
     color: "#be123c",
@@ -1352,8 +1455,9 @@ const styles = {
     borderRadius: "10px",
     padding: "8px 12px",
     cursor: "pointer",
-    fontWeight: "600",
+    fontWeight: "700",
   },
+
   pagosHeader: {
     display: "flex",
     justifyContent: "space-between",
@@ -1362,15 +1466,17 @@ const styles = {
     marginBottom: "10px",
     flexWrap: "wrap",
   },
+
   addBtn: {
-    background: "#e0f2fe",
-    color: "#0369a1",
-    border: "1px solid #bae6fd",
+    background: "#f4f0f7",
+    color: "#574866",
+    border: "1px solid #d3c7dd",
     borderRadius: "10px",
     padding: "8px 12px",
     cursor: "pointer",
-    fontWeight: "600",
+    fontWeight: "700",
   },
+
   pagoRow: {
     display: "grid",
     gridTemplateColumns: "1.2fr 0.8fr 1.2fr auto",
@@ -1378,15 +1484,17 @@ const styles = {
     marginBottom: "10px",
     alignItems: "center",
   },
+
   summaryBox: {
     marginTop: "18px",
     display: "grid",
     gap: "8px",
     padding: "14px",
-    background: "#f8fafc",
-    border: "1px solid #e2e8f0",
+    background: "#f8f8fa",
+    border: "1px solid #d7dbe2",
     borderRadius: "14px",
   },
+
   modalActions: {
     display: "flex",
     justifyContent: "flex-end",
@@ -1394,6 +1502,7 @@ const styles = {
     marginTop: "18px",
     flexWrap: "wrap",
   },
+
   cancelBtn: {
     background: "#fff",
     color: "#334155",
@@ -1401,8 +1510,9 @@ const styles = {
     borderRadius: "10px",
     padding: "10px 14px",
     cursor: "pointer",
-    fontWeight: "600",
+    fontWeight: "700",
   },
+
   deleteSaleBtn: {
     background: "#ef4444",
     color: "#fff",
@@ -1412,8 +1522,9 @@ const styles = {
     cursor: "pointer",
     fontWeight: "700",
   },
+
   saveBtn: {
-    background: "#16a34a",
+    background: "#6b5a7a",
     color: "#fff",
     border: "none",
     borderRadius: "10px",

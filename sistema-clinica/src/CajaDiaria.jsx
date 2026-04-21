@@ -64,6 +64,11 @@ export default function CajaDiaria() {
   const [historialCajas, setHistorialCajas] = useState([]);
   const [loadingHistorial, setLoadingHistorial] = useState(false);
 
+  const [modalFacturacion, setModalFacturacion] = useState({
+    open: false,
+    filaUid: null,
+  });
+
   useEffect(() => {
     if (!empresa?.id) {
       setMetodos([]);
@@ -98,9 +103,13 @@ export default function CajaDiaria() {
     });
 
     return {
+      uid: crypto.randomUUID(),
       paciente: nombrePaciente,
       pagos,
       referencias,
+      venta_id: null,
+      origen: "manual",
+      grupoFacturacion: "",
     };
   };
 
@@ -178,7 +187,8 @@ export default function CajaDiaria() {
         metodo_pago_id,
         monto,
         referencia,
-        venta_id
+        venta_id,
+        grupo_facturacion
       `)
       .eq("caja_diaria_id", caja.id);
 
@@ -194,13 +204,14 @@ export default function CajaDiaria() {
       const nombrePaciente = item.paciente?.trim() || "Sin nombre";
       const llave = item.venta_id
         ? `${nombrePaciente}__venta__${item.venta_id}`
-        : `${nombrePaciente}__manual`;
+        : `${nombrePaciente}__manual__${item.grupo_facturacion || item.id}`;
 
       if (!mapa[llave]) {
         mapa[llave] = {
           ...crearFilaVacia(metodos, nombrePaciente),
           venta_id: item.venta_id || null,
           origen: item.venta_id ? "venta" : "manual",
+          grupoFacturacion: item.grupo_facturacion || "",
         };
       }
 
@@ -283,24 +294,17 @@ export default function CajaDiaria() {
   };
 
   const irAEditarVenta = (fila) => {
-  if (!fila?.venta_id) return;
+    if (!fila?.venta_id) return;
 
-  localStorage.setItem("ventaEditarRapidoId", String(fila.venta_id));
-  localStorage.setItem("ventaEditarRapidoOrigen", "caja_diaria");
-  localStorage.setItem("ventaEditarRapidoFechaCaja", fechaLocal);
+    localStorage.setItem("ventaEditarRapidoId", String(fila.venta_id));
+    localStorage.setItem("ventaEditarRapidoOrigen", "caja_diaria");
+    localStorage.setItem("ventaEditarRapidoFechaCaja", fechaLocal);
 
-  window.dispatchEvent(new Event("irAReporte"));
-};
+    window.dispatchEvent(new Event("irAReporte"));
+  };
 
   const agregarFila = () => {
-    setFilas((prev) => [
-      ...prev,
-      {
-        ...crearFilaVacia(),
-        venta_id: null,
-        origen: "manual",
-      },
-    ]);
+    setFilas((prev) => [...prev, crearFilaVacia()]);
   };
 
   const eliminarFila = (index) => {
@@ -348,6 +352,137 @@ export default function CajaDiaria() {
     setFilas(nuevas);
   };
 
+  const abrirModalFacturacion = (filaUid) => {
+    setModalFacturacion({
+      open: true,
+      filaUid,
+    });
+  };
+
+  const cerrarModalFacturacion = () => {
+    setModalFacturacion({
+      open: false,
+      filaUid: null,
+    });
+  };
+
+  const asignarFacturacionJunta = (filaUidOrigen, filaUidDestino) => {
+    if (!filaUidOrigen || !filaUidDestino || filaUidOrigen === filaUidDestino) return;
+
+    const filaOrigen = filas.find((f) => f.uid === filaUidOrigen);
+    const filaDestino = filas.find((f) => f.uid === filaUidDestino);
+
+    const grupoExistente =
+      filaOrigen?.grupoFacturacion ||
+      filaDestino?.grupoFacturacion ||
+      crypto.randomUUID();
+
+    setFilas((prev) =>
+      prev.map((fila) =>
+        fila.uid === filaUidOrigen || fila.uid === filaUidDestino
+          ? { ...fila, grupoFacturacion: grupoExistente }
+          : fila
+      )
+    );
+
+    cerrarModalFacturacion();
+  };
+
+  const quitarFacturacionJunta = (filaUid) => {
+    setFilas((prev) =>
+      prev.map((fila) =>
+        fila.uid === filaUid ? { ...fila, grupoFacturacion: "" } : fila
+      )
+    );
+  };
+
+  const obtenerNombreRelacionFacturacion = (fila) => {
+    if (!fila?.grupoFacturacion) return "";
+
+    const relacionadas = filas.filter(
+      (f) => f.uid !== fila.uid && f.grupoFacturacion === fila.grupoFacturacion
+    );
+
+    if (relacionadas.length === 0) return "";
+
+    return relacionadas.map((r) => r.paciente || "Sin nombre").join(" + ");
+  };
+
+  const agruparDetallePorGrupo = (detalleBase) => {
+    const grupos = {};
+
+    detalleBase.forEach((item, index) => {
+      const key = item.grupoFacturacion
+        ? `${item.fecha}__${item.grupoFacturacion}`
+        : `${item.fecha}__solo__${index}`;
+
+      if (!grupos[key]) {
+        const metodosIniciales = {};
+        const refsIniciales = {};
+
+        metodos.forEach((m) => {
+          metodosIniciales[m.nombre] = 0;
+          refsIniciales[m.nombre] = "";
+        });
+
+        grupos[key] = {
+          fecha: item.fecha,
+          paciente: [],
+          origen: [],
+          metodos: metodosIniciales,
+          referencias: refsIniciales,
+          grupoFacturacion: item.grupoFacturacion || "",
+        };
+      }
+
+      if (item.paciente && !grupos[key].paciente.includes(item.paciente)) {
+        grupos[key].paciente.push(item.paciente);
+      }
+
+      if (item.origen && !grupos[key].origen.includes(item.origen)) {
+        grupos[key].origen.push(item.origen);
+      }
+
+      metodos.forEach((m) => {
+        grupos[key].metodos[m.nombre] += Number(item.metodos?.[m.nombre] || 0);
+
+        const ref = item.referencias?.[m.nombre] || "";
+        if (ref) {
+          const refs = grupos[key].referencias[m.nombre]
+            ? grupos[key].referencias[m.nombre]
+                .split(" | ")
+                .map((x) => x.trim())
+                .filter(Boolean)
+            : [];
+
+          ref
+            .split(" | ")
+            .map((x) => x.trim())
+            .filter(Boolean)
+            .forEach((r) => {
+              if (!refs.includes(r)) refs.push(r);
+            });
+
+          grupos[key].referencias[m.nombre] = refs.join(" | ");
+        }
+      });
+    });
+
+    return Object.values(grupos).map((g) => ({
+      fecha: g.fecha,
+      paciente: g.paciente.join(" + "),
+      origen:
+        g.origen.length > 1
+          ? "Mixto"
+          : g.origen[0] === "venta"
+          ? "Venta / CxC"
+          : "Manual",
+      metodos: g.metodos,
+      referencias: g.referencias,
+      grupoFacturacion: g.grupoFacturacion,
+    }));
+  };
+
   const guardarCaja = async () => {
     if (!empresa?.id) {
       return alert("No hay empresa seleccionada");
@@ -355,6 +490,7 @@ export default function CajaDiaria() {
 
     const filasValidas = filas.filter((fila) => fila.paciente.trim() !== "");
     const filasManual = filasValidas.filter((fila) => !fila.venta_id);
+    const filasVenta = filasValidas.filter((fila) => fila.venta_id);
 
     setLoading(true);
 
@@ -437,6 +573,18 @@ export default function CajaDiaria() {
       cajaId = nuevaCaja.id;
     }
 
+    const { error: errorResetGrupo } = await supabase
+      .from("caja_diaria_detalle")
+      .update({ grupo_facturacion: null })
+      .eq("caja_diaria_id", cajaId);
+
+    if (errorResetGrupo) {
+      setLoading(false);
+      console.error(errorResetGrupo);
+      alert("Error al actualizar agrupaciones de facturación");
+      return;
+    }
+
     const detalleParaGuardar = [];
 
     filasManual.forEach((fila) => {
@@ -457,6 +605,7 @@ export default function CajaDiaria() {
             monto: Number(valor),
             referencia: referencia?.trim() || null,
             venta_id: null,
+            grupo_facturacion: fila.grupoFacturacion || null,
           });
         }
       });
@@ -471,6 +620,24 @@ export default function CajaDiaria() {
         setLoading(false);
         console.error(errorInsertarDetalle);
         alert("Error al guardar el detalle");
+        return;
+      }
+    }
+
+    for (const fila of filasVenta) {
+      const { error: errorUpdateVentaGrupo } = await supabase
+        .from("caja_diaria_detalle")
+        .update({
+          grupo_facturacion: fila.grupoFacturacion || null,
+        })
+        .eq("caja_diaria_id", cajaId)
+        .eq("venta_id", fila.venta_id)
+        .eq("paciente", fila.paciente.trim());
+
+      if (errorUpdateVentaGrupo) {
+        setLoading(false);
+        console.error(errorUpdateVentaGrupo);
+        alert("Error al guardar agrupación de una venta");
         return;
       }
     }
@@ -516,6 +683,7 @@ export default function CajaDiaria() {
           referencia,
           metodo_pago_id,
           venta_id,
+          grupo_facturacion,
           metodos_pago (
             nombre
           )
@@ -532,8 +700,7 @@ export default function CajaDiaria() {
       return null;
     }
 
-    const detalleAgrupado = [];
-    const resumen = {};
+    const detalleBase = [];
     const cierres = [];
 
     (data || []).forEach((caja) => {
@@ -545,13 +712,18 @@ export default function CajaDiaria() {
         const monto = Number(d.monto || 0);
         const referencia = d.referencia || "";
         const origen = d.venta_id ? "Venta / CxC" : "Manual";
-        const llave = d.venta_id ? `${paciente}__${d.venta_id}` : `${paciente}__manual`;
+        const grupoFacturacion = d.grupo_facturacion || "";
+
+        const llave = d.venta_id
+          ? `${paciente}__${d.venta_id}__${grupoFacturacion || "sin_grupo"}`
+          : `${paciente}__manual__${grupoFacturacion || crypto.randomUUID()}`;
 
         if (!mapaPacientes[llave]) {
           mapaPacientes[llave] = {
             fecha: caja.fecha_local,
             paciente,
             origen,
+            grupoFacturacion,
             metodos: {},
             referencias: {},
           };
@@ -577,8 +749,6 @@ export default function CajaDiaria() {
 
           mapaPacientes[llave].referencias[metodoNombre] = refs.join(" | ");
         }
-
-        resumen[metodoNombre] = (resumen[metodoNombre] || 0) + monto;
       });
 
       const totalCaja = (caja.caja_diaria_detalle || []).reduce(
@@ -598,7 +768,20 @@ export default function CajaDiaria() {
         totalCaja,
       });
 
-      detalleAgrupado.push(...Object.values(mapaPacientes));
+      detalleBase.push(...Object.values(mapaPacientes));
+    });
+
+    const detalleAgrupado = agruparDetallePorGrupo(detalleBase);
+
+    const resumen = {};
+    metodos.forEach((m) => {
+      resumen[m.nombre] = 0;
+    });
+
+    detalleAgrupado.forEach((item) => {
+      metodos.forEach((m) => {
+        resumen[m.nombre] += Number(item.metodos[m.nombre] || 0);
+      });
     });
 
     const resumenArray = metodos.map((m) => ({
@@ -731,15 +914,22 @@ export default function CajaDiaria() {
 
     const doc = new jsPDF("landscape");
 
-    doc.setFontSize(16);
-    doc.text("Informe Detallado de Caja Diaria", 14, 14);
+    doc.setFillColor(244, 240, 247);
+    doc.rect(0, 0, 297, 28, "F");
 
-    doc.setFontSize(11);
-    doc.text(`Empresa: ${empresa?.nombre || "Empresa activa"}`, 14, 21);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(18);
+    doc.setTextColor(87, 72, 102);
+    doc.text("INFORME DETALLADO DE CAJA DIARIA", 14, 16);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    doc.setTextColor(71, 85, 105);
+    doc.text(`Empresa: ${empresa?.nombre || "Empresa activa"}`, 14, 24);
     doc.text(
       `Período: ${formatearFecha(filtroDesde)} al ${formatearFecha(filtroHasta)}`,
-      14,
-      27
+      120,
+      24
     );
 
     const head = [[
@@ -789,13 +979,31 @@ export default function CajaDiaria() {
     ]];
 
     autoTable(doc, {
-      startY: 33,
+      startY: 34,
       head,
       body,
       foot,
-      styles: { fontSize: 8 },
-      headStyles: { fillColor: [39, 67, 98] },
-      footStyles: { fillColor: [232, 240, 248], textColor: 20 },
+      styles: {
+        fontSize: 8,
+        cellPadding: 3,
+        textColor: [31, 41, 55],
+      },
+      headStyles: {
+        fillColor: [107, 90, 122],
+        textColor: [255, 255, 255],
+        fontStyle: "bold",
+      },
+      footStyles: {
+        fillColor: [244, 240, 247],
+        textColor: [87, 72, 102],
+        fontStyle: "bold",
+      },
+      alternateRowStyles: {
+        fillColor: [250, 250, 252],
+      },
+      bodyStyles: {
+        lineColor: [226, 232, 240],
+      },
     });
 
     doc.save(
@@ -811,15 +1019,22 @@ export default function CajaDiaria() {
 
     const doc = new jsPDF();
 
-    doc.setFontSize(16);
-    doc.text("Informe Resumen de Caja Diaria", 14, 15);
+    doc.setFillColor(244, 240, 247);
+    doc.rect(0, 0, 210, 28, "F");
 
-    doc.setFontSize(11);
-    doc.text(`Empresa: ${empresa?.nombre || "Empresa activa"}`, 14, 22);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(18);
+    doc.setTextColor(87, 72, 102);
+    doc.text("INFORME RESUMEN DE CAJA DIARIA", 14, 16);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    doc.setTextColor(71, 85, 105);
+    doc.text(`Empresa: ${empresa?.nombre || "Empresa activa"}`, 14, 24);
     doc.text(
       `Período: ${formatearFecha(filtroDesde)} al ${formatearFecha(filtroHasta)}`,
-      14,
-      28
+      110,
+      24
     );
 
     autoTable(doc, {
@@ -830,9 +1045,24 @@ export default function CajaDiaria() {
         `$${formatearMonto(item.total)}`,
       ]),
       foot: [["TOTAL GENERAL", `$${formatearMonto(datos.totalGeneralResumen)}`]],
-      styles: { fontSize: 10 },
-      headStyles: { fillColor: [39, 67, 98] },
-      footStyles: { fillColor: [232, 240, 248], textColor: 20 },
+      styles: {
+        fontSize: 10,
+        cellPadding: 4,
+        textColor: [31, 41, 55],
+      },
+      headStyles: {
+        fillColor: [107, 90, 122],
+        textColor: [255, 255, 255],
+        fontStyle: "bold",
+      },
+      footStyles: {
+        fillColor: [244, 240, 247],
+        textColor: [87, 72, 102],
+        fontStyle: "bold",
+      },
+      alternateRowStyles: {
+        fillColor: [250, 250, 252],
+      },
     });
 
     doc.save(
@@ -860,20 +1090,25 @@ export default function CajaDiaria() {
         totalCaja: totalGeneral,
       };
 
+    doc.setFillColor(244, 240, 247);
+    doc.rect(0, 0, 210, 30, "F");
+
     doc.setFont("helvetica", "bold");
     doc.setFontSize(16);
-    doc.text("INFORME DE CIERRE DE CAJA DIARIA", 105, 15, { align: "center" });
+    doc.setTextColor(87, 72, 102);
+    doc.text("INFORME DE CIERRE DE CAJA DIARIA", 105, 14, { align: "center" });
 
     doc.setFontSize(12);
     doc.text(empresa?.nombre || "EMPRESA ACTIVA", 105, 22, { align: "center" });
 
     doc.setFont("helvetica", "normal");
     doc.setFontSize(10);
-    doc.text(`Fecha de caja: ${formatearFecha(cajaActual.fecha)}`, 14, 32);
-    doc.text(`Responsable de caja: ${cajaActual.responsableCaja || "-"}`, 14, 38);
+    doc.setTextColor(71, 85, 105);
+    doc.text(`Fecha de caja: ${formatearFecha(cajaActual.fecha)}`, 14, 38);
+    doc.text(`Responsable de caja: ${cajaActual.responsableCaja || "-"}`, 14, 44);
 
     autoTable(doc, {
-      startY: 45,
+      startY: 50,
       head: [["Resumen por método de pago", "Monto"]],
       body: datos.resumen.map((item) => [
         item.metodo,
@@ -881,9 +1116,24 @@ export default function CajaDiaria() {
       ]),
       foot: [["TOTAL GENERAL DEL EFECTIVO", `$${formatearMonto(datos.totalGeneralResumen)}`]],
       theme: "grid",
-      styles: { fontSize: 10 },
-      headStyles: { fillColor: [28, 63, 95] },
-      footStyles: { fillColor: [232, 240, 248], textColor: 20 },
+      styles: {
+        fontSize: 10,
+        cellPadding: 4,
+        textColor: [31, 41, 55],
+      },
+      headStyles: {
+        fillColor: [107, 90, 122],
+        textColor: [255, 255, 255],
+        fontStyle: "bold",
+      },
+      footStyles: {
+        fillColor: [244, 240, 247],
+        textColor: [87, 72, 102],
+        fontStyle: "bold",
+      },
+      alternateRowStyles: {
+        fillColor: [250, 250, 252],
+      },
     });
 
     const yInfo = doc.lastAutoTable.finalY + 8;
@@ -901,10 +1151,17 @@ export default function CajaDiaria() {
         ["Comentario de cierre", cajaActual.comentarioCierre || "-"],
       ],
       theme: "grid",
-      styles: { fontSize: 9 },
+      styles: {
+        fontSize: 9,
+        cellPadding: 4,
+        textColor: [31, 41, 55],
+      },
       columnStyles: {
         0: { fontStyle: "bold", cellWidth: 60 },
         1: { cellWidth: 120 },
+      },
+      alternateRowStyles: {
+        fillColor: [250, 250, 252],
       },
     });
 
@@ -914,11 +1171,13 @@ export default function CajaDiaria() {
       yFirmas = 40;
     }
 
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(10);
-
+    doc.setDrawColor(156, 163, 175);
     doc.line(25, yFirmas, 85, yFirmas);
     doc.line(125, yFirmas, 185, yFirmas);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    doc.setTextColor(31, 41, 55);
 
     doc.text(cajaActual.elaboradoPor || "", 55, yFirmas + 6, { align: "center" });
     doc.text("Elaboró", 55, yFirmas + 12, { align: "center" });
@@ -974,6 +1233,13 @@ export default function CajaDiaria() {
         </div>
 
         <div style={styles.card}>
+          <div style={styles.cardHeader}>
+            <h3 style={styles.sectionTitleSmall}>Control del día</h3>
+            <p style={styles.sectionSubtitle}>
+              Seleccioná la fecha y administrá los registros manuales.
+            </p>
+          </div>
+
           <div style={styles.topGrid}>
             <div style={styles.formGroup}>
               <label style={styles.label}>Fecha</label>
@@ -1002,6 +1268,13 @@ export default function CajaDiaria() {
         </div>
 
         <div style={styles.card}>
+          <div style={styles.cardHeader}>
+            <h3 style={styles.sectionTitleSmall}>Detalle de caja</h3>
+            <p style={styles.sectionSubtitle}>
+              Registrá cobros, referencias y agrupaciones para facturación.
+            </p>
+          </div>
+
           <div style={styles.tableWrap}>
             <table style={styles.table}>
               <thead>
@@ -1013,7 +1286,7 @@ export default function CajaDiaria() {
                       {metodo.nombre}
                     </th>
                   ))}
-                  <th style={{ ...styles.th, minWidth: 220 }}>Acción</th>
+                  <th style={{ ...styles.th, minWidth: 260 }}>Acción</th>
                 </tr>
               </thead>
 
@@ -1027,7 +1300,7 @@ export default function CajaDiaria() {
                 )}
 
                 {filas.map((fila, index) => (
-                  <tr key={index}>
+                  <tr key={fila.uid || index}>
                     <td style={styles.tdTop}>
                       <input
                         type="text"
@@ -1040,7 +1313,19 @@ export default function CajaDiaria() {
                     </td>
 
                     <td style={styles.tdCenter}>
-                      {fila.origen === "venta" ? "Venta / CxC" : "Manual"}
+                      <span
+                        style={{
+                          ...styles.badge,
+                          background:
+                            fila.origen === "venta" ? "#eefcf3" : "#f4f0f7",
+                          color:
+                            fila.origen === "venta" ? "#0f7a4d" : "#574866",
+                          borderColor:
+                            fila.origen === "venta" ? "#c7eed5" : "#d3c7dd",
+                        }}
+                      >
+                        {fila.origen === "venta" ? "Venta / CxC" : "Manual"}
+                      </span>
                     </td>
 
                     {metodos.map((metodo) => (
@@ -1074,6 +1359,32 @@ export default function CajaDiaria() {
 
                     <td style={styles.tdTop}>
                       <div style={styles.actionCell}>
+                        <button
+                          type="button"
+                          onClick={() => abrirModalFacturacion(fila.uid)}
+                          style={styles.linkBtn}
+                        >
+                          {fila.grupoFacturacion ? "Cambiar agrupación" : "Facturar junto"}
+                        </button>
+
+                        {fila.grupoFacturacion ? (
+                          <div style={styles.linkInfo}>
+                            Con: {obtenerNombreRelacionFacturacion(fila) || "Grupo asignado"}
+                          </div>
+                        ) : (
+                          <div style={styles.linkInfoMuted}>Sin agrupación</div>
+                        )}
+
+                        {fila.grupoFacturacion && (
+                          <button
+                            type="button"
+                            onClick={() => quitarFacturacionJunta(fila.uid)}
+                            style={styles.unlinkBtn}
+                          >
+                            Quitar vínculo
+                          </button>
+                        )}
+
                         {fila.origen === "venta" ? (
                           <>
                             <button
@@ -1114,13 +1425,13 @@ export default function CajaDiaria() {
               <tfoot>
                 <tr style={styles.tfootRow}>
                   <td style={styles.totalTdLabel}>Totales</td>
-                  <td style={styles.totalTd}>—</td>
+                  <td style={styles.totalTdCenter}>—</td>
                   {metodos.map((metodo) => (
                     <td key={metodo.id} style={styles.totalTd}>
-                      {Number(totalesPorMetodo[metodo.id] || 0).toFixed(2)}
+                      ${Number(totalesPorMetodo[metodo.id] || 0).toFixed(2)}
                     </td>
                   ))}
-                  <td style={styles.totalTd}>—</td>
+                  <td style={styles.totalTdCenter}>—</td>
                 </tr>
               </tfoot>
             </table>
@@ -1139,7 +1450,12 @@ export default function CajaDiaria() {
         </div>
 
         <div style={styles.card}>
-          <h2 style={styles.sectionTitle}>Cierre de caja</h2>
+          <div style={styles.cardHeader}>
+            <h3 style={styles.sectionTitleSmall}>Cierre de caja</h3>
+            <p style={styles.sectionSubtitle}>
+              Completá la información final del cierre diario.
+            </p>
+          </div>
 
           <div style={styles.checkboxRow}>
             <label style={styles.checkboxLabel}>
@@ -1233,7 +1549,12 @@ export default function CajaDiaria() {
         </div>
 
         <div style={styles.card}>
-          <h2 style={styles.sectionTitle}>Historial de cajas</h2>
+          <div style={styles.cardHeader}>
+            <h3 style={styles.sectionTitleSmall}>Historial de cajas</h3>
+            <p style={styles.sectionSubtitle}>
+              Consultá y reabrí cajas anteriores.
+            </p>
+          </div>
 
           <div style={styles.reportTopGrid}>
             <input
@@ -1277,7 +1598,16 @@ export default function CajaDiaria() {
                       <td style={styles.tdCenter}>{formatearFecha(caja.fecha_local)}</td>
                       <td style={styles.tdCenter}>${formatearMonto(caja.total)}</td>
                       <td style={styles.tdCenter}>
-                        {caja.cierre_realizado ? "Sí" : "No"}
+                        <span
+                          style={{
+                            ...styles.badge,
+                            background: caja.cierre_realizado ? "#eefcf3" : "#f8f8fa",
+                            color: caja.cierre_realizado ? "#0f7a4d" : "#475569",
+                            borderColor: caja.cierre_realizado ? "#c7eed5" : "#d7dbe2",
+                          }}
+                        >
+                          {caja.cierre_realizado ? "Sí" : "No"}
+                        </span>
                       </td>
                       <td style={styles.tdCenter}>
                         {caja.responsable_caja || "-"}
@@ -1300,7 +1630,12 @@ export default function CajaDiaria() {
         </div>
 
         <div style={styles.card}>
-          <h2 style={styles.sectionTitle}>Informes</h2>
+          <div style={styles.cardHeader}>
+            <h3 style={styles.sectionTitleSmall}>Informes</h3>
+            <p style={styles.sectionSubtitle}>
+              Exportá detalle, resumen o cierre profesional.
+            </p>
+          </div>
 
           <div style={styles.reportButtons}>
             <button type="button" onClick={exportarDetallePDF} style={styles.reportBtnPdf}>
@@ -1333,104 +1668,173 @@ export default function CajaDiaria() {
           </p>
         </div>
       </div>
+
+      {modalFacturacion.open && (
+        <div style={styles.modalOverlay} onClick={cerrarModalFacturacion}>
+          <div style={styles.modalBox} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.modalHeaderSimple}>
+              <div>
+                <h3 style={styles.modalTitle}>Facturar junto</h3>
+                <p style={styles.modalText}>
+                  Elegí con cuál otra fila querés agrupar este pago para la exportación.
+                </p>
+              </div>
+
+              <button type="button" onClick={cerrarModalFacturacion} style={styles.modalCloseBtn}>
+                ✕
+              </button>
+            </div>
+
+            <div style={styles.modalList}>
+              {filas
+                .filter((f) => f.uid !== modalFacturacion.filaUid)
+                .map((f) => (
+                  <button
+                    key={f.uid}
+                    type="button"
+                    onClick={() => asignarFacturacionJunta(modalFacturacion.filaUid, f.uid)}
+                    style={styles.modalOptionBtn}
+                  >
+                    <strong>{f.paciente || "Sin nombre"}</strong>
+                    <span style={styles.modalOptionSub}>
+                      {f.origen === "venta" ? "Venta / CxC" : "Manual"}
+                    </span>
+                  </button>
+                ))}
+
+              {filas.filter((f) => f.uid !== modalFacturacion.filaUid).length === 0 && (
+                <div style={styles.emptyTd}>No hay otra fila disponible para agrupar.</div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
 const styles = {
   page: {
-    background: "#f4f7fb",
-    minHeight: "100vh",
-    padding: "18px",
+    width: "100%",
+    minHeight: "100%",
   },
+
   container: {
-    maxWidth: "1220px",
-    margin: "0 auto",
+    width: "100%",
     display: "grid",
     gap: "18px",
   },
+
   headerCard: {
     background: "#ffffff",
-    border: "1px solid #e2e8f0",
-    borderRadius: "20px",
-    padding: "20px 22px",
+    border: "1px solid #d7dbe2",
+    borderRadius: "22px",
+    padding: "22px",
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
-    gap: "16px",
+    gap: "18px",
     flexWrap: "wrap",
-    boxShadow: "0 4px 18px rgba(15, 23, 42, 0.04)",
+    boxShadow: "0 10px 30px rgba(15, 23, 42, 0.06)",
   },
+
   title: {
     margin: 0,
-    color: "#10243e",
-    fontSize: "36px",
+    color: "#574866",
+    fontSize: "30px",
     fontWeight: "700",
   },
+
   subtitle: {
     margin: "6px 0 0 0",
     color: "#64748b",
     fontSize: "14px",
   },
+
   companyPill: {
     margin: "10px 0 0 0",
-    color: "#1e3a5f",
+    color: "#574866",
     fontSize: "14px",
-    background: "#eef6ff",
-    border: "1px solid #d7e8fb",
+    background: "#f4f0f7",
+    border: "1px solid #d3c7dd",
     padding: "8px 12px",
     borderRadius: "12px",
     display: "inline-block",
   },
+
   totalBadge: {
-    background: "#eef6ff",
-    border: "1px solid #d7e8fb",
+    background: "#f4f0f7",
+    border: "1px solid #d3c7dd",
     borderRadius: "18px",
     padding: "14px 18px",
     minWidth: "180px",
   },
+
   totalBadgeLabel: {
     display: "block",
     fontSize: "12px",
-    color: "#5b708b",
+    color: "#6b7280",
     marginBottom: "4px",
   },
+
   totalBadgeValue: {
     fontSize: "26px",
-    color: "#16324f",
+    color: "#574866",
   },
+
   card: {
     background: "#ffffff",
-    border: "1px solid #e2e8f0",
-    borderRadius: "20px",
+    border: "1px solid #d7dbe2",
+    borderRadius: "22px",
     padding: "20px",
-    boxShadow: "0 4px 18px rgba(15, 23, 42, 0.04)",
+    boxShadow: "0 10px 30px rgba(15, 23, 42, 0.06)",
   },
+
+  cardHeader: {
+    marginBottom: 14,
+  },
+
+  sectionTitleSmall: {
+    margin: 0,
+    fontSize: "20px",
+    color: "#1f2937",
+  },
+
+  sectionSubtitle: {
+    margin: "4px 0 0 0",
+    color: "#64748b",
+    fontSize: "14px",
+  },
+
   topGrid: {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
     gap: "14px",
     marginTop: "14px",
   },
+
   actionGridSimple: {
     marginTop: "14px",
     display: "grid",
-    gridTemplateColumns: "170px 170px",
+    gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))",
     gap: "12px",
     alignItems: "end",
   },
+
   formGroup: {
     display: "grid",
     gap: "6px",
   },
+
   label: {
     fontSize: "13px",
     color: "#4b5f78",
     fontWeight: "600",
   },
+
   input: {
     width: "100%",
-    padding: "11px 12px",
+    padding: "12px 14px",
     borderRadius: "12px",
     border: "1px solid #cfd9e5",
     background: "#fff",
@@ -1438,6 +1842,7 @@ const styles = {
     outline: "none",
     fontSize: "14px",
   },
+
   subInput: {
     width: "100%",
     padding: "10px 12px",
@@ -1449,9 +1854,10 @@ const styles = {
     fontSize: "12px",
     color: "#42556d",
   },
+
   textarea: {
     width: "100%",
-    padding: "11px 12px",
+    padding: "12px 14px",
     borderRadius: "12px",
     border: "1px solid #cfd9e5",
     background: "#fff",
@@ -1460,15 +1866,17 @@ const styles = {
     fontSize: "14px",
     resize: "vertical",
   },
+
   primarySoftBtn: {
-    background: "#dff4ea",
+    background: "#eefcf3",
     color: "#0f7a4d",
-    border: "1px solid #bce7d3",
+    border: "1px solid #c7eed5",
     borderRadius: "12px",
     padding: "11px 14px",
     cursor: "pointer",
-    fontWeight: "600",
+    fontWeight: "700",
   },
+
   clearBtn: {
     background: "#fff7ed",
     color: "#9a3412",
@@ -1476,58 +1884,80 @@ const styles = {
     borderRadius: "12px",
     padding: "11px 14px",
     cursor: "pointer",
-    fontWeight: "600",
+    fontWeight: "700",
   },
+
   tableWrap: {
     overflowX: "auto",
     border: "1px solid #e2e8f0",
     borderRadius: "18px",
   },
+
   table: {
     width: "100%",
     borderCollapse: "collapse",
     minWidth: "1300px",
   },
+
   historialWrap: {
     overflowX: "auto",
     border: "1px solid #e2e8f0",
     borderRadius: "18px",
   },
+
   historialTable: {
     width: "100%",
     borderCollapse: "collapse",
     minWidth: "700px",
   },
+
   theadRow: {
-    background: "#f3f7fb",
+    background: "#f4f0f7",
   },
+
   th: {
     padding: "14px 12px",
     textAlign: "center",
-    color: "#20364f",
+    color: "#574866",
     fontWeight: "700",
     fontSize: "14px",
     borderBottom: "1px solid #e2e8f0",
   },
+
   tdTop: {
     padding: "12px",
     borderBottom: "1px solid #edf2f7",
     verticalAlign: "top",
+    background: "#fff",
   },
+
   tdCenter: {
     padding: "12px",
     borderBottom: "1px solid #edf2f7",
     textAlign: "center",
     verticalAlign: "middle",
+    background: "#fff",
   },
+
   cellStack: {
     display: "grid",
     gap: "8px",
   },
+
   actionCell: {
     display: "grid",
     gap: "8px",
   },
+
+  badge: {
+    display: "inline-block",
+    padding: "6px 10px",
+    borderRadius: "999px",
+    fontSize: "12px",
+    fontWeight: "700",
+    border: "1px solid transparent",
+  },
+
   editSourceBtn: {
     background: "#e0f2fe",
     color: "#075985",
@@ -1535,29 +1965,83 @@ const styles = {
     borderRadius: "12px",
     padding: "10px 12px",
     cursor: "pointer",
-    fontWeight: "600",
+    fontWeight: "700",
   },
+
+  linkBtn: {
+    background: "#f4f0f7",
+    color: "#574866",
+    border: "1px solid #d3c7dd",
+    borderRadius: "12px",
+    padding: "10px 12px",
+    cursor: "pointer",
+    fontWeight: "700",
+  },
+
+  unlinkBtn: {
+    background: "#fff7ed",
+    color: "#9a3412",
+    border: "1px solid #fed7aa",
+    borderRadius: "12px",
+    padding: "10px 12px",
+    cursor: "pointer",
+    fontWeight: "700",
+  },
+
+  linkInfo: {
+    fontSize: "12px",
+    color: "#574866",
+    background: "#f8f4fb",
+    border: "1px solid #e4d9ee",
+    borderRadius: "10px",
+    padding: "8px 10px",
+  },
+
+  linkInfoMuted: {
+    fontSize: "12px",
+    color: "#64748b",
+    background: "#f8fafc",
+    border: "1px solid #e2e8f0",
+    borderRadius: "10px",
+    padding: "8px 10px",
+  },
+
   emptyTd: {
     textAlign: "center",
     padding: "24px",
     color: "#64748b",
   },
+
   tfootRow: {
     background: "#fafcff",
   },
+
   totalTdLabel: {
     padding: "14px 12px",
     fontWeight: "700",
-    color: "#20364f",
+    color: "#574866",
     borderTop: "1px solid #e2e8f0",
+    background: "#f9fafb",
   },
+
   totalTd: {
     padding: "14px 12px",
     fontWeight: "700",
-    color: "#20364f",
+    color: "#574866",
     textAlign: "right",
     borderTop: "1px solid #e2e8f0",
+    background: "#f9fafb",
   },
+
+  totalTdCenter: {
+    padding: "14px 12px",
+    fontWeight: "700",
+    color: "#574866",
+    textAlign: "center",
+    borderTop: "1px solid #e2e8f0",
+    background: "#f9fafb",
+  },
+
   deleteBtn: {
     background: "#fff1f2",
     color: "#be123c",
@@ -1565,8 +2049,9 @@ const styles = {
     borderRadius: "12px",
     padding: "10px 12px",
     cursor: "pointer",
-    fontWeight: "600",
+    fontWeight: "700",
   },
+
   openBtn: {
     background: "#e0f2fe",
     color: "#075985",
@@ -1574,10 +2059,11 @@ const styles = {
     borderRadius: "12px",
     padding: "10px 12px",
     cursor: "pointer",
-    fontWeight: "600",
+    fontWeight: "700",
   },
+
   saveBtn: {
-    background: "#255dcf",
+    background: "#6b5a7a",
     color: "#fff",
     border: "none",
     borderRadius: "12px",
@@ -1585,18 +2071,14 @@ const styles = {
     cursor: "pointer",
     fontWeight: "700",
   },
-  sectionTitle: {
-    margin: "0 0 14px 0",
-    color: "#10243e",
-    fontSize: "28px",
-    fontWeight: "700",
-  },
+
   checkboxRow: {
     display: "flex",
     gap: "20px",
     flexWrap: "wrap",
     marginBottom: "14px",
   },
+
   checkboxLabel: {
     display: "flex",
     alignItems: "center",
@@ -1604,45 +2086,51 @@ const styles = {
     color: "#334155",
     fontWeight: "600",
   },
+
   reportTopGrid: {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
     gap: "12px",
     marginBottom: "14px",
   },
+
   reportButtons: {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))",
     gap: "10px",
     marginBottom: "10px",
   },
+
   reportBtnPdf: {
-    background: "#ffe2e2",
-    color: "#b42318",
-    border: "1px solid #ffc7c7",
+    background: "#fff1f2",
+    color: "#be123c",
+    border: "1px solid #fecdd3",
     borderRadius: "12px",
     padding: "11px 14px",
     cursor: "pointer",
-    fontWeight: "600",
+    fontWeight: "700",
   },
+
   reportBtnExcel: {
-    background: "#e3f8eb",
+    background: "#eefcf3",
     color: "#0f7a4d",
     border: "1px solid #c7eed5",
     borderRadius: "12px",
     padding: "11px 14px",
     cursor: "pointer",
-    fontWeight: "600",
+    fontWeight: "700",
   },
+
   reportBtnPdf2: {
-    background: "#ede9fe",
-    color: "#5b21b6",
-    border: "1px solid #ddd6fe",
+    background: "#f4f0f7",
+    color: "#574866",
+    border: "1px solid #d3c7dd",
     borderRadius: "12px",
     padding: "11px 14px",
     cursor: "pointer",
-    fontWeight: "600",
+    fontWeight: "700",
   },
+
   reportBtnExcel2: {
     background: "#e0f2fe",
     color: "#0369a1",
@@ -1650,8 +2138,9 @@ const styles = {
     borderRadius: "12px",
     padding: "11px 14px",
     cursor: "pointer",
-    fontWeight: "600",
+    fontWeight: "700",
   },
+
   reportBtnPro: {
     background: "#fef3c7",
     color: "#92400e",
@@ -1661,9 +2150,85 @@ const styles = {
     cursor: "pointer",
     fontWeight: "700",
   },
+
   infoText: {
     margin: 0,
     color: "#64748b",
     fontSize: "13px",
+  },
+
+  modalOverlay: {
+    position: "fixed",
+    inset: 0,
+    background: "rgba(15, 23, 42, 0.45)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: "20px",
+    zIndex: 9999,
+  },
+
+  modalBox: {
+    width: "100%",
+    maxWidth: "560px",
+    background: "#fff",
+    borderRadius: "20px",
+    border: "1px solid #d7dbe2",
+    boxShadow: "0 20px 45px rgba(0,0,0,0.22)",
+    padding: "18px",
+  },
+
+  modalHeaderSimple: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: "12px",
+    marginBottom: "14px",
+  },
+
+  modalTitle: {
+    margin: 0,
+    color: "#574866",
+    fontSize: "24px",
+    fontWeight: "700",
+  },
+
+  modalText: {
+    margin: "4px 0 0 0",
+    color: "#64748b",
+    fontSize: "14px",
+  },
+
+  modalCloseBtn: {
+    background: "#e2e8f0",
+    border: "none",
+    borderRadius: "10px",
+    padding: "8px 10px",
+    cursor: "pointer",
+    fontWeight: "700",
+  },
+
+  modalList: {
+    display: "grid",
+    gap: "10px",
+    maxHeight: "380px",
+    overflowY: "auto",
+  },
+
+  modalOptionBtn: {
+    width: "100%",
+    textAlign: "left",
+    display: "grid",
+    gap: "4px",
+    background: "#f8fafc",
+    border: "1px solid #e2e8f0",
+    borderRadius: "14px",
+    padding: "12px 14px",
+    cursor: "pointer",
+  },
+
+  modalOptionSub: {
+    fontSize: "12px",
+    color: "#64748b",
   },
 };

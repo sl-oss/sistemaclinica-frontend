@@ -73,9 +73,9 @@ function Citas() {
 
   const sumarDiasSV = (fechaBaseTexto, dias) => {
     const [y, m, d] = fechaBaseTexto.split("-").map(Number);
-    const fecha = new Date(y, m - 1, d);
-    fecha.setDate(fecha.getDate() + dias);
-    return formatearFechaSV(fecha);
+    const fechaNueva = new Date(y, m - 1, d);
+    fechaNueva.setDate(fechaNueva.getDate() + dias);
+    return formatearFechaSV(fechaNueva);
   };
 
   const manejarCambioFecha = (valor, setter) => {
@@ -741,47 +741,107 @@ function Citas() {
 
     const doc = new jsPDF("landscape");
 
-    doc.setFontSize(16);
-    doc.text(titulo, 14, 15);
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const marginX = 12;
+    const accent = [107, 90, 122];
+    const lightBg = [245, 242, 247];
+    const gridColor = [210, 204, 217];
+    const textDark = [45, 39, 61];
+    const textMuted = [95, 88, 109];
 
+    doc.setFillColor(...lightBg);
+    doc.rect(0, 0, pageWidth, 34, "F");
+
+    doc.setDrawColor(...accent);
+    doc.setLineWidth(0.8);
+    doc.line(0, 34, pageWidth, 34);
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(22);
+    doc.setTextColor(...textDark);
+    doc.text("LISTA DE CITAS", 18, 16);
+
+    doc.setFont("helvetica", "normal");
     doc.setFontSize(11);
-    doc.text(`Empresa: ${empresa?.nombre || "Empresa activa"}`, 14, 22);
-    doc.text(
-      `Período: ${formatearFechaPantalla(filtroDesde)} al ${formatearFechaPantalla(filtroHasta)}`,
-      14,
-      28
-    );
+    doc.setTextColor(...textMuted);
+    doc.text("Para registro manual", 18, 24);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(11);
+    doc.setTextColor(...textDark);
+    doc.text("Empresa:", 175, 14);
+    doc.text("Período:", 175, 24);
+
+    doc.setDrawColor(120, 112, 135);
+    doc.line(198, 15, 286, 15);
+    doc.line(198, 25, 286, 25);
+
+    const empresaTexto = empresa?.nombre || "Empresa activa";
+    const periodoTexto = `${formatearFechaPantalla(filtroDesde)} al ${formatearFechaPantalla(filtroHasta)}`;
+
+    doc.setFontSize(10);
+    doc.text(empresaTexto, 199, 13.5);
+    doc.text(periodoTexto, 199, 23.5);
 
     autoTable(doc, {
-      startY: 34,
+      startY: 42,
+      margin: { left: marginX, right: marginX },
       head: [[
         "Fecha",
         "Hora",
         "Cliente",
         "Teléfono",
-        "Servicio",
-        "Estado",
-        "Confirmada",
-        "Motivo cancelación",
-        "Reprogramada",
-        "Nueva fecha",
-        "Nueva hora",
+        "Observaciones / Comentarios",
       ]],
       body: citas.map((c) => [
         formatearFechaPantalla(c.fecha),
         normalizarHora(c.hora),
         c.clientes?.nombre || "Sin nombre",
         c.clientes?.telefono || "",
-        c.servicio || "",
-        c.estado || "",
-        c.confirmada ? "Sí" : "No",
-        c.motivo_cancelacion || "",
-        c.desea_reprogramar ? "Sí" : "No",
-        c.fecha_reprogramada ? formatearFechaPantalla(c.fecha_reprogramada) : "",
-        c.hora_reprogramada ? normalizarHora(c.hora_reprogramada) : "",
+        "",
       ]),
-      styles: { fontSize: 8 },
-      headStyles: { fillColor: [39, 67, 98] },
+      theme: "grid",
+      styles: {
+        fontSize: 9,
+        cellPadding: 4,
+        lineColor: gridColor,
+        lineWidth: 0.2,
+        textColor: [40, 40, 40],
+        minCellHeight: 14,
+        valign: "middle",
+      },
+      headStyles: {
+        fillColor: accent,
+        textColor: [255, 255, 255],
+        fontStyle: "bold",
+        halign: "center",
+        valign: "middle",
+      },
+      bodyStyles: {
+        fillColor: [255, 255, 255],
+      },
+      columnStyles: {
+        0: { cellWidth: 28, halign: "center" },
+        1: { cellWidth: 20, halign: "center" },
+        2: { cellWidth: 60 },
+        3: { cellWidth: 32 },
+        4: { cellWidth: 123 },
+      },
+      didDrawPage: () => {
+        const pageHeight = doc.internal.pageSize.getHeight();
+
+        doc.setDrawColor(...accent);
+        doc.setLineWidth(0.5);
+        doc.line(12, pageHeight - 10, pageWidth - 12, pageHeight - 10);
+
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(9);
+        doc.setTextColor(...textMuted);
+        doc.text("Sistema Dental", 18, pageHeight - 6);
+
+        const pageInfo = `Página ${doc.internal.getNumberOfPages()}`;
+        doc.text(pageInfo, pageWidth - 28, pageHeight - 6);
+      },
     });
 
     doc.save(`${nombreArchivo}_${filtroDesde}_a_${filtroHasta}.pdf`);
@@ -794,319 +854,376 @@ function Citas() {
   return (
     <>
       <div style={styles.page}>
-        <h2 style={styles.titulo}>📅 Citas</h2>
+        <div style={styles.headerCard}>
+          <div>
+            <h1 style={styles.title}>Citas</h1>
+            <p style={styles.subtitle}>
+              Gestioná agenda, bloqueos y reportes de citas.
+            </p>
+          </div>
 
-        <div
-          style={{
-            ...styles.layout,
-            gridTemplateColumns: esMovil ? "1fr" : "380px minmax(0, 1fr)",
-          }}
-        >
-          <div style={styles.leftColumn}>
-            <div style={styles.card}>
-              <h3 style={styles.subtitulo}>
-                {citaEditando ? "✏️ Editar cita" : "➕ Nueva cita"}
-              </h3>
+          <div style={styles.headerInfo}>
+            <div><strong>{empresa?.nombre || "Empresa"}</strong></div>
+            <div>Citas encontradas</div>
+            <div><strong>{citas.length}</strong></div>
+          </div>
+        </div>
 
-              <div style={styles.grid}>
-                <div style={styles.clienteRow}>
-                  <select
-                    style={{ ...styles.input, marginBottom: 0 }}
-                    value={clienteSeleccionado}
-                    onChange={(e) => setClienteSeleccionado(e.target.value)}
-                  >
-                    <option value="">Cliente</option>
-                    {clientes.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.nombre}
-                      </option>
-                    ))}
-                  </select>
-
-                  <button
-                    type="button"
-                    style={styles.btnNuevoCliente}
-                    onClick={abrirModalCliente}
-                  >
-                    + Cliente
-                  </button>
-                </div>
-
-                <input
-                  style={styles.input}
-                  type="date"
-                  value={fecha}
-                  onChange={(e) => manejarCambioFecha(e.target.value, setFecha)}
-                />
-
-                <select
-                  key={`${fecha}-${citaEditando || "nueva"}-${horasDisponibles.join("|")}`}
-                  style={styles.input}
-                  value={hora}
-                  onChange={(e) => setHora(e.target.value)}
-                  disabled={!fecha}
-                >
-                  <option value="">
-                    {fecha ? "Hora" : "Primero selecciona fecha"}
-                  </option>
-                  {horasDisponibles.map((h) => (
-                    <option key={h} value={h}>
-                      {h}
-                    </option>
-                  ))}
-                </select>
-
-                <input
-                  style={styles.input}
-                  placeholder="Servicio"
-                  value={servicio}
-                  onChange={(e) => setServicio(e.target.value)}
-                />
-              </div>
-
-              <div style={styles.rowButtons}>
-                <button style={styles.btnGuardar} onClick={guardarCita}>
-                  {citaEditando ? "Actualizar" : "Guardar"}
-                </button>
-
-                <button style={styles.btnSecundario} onClick={limpiarFormulario}>
-                  Limpiar
-                </button>
-              </div>
+        <div style={styles.topSections}>
+          <div style={styles.cardTop}>
+            <div style={styles.cardHeader}>
+              <h3 style={styles.sectionTitle}>Nueva cita</h3>
+              <p style={styles.sectionSubtitle}>
+                Creá o editá citas fácilmente.
+              </p>
             </div>
 
-            <div style={styles.card}>
-              <h3 style={styles.subtitulo}>⛔ Bloquear horario</h3>
-
-              <div style={styles.grid}>
-                <input
-                  style={styles.input}
-                  type="date"
-                  value={bloqueoFecha}
-                  onChange={(e) =>
-                    manejarCambioFecha(e.target.value, setBloqueoFecha)
-                  }
-                />
-
+            <div style={styles.grid}>
+              <div style={styles.clienteRow}>
                 <select
-                  style={styles.input}
-                  value={bloqueoInicio}
-                  onChange={(e) => setBloqueoInicio(e.target.value)}
+                  style={{ ...styles.input, marginBottom: 0 }}
+                  value={clienteSeleccionado}
+                  onChange={(e) => setClienteSeleccionado(e.target.value)}
                 >
-                  <option value="">Desde</option>
-                  {horarios.map((h) => (
-                    <option key={h} value={h}>
-                      {h}
+                  <option value="">Cliente</option>
+                  {clientes.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.nombre}
                     </option>
                   ))}
                 </select>
 
-                <select
-                  style={styles.input}
-                  value={bloqueoFin}
-                  onChange={(e) => setBloqueoFin(e.target.value)}
+                <button
+                  type="button"
+                  style={styles.btnNuevoCliente}
+                  onClick={abrirModalCliente}
                 >
-                  <option value="">Hasta</option>
-                  {horarios.map((h) => (
-                    <option key={h} value={h}>
-                      {h}
-                    </option>
-                  ))}
-                </select>
+                  + Cliente
+                </button>
               </div>
 
-              <button style={styles.btnBloqueo} onClick={bloquearIntervalo}>
-                ⛔ Bloquear intervalo
+              <input
+                style={styles.input}
+                type="date"
+                value={fecha}
+                onChange={(e) => manejarCambioFecha(e.target.value, setFecha)}
+              />
+
+              <select
+                key={`${fecha}-${citaEditando || "nueva"}-${horasDisponibles.join("|")}`}
+                style={styles.input}
+                value={hora}
+                onChange={(e) => setHora(e.target.value)}
+                disabled={!fecha}
+              >
+                <option value="">
+                  {fecha ? "Hora" : "Primero selecciona fecha"}
+                </option>
+                {horasDisponibles.map((h) => (
+                  <option key={h} value={h}>
+                    {h}
+                  </option>
+                ))}
+              </select>
+
+              <input
+                style={styles.input}
+                placeholder="Servicio"
+                value={servicio}
+                onChange={(e) => setServicio(e.target.value)}
+              />
+            </div>
+
+            <div style={styles.rowButtons}>
+              <button style={styles.btnGuardar} onClick={guardarCita}>
+                {citaEditando ? "Actualizar" : "Guardar"}
               </button>
 
-              {bloqueoFecha && bloqueos.length > 0 && (
-                <div style={{ marginTop: 12 }}>
-                  <strong>Bloqueos de la fecha elegida:</strong>
-                  {bloqueos.map((b) => (
-                    <div key={b.id} style={styles.bloqueoRow}>
-                      <span style={styles.bloqueoText}>
-                        {normalizarHora(b.hora)} - {b.motivo}
-                      </span>
-                      <button
-                        style={styles.deleteBloqueoBtn}
-                        onClick={() => eliminarBloqueo(b.id)}
-                      >
-                        🗑
-                      </button>
-                    </div>
-                  ))}
+              <button style={styles.btnSecundario} onClick={limpiarFormulario}>
+                Limpiar
+              </button>
+            </div>
+          </div>
+
+          <div style={styles.cardTop}>
+            <div style={styles.cardHeader}>
+              <h3 style={styles.sectionTitle}>Bloquear horario</h3>
+              <p style={styles.sectionSubtitle}>
+                Marcá horas no disponibles.
+              </p>
+            </div>
+
+            <div style={styles.grid}>
+              <input
+                style={styles.input}
+                type="date"
+                value={bloqueoFecha}
+                onChange={(e) =>
+                  manejarCambioFecha(e.target.value, setBloqueoFecha)
+                }
+              />
+
+              <select
+                style={styles.input}
+                value={bloqueoInicio}
+                onChange={(e) => setBloqueoInicio(e.target.value)}
+              >
+                <option value="">Desde</option>
+                {horarios.map((h) => (
+                  <option key={h} value={h}>
+                    {h}
+                  </option>
+                ))}
+              </select>
+
+              <select
+                style={styles.input}
+                value={bloqueoFin}
+                onChange={(e) => setBloqueoFin(e.target.value)}
+              >
+                <option value="">Hasta</option>
+                {horarios.map((h) => (
+                  <option key={h} value={h}>
+                    {h}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <button style={styles.btnBloqueo} onClick={bloquearIntervalo}>
+              ⛔ Bloquear intervalo
+            </button>
+
+            {bloqueoFecha && bloqueos.length > 0 && (
+              <div style={{ marginTop: 12 }}>
+                <strong>Bloqueos de la fecha elegida:</strong>
+                {bloqueos.map((b) => (
+                  <div key={b.id} style={styles.bloqueoRow}>
+                    <span style={styles.bloqueoText}>
+                      {normalizarHora(b.hora)} - {b.motivo}
+                    </span>
+                    <button
+                      style={styles.deleteBloqueoBtn}
+                      onClick={() => eliminarBloqueo(b.id)}
+                    >
+                      🗑
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div style={styles.cardTop}>
+            <div style={styles.cardHeader}>
+              <h3 style={styles.sectionTitle}>Filtros y reportes</h3>
+              <p style={styles.sectionSubtitle}>
+                Buscá citas y exportá información.
+              </p>
+            </div>
+
+            <div style={styles.grid}>
+              <input
+                style={styles.input}
+                type="date"
+                value={filtroDesde}
+                onChange={(e) =>
+                  manejarCambioFecha(e.target.value, setFiltroDesde)
+                }
+              />
+
+              <input
+                style={styles.input}
+                type="date"
+                value={filtroHasta}
+                onChange={(e) =>
+                  manejarCambioFecha(e.target.value, setFiltroHasta)
+                }
+              />
+
+              <select
+                style={styles.input}
+                value={filtroEstado}
+                onChange={(e) => setFiltroEstado(e.target.value)}
+              >
+                <option value="pendientes">Citas pendientes</option>
+                <option value="atendidas">Citas atendidas</option>
+                <option value="canceladas_sin_reprogramacion">
+                  Canceladas sin reprogramación
+                </option>
+                <option value="canceladas">Todas las canceladas</option>
+                <option value="todas">Todas</option>
+              </select>
+
+              {filtroDesde && filtroHasta && filtroDesde > filtroHasta && (
+                <div style={styles.errorText}>
+                  La fecha "desde" no puede ser mayor que la fecha "hasta".
                 </div>
               )}
             </div>
 
-            <div style={styles.card}>
-              <h3 style={styles.subtitulo}>🔎 Buscar citas por fecha</h3>
+            <div style={styles.quickFilters}>
+              <button
+                style={styles.btnSecundario}
+                onClick={() => aplicarFiltroRapido("hoy")}
+              >
+                Hoy
+              </button>
+              <button
+                style={styles.btnSecundario}
+                onClick={() => aplicarFiltroRapido("mañana")}
+              >
+                Mañana
+              </button>
+              <button
+                style={styles.btnSecundario}
+                onClick={() => aplicarFiltroRapido("semana")}
+              >
+                Semana
+              </button>
+              <button
+                style={styles.btnSecundario}
+                onClick={() => aplicarFiltroRapido("todo")}
+              >
+                Todas
+              </button>
+            </div>
 
-              <div style={styles.grid}>
-                <input
-                  style={styles.input}
-                  type="date"
-                  value={filtroDesde}
-                  onChange={(e) =>
-                    manejarCambioFecha(e.target.value, setFiltroDesde)
-                  }
-                />
-
-                <input
-                  style={styles.input}
-                  type="date"
-                  value={filtroHasta}
-                  onChange={(e) =>
-                    manejarCambioFecha(e.target.value, setFiltroHasta)
-                  }
-                />
-
-                <select
-                  style={styles.input}
-                  value={filtroEstado}
-                  onChange={(e) => setFiltroEstado(e.target.value)}
-                >
-                  <option value="pendientes">Citas pendientes</option>
-                  <option value="atendidas">Citas atendidas</option>
-                  <option value="canceladas_sin_reprogramacion">
-                    Canceladas sin reprogramación
-                  </option>
-                  <option value="canceladas">Todas las canceladas</option>
-                  <option value="todas">Todas</option>
-                </select>
-
-                {filtroDesde && filtroHasta && filtroDesde > filtroHasta && (
-                  <div style={{ color: "#b91c1c", fontSize: 14, marginTop: -4 }}>
-                    La fecha "desde" no puede ser mayor que la fecha "hasta".
-                  </div>
-                )}
-              </div>
-
-              <div style={styles.quickFilters}>
-                <button
-                  style={styles.btnSecundario}
-                  onClick={() => aplicarFiltroRapido("hoy")}
-                >
-                  Hoy
-                </button>
-                <button
-                  style={styles.btnSecundario}
-                  onClick={() => aplicarFiltroRapido("mañana")}
-                >
-                  Mañana
-                </button>
-                <button
-                  style={styles.btnSecundario}
-                  onClick={() => aplicarFiltroRapido("semana")}
-                >
-                  Semana
-                </button>
-                <button
-                  style={styles.btnSecundario}
-                  onClick={() => aplicarFiltroRapido("todo")}
-                >
-                  Todas
-                </button>
-              </div>
-
-              <div style={styles.reportRow}>
-                <button style={styles.btnSecundario} onClick={obtenerCitas}>
-                  Filtrar
-                </button>
-                <button style={styles.btnPdf} onClick={exportarPDF}>
-                  PDF
-                </button>
-                <button style={styles.btnExcel} onClick={exportarExcel}>
-                  Excel
-                </button>
-              </div>
+            <div style={styles.reportRow}>
+              <button style={styles.btnFiltro} onClick={obtenerCitas}>
+                Filtrar
+              </button>
+              <button style={styles.btnPdf} onClick={exportarPDF}>
+                PDF
+              </button>
+              <button style={styles.btnExcel} onClick={exportarExcel}>
+                Excel
+              </button>
             </div>
           </div>
+        </div>
 
-          <div style={styles.rightColumn}>
-            <div style={styles.card}>
-              <h3 style={styles.subtitulo}>📌 Citas encontradas</h3>
+        <div style={styles.cardMain}>
+          <div style={styles.cardHeader}>
+            <h3 style={styles.sectionTitle}>Citas encontradas</h3>
+            <p style={styles.sectionSubtitle}>
+              Revisá, confirmá, cancelá o atendé citas.
+            </p>
+          </div>
 
-              {cargandoCitas ? (
-                <p>Cargando citas...</p>
-              ) : citas.length === 0 ? (
-                <p>No hay citas en ese rango.</p>
-              ) : null}
+          {cargandoCitas ? (
+            <p>Cargando citas...</p>
+          ) : citas.length === 0 ? (
+            <p>No hay citas en ese rango.</p>
+          ) : null}
 
-              <div
-                style={{
-                  ...styles.citasGrid,
-                  gridTemplateColumns: esMovil
-                    ? "1fr"
-                    : "repeat(auto-fill, minmax(280px, 1fr))",
-                }}
-              >
-                {citas.map((c) => (
-                  <div key={c.id} style={styles.citaCard}>
-                    <strong style={{ fontSize: 18 }}>{c.clientes?.nombre}</strong>
-                    <div>📞 {c.clientes?.telefono || "Sin teléfono"}</div>
+          <div
+            style={{
+              ...styles.citasGrid,
+              gridTemplateColumns: esMovil
+                ? "1fr"
+                : "repeat(auto-fill, minmax(280px, 1fr))",
+            }}
+          >
+            {citas.map((c) => (
+              <div key={c.id} style={styles.citaCard}>
+                <div style={styles.badgeTopRow}>
+                  <span
+                    style={{
+                      ...styles.estadoBadge,
+                      background:
+                        c.estado === "pendiente"
+                          ? "#fef3c7"
+                          : c.estado === "atendida"
+                          ? "#ecfdf5"
+                          : "#fef2f2",
+                      color:
+                        c.estado === "pendiente"
+                          ? "#92400e"
+                          : c.estado === "atendida"
+                          ? "#166534"
+                          : "#991b1b",
+                      borderColor:
+                        c.estado === "pendiente"
+                          ? "#fde68a"
+                          : c.estado === "atendida"
+                          ? "#bbf7d0"
+                          : "#fecaca",
+                    }}
+                  >
+                    {c.estado}
+                  </span>
+
+                  <span
+                    style={{
+                      ...styles.estadoBadge,
+                      background: c.confirmada ? "#eefcf3" : "#f8f8fa",
+                      color: c.confirmada ? "#0f7a4d" : "#475569",
+                      borderColor: c.confirmada ? "#c7eed5" : "#d7dbe2",
+                    }}
+                  >
+                    {c.confirmada ? "Confirmada" : "Sin confirmar"}
+                  </span>
+                </div>
+
+                <strong style={styles.citaNombre}>{c.clientes?.nombre}</strong>
+                <div style={styles.citaText}>📞 {c.clientes?.telefono || "Sin teléfono"}</div>
+                <div style={styles.citaText}>
+                  📅 {formatearFechaPantalla(c.fecha)} - {normalizarHora(c.hora)}
+                </div>
+                <div style={styles.citaServicio}>{c.servicio}</div>
+
+                {c.estado === "cancelada" && (
+                  <div style={styles.canceladaInfo}>
                     <div>
-                      📅 {c.fecha} - {normalizarHora(c.hora)}
-                    </div>
-                    <div style={{ wordBreak: "break-word" }}>{c.servicio}</div>
-                    <div>
-                      Estado: {c.estado}
-                      {c.confirmada ? " | ✅ Confirmada" : " | ⏳ Sin confirmar"}
+                      <strong>Motivo:</strong>{" "}
+                      {c.motivo_cancelacion || "Sin motivo"}
                     </div>
 
-                    {c.estado === "cancelada" && (
-                      <div style={styles.canceladaInfo}>
+                    {c.desea_reprogramar &&
+                      c.fecha_reprogramada &&
+                      c.hora_reprogramada && (
                         <div>
-                          <strong>Motivo:</strong>{" "}
-                          {c.motivo_cancelacion || "Sin motivo"}
+                          <strong>Reprogramada para:</strong>{" "}
+                          {formatearFechaPantalla(c.fecha_reprogramada)} -{" "}
+                          {normalizarHora(c.hora_reprogramada)}
                         </div>
-
-                        {c.desea_reprogramar &&
-                          c.fecha_reprogramada &&
-                          c.hora_reprogramada && (
-                            <div>
-                              <strong>Reprogramada para:</strong>{" "}
-                              {c.fecha_reprogramada} -{" "}
-                              {normalizarHora(c.hora_reprogramada)}
-                            </div>
-                          )}
-                      </div>
-                    )}
-
-                    <div style={styles.actions}>
-                      {c.estado !== "cancelada" && (
-                        <>
-                          <button
-                            style={styles.iconBtn}
-                            onClick={() => editarCita(c)}
-                          >
-                            ✏️
-                          </button>
-                          <button
-                            style={styles.iconBtn}
-                            onClick={() => cancelarCita(c)}
-                          >
-                            ❌
-                          </button>
-                          <button
-                            style={styles.iconBtn}
-                            onClick={() => atender(c)}
-                          >
-                            🦷
-                          </button>
-                          <button
-                            style={styles.iconBtn}
-                            onClick={() => confirmarCita(c.id, c.confirmada)}
-                          >
-                            {c.confirmada ? "✅" : "✔"}
-                          </button>
-                        </>
                       )}
-                    </div>
                   </div>
-                ))}
+                )}
+
+                <div style={styles.actions}>
+                  {c.estado !== "cancelada" && (
+                    <>
+                      <button
+                        style={styles.iconBtn}
+                        onClick={() => editarCita(c)}
+                      >
+                        ✏️
+                      </button>
+                      <button
+                        style={styles.iconBtn}
+                        onClick={() => cancelarCita(c)}
+                      >
+                        ❌
+                      </button>
+                      <button
+                        style={styles.iconBtn}
+                        onClick={() => atender(c)}
+                      >
+                        🦷
+                      </button>
+                      <button
+                        style={styles.iconBtn}
+                        onClick={() => confirmarCita(c.id, c.confirmada)}
+                      >
+                        {c.confirmada ? "✅" : "✔"}
+                      </button>
+                    </>
+                  )}
+                </div>
               </div>
-            </div>
+            ))}
           </div>
         </div>
       </div>
@@ -1168,38 +1285,85 @@ function Citas() {
 const styles = {
   page: {
     width: "100%",
-    maxWidth: "100%",
-    boxSizing: "border-box",
-  },
-  titulo: {
-    marginBottom: 16,
-  },
-  layout: {
+    minHeight: "100%",
     display: "grid",
-    gap: 20,
-    alignItems: "start",
-    width: "100%",
+    gap: 18,
   },
-  leftColumn: {
-    minWidth: 0,
-    width: "100%",
+
+  headerCard: {
+    background: "#ffffff",
+    border: "1px solid #d7dbe2",
+    borderRadius: "22px",
+    padding: "22px",
+    display: "flex",
+    justifyContent: "space-between",
+    gap: "18px",
+    flexWrap: "wrap",
+    boxShadow: "0 10px 30px rgba(15, 23, 42, 0.06)",
   },
-  rightColumn: {
-    minWidth: 0,
-    width: "100%",
+
+  title: {
+    margin: 0,
+    color: "#574866",
+    fontSize: "30px",
+    fontWeight: "700",
   },
-  card: {
-    background: "#f8fafc",
-    padding: 16,
-    borderRadius: 12,
-    marginBottom: 16,
-    border: "1px solid #e5e7eb",
+
+  subtitle: {
+    margin: "6px 0 0 0",
+    color: "#64748b",
+    fontSize: "14px",
+  },
+
+  headerInfo: {
+    textAlign: "right",
+    color: "#1f2937",
+    fontSize: 14,
+    lineHeight: 1.6,
+  },
+
+  topSections: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
+    gap: 18,
+  },
+
+  cardTop: {
+    background: "#ffffff",
+    border: "1px solid #d7dbe2",
+    padding: 18,
+    borderRadius: 20,
+    boxShadow: "0 10px 30px rgba(15, 23, 42, 0.06)",
     width: "100%",
     boxSizing: "border-box",
   },
-  subtitulo: {
+
+  cardMain: {
+    background: "#ffffff",
+    border: "1px solid #d7dbe2",
+    padding: 18,
+    borderRadius: 20,
+    boxShadow: "0 10px 30px rgba(15, 23, 42, 0.06)",
+    width: "100%",
+    boxSizing: "border-box",
+  },
+
+  cardHeader: {
     marginBottom: 12,
   },
+
+  sectionTitle: {
+    margin: 0,
+    fontSize: "20px",
+    color: "#1f2937",
+  },
+
+  sectionSubtitle: {
+    margin: "4px 0 0 0",
+    color: "#64748b",
+    fontSize: "14px",
+  },
+
   grid: {
     display: "grid",
     gridTemplateColumns: "1fr",
@@ -1207,6 +1371,7 @@ const styles = {
     marginBottom: 12,
     width: "100%",
   },
+
   clienteRow: {
     display: "grid",
     gridTemplateColumns: "1fr auto",
@@ -1214,138 +1379,210 @@ const styles = {
     alignItems: "stretch",
     width: "100%",
   },
+
   input: {
     width: "100%",
-    padding: 10,
-    borderRadius: 8,
-    border: "1px solid #d1d5db",
+    padding: 12,
+    borderRadius: 12,
+    border: "1px solid #cfd9e5",
     boxSizing: "border-box",
+    background: "#fff",
+    outline: "none",
+    fontSize: 14,
   },
+
   btnNuevoCliente: {
     padding: "10px 14px",
-    background: "#2563eb",
+    background: "#6b5a7a",
     color: "white",
     border: "none",
-    borderRadius: 8,
+    borderRadius: 12,
     cursor: "pointer",
     whiteSpace: "nowrap",
+    fontWeight: "700",
   },
+
   rowButtons: {
     display: "flex",
     gap: 10,
     flexWrap: "wrap",
   },
+
   quickFilters: {
     display: "flex",
     gap: 8,
     flexWrap: "wrap",
     marginBottom: 10,
   },
+
   reportRow: {
     display: "flex",
     gap: 10,
     flexWrap: "wrap",
   },
+
   btnGuardar: {
     padding: "10px 16px",
-    background: "#10b981",
+    background: "#6b5a7a",
     color: "white",
     border: "none",
-    borderRadius: 8,
+    borderRadius: 12,
     cursor: "pointer",
+    fontWeight: "700",
   },
+
   btnSecundario: {
     padding: "10px 16px",
-    background: "#e5e7eb",
-    color: "#111827",
-    border: "none",
-    borderRadius: 8,
+    background: "#f4f0f7",
+    color: "#574866",
+    border: "1px solid #d3c7dd",
+    borderRadius: 12,
     cursor: "pointer",
+    fontWeight: "700",
   },
+
+  btnFiltro: {
+    padding: "10px 16px",
+    background: "#f4f0f7",
+    color: "#574866",
+    border: "1px solid #d3c7dd",
+    borderRadius: 12,
+    cursor: "pointer",
+    fontWeight: "700",
+  },
+
   btnPdf: {
     padding: "10px 16px",
-    background: "#fee2e2",
-    color: "#991b1b",
-    border: "none",
-    borderRadius: 8,
+    background: "#fff1f2",
+    color: "#be123c",
+    border: "1px solid #fecdd3",
+    borderRadius: 12,
     cursor: "pointer",
-    fontWeight: "600",
+    fontWeight: "700",
   },
+
   btnExcel: {
     padding: "10px 16px",
-    background: "#dcfce7",
-    color: "#166534",
-    border: "none",
-    borderRadius: 8,
+    background: "#eefcf3",
+    color: "#0f7a4d",
+    border: "1px solid #c7eed5",
+    borderRadius: 12,
     cursor: "pointer",
-    fontWeight: "600",
+    fontWeight: "700",
   },
+
   btnBloqueo: {
     padding: "10px 16px",
     background: "#ef4444",
     color: "white",
     border: "none",
-    borderRadius: 8,
+    borderRadius: 12,
     cursor: "pointer",
+    fontWeight: "700",
   },
+
   bloqueoRow: {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
     gap: 10,
     marginTop: 6,
-    padding: "6px 8px",
-    background: "white",
-    borderRadius: 8,
+    padding: "8px 10px",
+    background: "#fff",
+    borderRadius: 10,
     border: "1px solid #e5e7eb",
   },
+
   bloqueoText: {
     fontSize: 13,
     wordBreak: "break-word",
   },
+
   deleteBloqueoBtn: {
     padding: "6px 10px",
-    borderRadius: 8,
+    borderRadius: 10,
     border: "1px solid #d1d5db",
     background: "#fff",
     cursor: "pointer",
   },
+
   citasGrid: {
     display: "grid",
-    gap: 12,
+    gap: 14,
     width: "100%",
   },
+
   citaCard: {
     background: "white",
-    border: "1px solid #e5e7eb",
-    borderRadius: 10,
-    padding: 12,
+    border: "1px solid #e2e8f0",
+    borderRadius: 16,
+    padding: 14,
     minWidth: 0,
     width: "100%",
     boxSizing: "border-box",
+    boxShadow: "0 6px 18px rgba(15, 23, 42, 0.04)",
   },
-  canceladaInfo: {
+
+  badgeTopRow: {
+    display: "flex",
+    gap: 8,
+    flexWrap: "wrap",
+    marginBottom: 10,
+  },
+
+  estadoBadge: {
+    display: "inline-block",
+    padding: "6px 10px",
+    borderRadius: "999px",
+    fontSize: "12px",
+    fontWeight: "700",
+    border: "1px solid transparent",
+    textTransform: "capitalize",
+  },
+
+  citaNombre: {
+    fontSize: 18,
+    color: "#1f2937",
+  },
+
+  citaText: {
+    marginTop: 4,
+    color: "#475569",
+    fontSize: 14,
+  },
+
+  citaServicio: {
     marginTop: 8,
+    color: "#334155",
+    fontWeight: "600",
+    wordBreak: "break-word",
+  },
+
+  canceladaInfo: {
+    marginTop: 10,
     fontSize: 14,
     color: "#991b1b",
     background: "#fef2f2",
     border: "1px solid #fecaca",
-    borderRadius: 8,
-    padding: 8,
+    borderRadius: 10,
+    padding: 10,
   },
+
   actions: {
     display: "flex",
     gap: 8,
-    marginTop: 8,
+    marginTop: 12,
     flexWrap: "wrap",
   },
+
   iconBtn: {
     padding: "8px 10px",
-    borderRadius: 8,
-    border: "1px solid #d1d5db",
+    borderRadius: 10,
+    border: "1px solid #d7dbe2",
     background: "#fff",
     cursor: "pointer",
   },
+
   modalOverlay: {
     position: "fixed",
     inset: 0,
@@ -1356,51 +1593,64 @@ const styles = {
     padding: "20px",
     zIndex: 9999,
   },
+
   modal: {
     width: "100%",
     maxWidth: "420px",
     background: "#fff",
-    borderRadius: "14px",
+    borderRadius: "18px",
     padding: "18px",
     boxShadow: "0 20px 45px rgba(0,0,0,0.22)",
+    border: "1px solid #d7dbe2",
   },
+
   modalHeader: {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
     marginBottom: "12px",
   },
+
   btnCerrarModal: {
-    background: "#e2e8f0",
+    background: "#ececef",
     border: "none",
-    borderRadius: "8px",
+    borderRadius: "10px",
     padding: "8px 10px",
     cursor: "pointer",
     fontWeight: "700",
   },
+
   modalActions: {
     display: "flex",
     gap: "10px",
     justifyContent: "flex-end",
     marginTop: "8px",
   },
+
   btnGuardarModal: {
-    background: "#10b981",
+    background: "#6b5a7a",
     color: "#fff",
     border: "none",
-    borderRadius: "8px",
+    borderRadius: "10px",
     padding: "10px 14px",
     cursor: "pointer",
-    fontWeight: "600",
+    fontWeight: "700",
   },
+
   btnCancelarModal: {
     background: "#ef4444",
     color: "#fff",
     border: "none",
-    borderRadius: "8px",
+    borderRadius: "10px",
     padding: "10px 14px",
     cursor: "pointer",
-    fontWeight: "600",
+    fontWeight: "700",
+  },
+
+  errorText: {
+    color: "#b91c1c",
+    fontSize: 14,
+    marginTop: -4,
   },
 };
 
