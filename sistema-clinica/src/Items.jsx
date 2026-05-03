@@ -20,11 +20,74 @@ function Items() {
   const [mostrarModalKardex, setMostrarModalKardex] = useState(false);
   const [loadingKardex, setLoadingKardex] = useState(false);
 
-  const empresa = JSON.parse(localStorage.getItem("empresa") || "null");
+  const [empresa, setEmpresa] = useState(() =>
+    JSON.parse(localStorage.getItem("empresa") || "null")
+  );
+  const [empresasUsuario, setEmpresasUsuario] = useState([]);
+  const [cargandoEmpresas, setCargandoEmpresas] = useState(false);
 
   useEffect(() => {
-    if (empresa?.id) obtenerItems();
+    cargarEmpresasUsuario();
   }, []);
+
+  const cargarEmpresasUsuario = async () => {
+    setCargandoEmpresas(true);
+
+    const { data: authData, error: authError } = await supabase.auth.getUser();
+
+    if (authError || !authData?.user?.id) {
+      setCargandoEmpresas(false);
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("empresa_usuarios")
+      .select("empresa_id, empresas(id, nombre)")
+      .eq("user_id", authData.user.id)
+      .eq("activo", true);
+
+    setCargandoEmpresas(false);
+
+    if (error) {
+      console.error("Error cargando empresas del usuario:", error);
+      return;
+    }
+
+    const empresas = (data || [])
+      .map((row) => row.empresas)
+      .filter(Boolean);
+
+    setEmpresasUsuario(empresas);
+
+    const empresaGuardada = JSON.parse(localStorage.getItem("empresa") || "null");
+    const empresaValida = empresas.find((e) => String(e.id) === String(empresaGuardada?.id));
+
+    if (!empresaValida && empresas.length > 0) {
+      localStorage.setItem("empresa", JSON.stringify(empresas[0]));
+      setEmpresa(empresas[0]);
+    } else if (empresaValida) {
+      localStorage.setItem("empresa", JSON.stringify(empresaValida));
+      setEmpresa(empresaValida);
+    }
+  };
+
+  const cambiarEmpresaActiva = (empresaId) => {
+    const seleccionada = empresasUsuario.find((e) => String(e.id) === String(empresaId));
+    if (!seleccionada) return;
+
+    localStorage.setItem("empresa", JSON.stringify(seleccionada));
+    setEmpresa(seleccionada);
+    setItems([]);
+    cerrarModalKardex();
+  };
+
+  useEffect(() => {
+    if (empresa?.id) {
+      obtenerItems();
+    } else {
+      setItems([]);
+    }
+  }, [empresa?.id]);
 
   const obtenerItems = async () => {
     if (!empresa?.id) return;
@@ -354,7 +417,22 @@ function Items() {
           </div>
 
           <div style={styles.headerInfo}>
-            <div><strong>{empresa?.nombre || "Empresa"}</strong></div>
+            {empresasUsuario.length > 1 ? (
+              <select
+                value={empresa?.id || ""}
+                onChange={(e) => cambiarEmpresaActiva(e.target.value)}
+                style={styles.empresaSelect}
+                disabled={cargandoEmpresas}
+              >
+                {empresasUsuario.map((emp) => (
+                  <option key={emp.id} value={emp.id}>
+                    {emp.nombre}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <div><strong>{empresa?.nombre || "Empresa"}</strong></div>
+            )}
             <div>Módulo de inventario</div>
             <div>Registros: <strong>{items.length}</strong></div>
           </div>
@@ -615,6 +693,19 @@ const styles = {
     color: "#1f2937",
     fontSize: 14,
     lineHeight: 1.6,
+  },
+
+  empresaSelect: {
+    width: "100%",
+    minWidth: 240,
+    padding: "10px 12px",
+    borderRadius: "12px",
+    border: "1px solid #d7dbe2",
+    background: "#fff",
+    color: "#1f2937",
+    fontWeight: "700",
+    outline: "none",
+    marginBottom: "4px",
   },
 
   card: {

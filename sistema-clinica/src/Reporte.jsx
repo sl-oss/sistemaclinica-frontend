@@ -72,6 +72,16 @@ async function obtenerOCrearCaja({ empresaId, fechaLocal }) {
 function Reporte() {
   const empresa = JSON.parse(localStorage.getItem("empresa") || "null");
 
+  const [empresasDisponibles, setEmpresasDisponibles] = useState(() =>
+    empresa?.id ? [empresa] : []
+  );
+  const [empresasReporteIds, setEmpresasReporteIds] = useState(() => {
+    const guardadas = JSON.parse(localStorage.getItem("empresas_reporte_ids") || "[]");
+    if (Array.isArray(guardadas) && guardadas.length > 0) return guardadas;
+    return empresa?.id ? [empresa.id] : [];
+  });
+  const [mostrarSelectorEmpresas, setMostrarSelectorEmpresas] = useState(false);
+
   const [ventas, setVentas] = useState([]);
   const [items, setItems] = useState([]);
   const [clientes, setClientes] = useState([]);
@@ -96,11 +106,16 @@ function Reporte() {
 
   useEffect(() => {
     if (!empresa?.id) return;
-    obtenerVentas();
-    obtenerItems();
-    obtenerClientes();
-    obtenerMetodosPago();
+    cargarEmpresasDisponibles();
+    cargarCatalogosEmpresa(empresa.id);
   }, []);
+
+  useEffect(() => {
+    if (!empresa?.id) return;
+    if (!empresasReporteIds.length) return;
+    localStorage.setItem("empresas_reporte_ids", JSON.stringify(empresasReporteIds));
+    obtenerVentas();
+  }, [empresasReporteIds, fechaInicio, fechaFin]);
 
   useEffect(() => {
     if (!ventas.length) return;
@@ -120,14 +135,99 @@ function Reporte() {
     }
   }, [ventas]);
 
-  const obtenerVentas = async () => {
+  const empresasIdsConsulta = useMemo(() => {
+    const idsLimpios = (empresasReporteIds || []).filter(Boolean);
+    if (idsLimpios.length > 0) return idsLimpios;
+    return empresa?.id ? [empresa.id] : [];
+  }, [empresasReporteIds, empresa?.id]);
+
+  const empresasSeleccionadas = useMemo(() => {
+    return empresasDisponibles.filter((e) => empresasIdsConsulta.includes(e.id));
+  }, [empresasDisponibles, empresasIdsConsulta]);
+
+  const tituloEmpresasReporte = useMemo(() => {
+    if (empresasSeleccionadas.length === 0) return empresa?.nombre || "Empresa activa";
+    if (empresasSeleccionadas.length === 1) return empresasSeleccionadas[0].nombre;
+    return `${empresasSeleccionadas.length} empresas seleccionadas`;
+  }, [empresasSeleccionadas, empresa?.nombre]);
+
+  const cargarEmpresasDisponibles = async () => {
+    const { data: authData } = await supabase.auth.getUser();
+    const userId = authData?.user?.id;
+
+    if (!userId) {
+      setEmpresasDisponibles(empresa?.id ? [empresa] : []);
+      setEmpresasReporteIds((prev) => (prev.length ? prev : empresa?.id ? [empresa.id] : []));
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("empresa_usuarios")
+      .select("empresa_id, rol, activo, empresas(id, nombre)")
+      .eq("user_id", userId)
+      .eq("activo", true);
+
+    if (error) {
+      console.error(error);
+      setEmpresasDisponibles(empresa?.id ? [empresa] : []);
+      return;
+    }
+
+    const empresas = (data || [])
+      .map((row) => row.empresas)
+      .filter(Boolean)
+      .filter((value, index, array) => array.findIndex((e) => e.id === value.id) === index)
+      .sort((a, b) => String(a.nombre || "").localeCompare(String(b.nombre || "")));
+
+    const incluyeEmpresaActiva = empresa?.id && empresas.some((e) => e.id === empresa.id);
+    const listaFinal = incluyeEmpresaActiva || !empresa?.id ? empresas : [empresa, ...empresas];
+
+    setEmpresasDisponibles(listaFinal);
+    setEmpresasReporteIds((prev) => {
+      const idsValidos = prev.filter((id) => listaFinal.some((e) => e.id === id));
+      return idsValidos.length ? idsValidos : empresa?.id ? [empresa.id] : [];
+    });
+  };
+
+  const toggleEmpresaReporte = (empresaId) => {
+    setEmpresasReporteIds((prev) => {
+      if (prev.includes(empresaId)) {
+        const nuevos = prev.filter((id) => id !== empresaId);
+        return nuevos.length ? nuevos : prev;
+      }
+      return [...prev, empresaId];
+    });
+  };
+
+  const seleccionarSoloEmpresaActiva = () => {
     if (!empresa?.id) return;
+    setEmpresasReporteIds([empresa.id]);
+  };
+
+  const seleccionarTodasLasEmpresas = () => {
+    const ids = empresasDisponibles.map((e) => e.id).filter(Boolean);
+    if (ids.length) setEmpresasReporteIds(ids);
+  };
+
+  const cargarCatalogosEmpresa = async (empresaId) => {
+    if (!empresaId) return;
+
+    await Promise.all([
+      obtenerItems(empresaId),
+      obtenerClientes(empresaId),
+      obtenerMetodosPago(empresaId),
+    ]);
+  };
+
+  const obtenerVentas = async () => {
+    if (!empresa?.id || empresasIdsConsulta.length === 0) return;
 
     let query = supabase
       .from("ventas")
       .select(`
         *,
         clientes(id, nombre),
+        empresas(id, nombre),
         detalle_venta(
           id,
           item_id,
@@ -144,7 +244,7 @@ function Reporte() {
           metodos_pago(nombre)
         )
       `)
-      .eq("empresa_id", empresa.id)
+      .in("empresa_id", empresasIdsConsulta)
       .order("fecha_local", { ascending: false });
 
     if (fechaInicio) {
@@ -165,13 +265,13 @@ function Reporte() {
     setVentas(data || []);
   };
 
-  const obtenerItems = async () => {
-    if (!empresa?.id) return;
+  const obtenerItems = async (empresaId = empresa?.id) => {
+    if (!empresaId) return;
 
     const { data, error } = await supabase
       .from("items")
       .select("*")
-      .eq("empresa_id", empresa.id)
+      .eq("empresa_id", empresaId)
       .order("nombre", { ascending: true });
 
     if (error) {
@@ -182,13 +282,13 @@ function Reporte() {
     setItems(data || []);
   };
 
-  const obtenerClientes = async () => {
-    if (!empresa?.id) return;
+  const obtenerClientes = async (empresaId = empresa?.id) => {
+    if (!empresaId) return;
 
     const { data, error } = await supabase
       .from("clientes")
       .select("id, nombre")
-      .eq("empresa_id", empresa.id)
+      .eq("empresa_id", empresaId)
       .order("nombre", { ascending: true });
 
     if (error) {
@@ -199,13 +299,13 @@ function Reporte() {
     setClientes(data || []);
   };
 
-  const obtenerMetodosPago = async () => {
-    if (!empresa?.id) return;
+  const obtenerMetodosPago = async (empresaId = empresa?.id) => {
+    if (!empresaId) return;
 
     const { data, error } = await supabase
       .from("metodos_pago")
       .select("*")
-      .eq("empresa_id", empresa.id)
+      .eq("empresa_id", empresaId)
       .eq("activo", true)
       .order("orden", { ascending: true });
 
@@ -221,7 +321,9 @@ function Reporte() {
     return ventas.reduce((sum, v) => sum + Number(v.total || 0), 0);
   }, [ventas]);
 
-  const abrirEdicion = (venta) => {
+  const abrirEdicion = async (venta) => {
+    const empresaVentaId = venta?.empresa_id || empresa?.id;
+    await cargarCatalogosEmpresa(empresaVentaId);
     setVentaEditando(venta);
     setEditFecha(String(venta.fecha_local || "").slice(0, 10));
     setEditClienteId(venta.cliente_id || "");
@@ -374,7 +476,7 @@ function Reporte() {
     doc.setFont("helvetica", "normal");
     doc.setTextColor(...colorTexto);
     doc.setFontSize(10);
-    doc.text(`Empresa: ${empresa?.nombre || "Empresa activa"}`, 14, 25);
+    doc.text(`Empresa(s): ${tituloEmpresasReporte}`, 14, 25);
 
     const periodoTexto =
       fechaInicio || fechaFin
@@ -406,6 +508,7 @@ function Reporte() {
 
       return [
         formatearFechaHora(v.fecha_local),
+        v.empresas?.nombre || empresasDisponibles.find((e) => String(e.id) === String(v.empresa_id))?.nombre || "Empresa",
         v.clientes?.nombre || "Consumidor final",
         detalle || "-",
         pagos || "-",
@@ -418,6 +521,7 @@ function Reporte() {
       startY: 40,
       head: [[
         "Fecha",
+        "Empresa",
         "Cliente",
         "Detalle",
         "Pagos",
@@ -426,6 +530,7 @@ function Reporte() {
       ]],
       body,
       foot: [[
+        "",
         "",
         "",
         "",
@@ -455,12 +560,13 @@ function Reporte() {
       },
       margin: { left: 10, right: 10 },
       columnStyles: {
-        0: { cellWidth: 34 },
-        1: { cellWidth: 42 },
-        2: { cellWidth: 78 },
-        3: { cellWidth: 78 },
-        4: { cellWidth: 24, halign: "center" },
-        5: { cellWidth: 24, halign: "right" },
+        0: { cellWidth: 32 },
+        1: { cellWidth: 38 },
+        2: { cellWidth: 38 },
+        3: { cellWidth: 70 },
+        4: { cellWidth: 70 },
+        5: { cellWidth: 24, halign: "center" },
+        6: { cellWidth: 24, halign: "right" },
       },
     });
 
@@ -469,6 +575,7 @@ function Reporte() {
 
   const guardarEdicion = async () => {
     if (!ventaEditando || !empresa?.id) return;
+    const empresaVentaId = ventaEditando.empresa_id || empresa.id;
     if (editItems.length === 0) return alert("La venta debe tener al menos un item");
 
     const pagosValidos = editPagos.filter(
@@ -528,7 +635,7 @@ function Reporte() {
           fecha: fechaNuevaCompleta,
         })
         .eq("id", ventaEditando.id)
-        .eq("empresa_id", empresa.id);
+        .eq("empresa_id", empresaVentaId);
 
       if (errorVenta) throw errorVenta;
 
@@ -562,7 +669,7 @@ function Reporte() {
       if (pagosValidos.length > 0) {
         const pagosGuardar = pagosValidos.map((p) => ({
           venta_id: ventaEditando.id,
-          empresa_id: empresa.id,
+          empresa_id: empresaVentaId,
           metodo_pago_id: Number(p.metodo_pago_id),
           monto: Number(p.monto),
           referencia: p.referencia?.trim() || null,
@@ -585,7 +692,7 @@ function Reporte() {
 
       if (pagosValidos.length > 0) {
         const cajaId = await obtenerOCrearCaja({
-          empresaId: empresa.id,
+          empresaId: empresaVentaId,
           fechaLocal: fechaNuevaCompleta,
         });
 
@@ -630,7 +737,7 @@ function Reporte() {
           .from("items")
           .update({ stock: nuevoStock })
           .eq("id", itemId)
-          .eq("empresa_id", empresa.id);
+          .eq("empresa_id", empresaVentaId);
 
         if (errorUpdateItem) throw errorUpdateItem;
 
@@ -639,7 +746,7 @@ function Reporte() {
             .from("kardex")
             .insert([
               {
-                empresa_id: empresa.id,
+                empresa_id: empresaVentaId,
                 item_id: itemId,
                 tipo: "salida",
                 cantidad: diferencia,
@@ -656,7 +763,7 @@ function Reporte() {
             .from("kardex")
             .insert([
               {
-                empresa_id: empresa.id,
+                empresa_id: empresaVentaId,
                 item_id: itemId,
                 tipo: "entrada",
                 cantidad: Math.abs(diferencia),
@@ -672,7 +779,7 @@ function Reporte() {
       alert("Venta actualizada correctamente");
       cerrarEdicion();
       await obtenerVentas();
-      await obtenerItems();
+      await obtenerItems(empresaVentaId);
     } catch (error) {
       console.error(error);
       alert(error.message || "Error al actualizar la venta");
@@ -683,6 +790,7 @@ function Reporte() {
 
   const eliminarVenta = async () => {
     if (!ventaEditando || !empresa?.id) return;
+    const empresaVentaId = ventaEditando.empresa_id || empresa.id;
 
     const confirmar = window.confirm(
       `¿Seguro que deseas eliminar esta venta?\n\nEsta acción hará lo siguiente:\n- eliminará la venta\n- eliminará pagos\n- quitará movimiento de caja diaria\n- devolverá stock si aplica\n- registrará reversa en kardex`
@@ -708,7 +816,7 @@ function Reporte() {
           .from("items")
           .update({ stock: nuevoStock })
           .eq("id", det.item_id)
-          .eq("empresa_id", empresa.id);
+          .eq("empresa_id", empresaVentaId);
 
         if (errorUpdateItem) throw errorUpdateItem;
 
@@ -716,7 +824,7 @@ function Reporte() {
           .from("kardex")
           .insert([
             {
-              empresa_id: empresa.id,
+              empresa_id: empresaVentaId,
               item_id: det.item_id,
               tipo: "entrada",
               cantidad: Number(det.cantidad || 0),
@@ -753,14 +861,14 @@ function Reporte() {
         .from("ventas")
         .delete()
         .eq("id", ventaEditando.id)
-        .eq("empresa_id", empresa.id);
+        .eq("empresa_id", empresaVentaId);
 
       if (errorDeleteVenta) throw errorDeleteVenta;
 
       alert("Venta eliminada correctamente");
       cerrarEdicion();
       await obtenerVentas();
-      await obtenerItems();
+      await obtenerItems(empresaVentaId);
     } catch (error) {
       console.error(error);
       alert(error.message || "Error al eliminar la venta");
@@ -780,11 +888,64 @@ function Reporte() {
             </p>
           </div>
 
+          <div style={styles.headerEmpresaSelect}>
+            <div style={styles.headerEmpresaTop}>
+              <span style={styles.headerEmpresaLabel}>Empresas a combinar</span>
+              <div style={styles.headerEmpresaActions}>
+                <button type="button" style={styles.miniBtn} onClick={seleccionarSoloEmpresaActiva}>
+                  Solo activa
+                </button>
+                <button type="button" style={styles.miniBtn} onClick={seleccionarTodasLasEmpresas}>
+                  Todas
+                </button>
+              </div>
+            </div>
+
+            <div style={styles.multiSelectWrap}>
+              <button
+                type="button"
+                style={styles.multiSelectButton}
+                onClick={() => setMostrarSelectorEmpresas((prev) => !prev)}
+              >
+                <span>{tituloEmpresasReporte}</span>
+                <span style={styles.multiSelectArrow}>{mostrarSelectorEmpresas ? "▴" : "▾"}</span>
+              </button>
+
+              {mostrarSelectorEmpresas && (
+                <div style={styles.multiSelectMenu}>
+                  {empresasDisponibles.map((emp) => {
+                    const checked = empresasIdsConsulta.some((id) => String(id) === String(emp.id));
+                    return (
+                      <label
+                        key={emp.id}
+                        style={{
+                          ...styles.multiSelectOption,
+                          ...(checked ? styles.multiSelectOptionActive : {}),
+                        }}
+                      >
+                        <span style={styles.fakeCheckbox}>{checked ? "✓" : ""}</span>
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => toggleEmpresaReporte(emp.id)}
+                          style={styles.hiddenCheckbox}
+                        />
+                        <span style={styles.empresaListName}>{emp.nombre}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+
           <div style={styles.totalBadge}>
             <span style={styles.totalBadgeLabel}>Total período</span>
             <strong style={styles.totalBadgeValue}>${totalGeneral.toFixed(2)}</strong>
           </div>
         </div>
+
+
 
         <div style={styles.card}>
           <div style={styles.filtros}>
@@ -839,6 +1000,7 @@ function Reporte() {
               <div style={styles.ventaMeta}>
                 <div><strong>Cliente:</strong> {v.clientes?.nombre || "Consumidor final"}</div>
                 <div><strong>Fecha:</strong> {formatearFechaHora(v.fecha_local)}</div>
+                <div><strong>Empresa:</strong> <span style={styles.empresaBadge}>{v.empresas?.nombre || empresasDisponibles.find((e) => String(e.id) === String(v.empresa_id))?.nombre || "Empresa"}</span></div>
               </div>
 
               <div style={styles.detalleBox}>
@@ -1159,6 +1321,35 @@ const styles = {
     fontSize: "14px",
   },
 
+  headerEmpresaSelect: {
+    flex: "1 1 360px",
+    maxWidth: "520px",
+    minWidth: "320px",
+    alignSelf: "center",
+    position: "relative",
+    zIndex: 20,
+  },
+
+  headerEmpresaTop: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: "8px",
+    marginBottom: "6px",
+  },
+
+  headerEmpresaLabel: {
+    color: "#574866",
+    fontSize: "12px",
+    fontWeight: "800",
+  },
+
+  headerEmpresaActions: {
+    display: "flex",
+    gap: "6px",
+    flexWrap: "wrap",
+  },
+
   totalBadge: {
     background: "#f4f0f7",
     border: "1px solid #d3c7dd",
@@ -1185,6 +1376,233 @@ const styles = {
     borderRadius: "22px",
     padding: "20px",
     boxShadow: "0 10px 30px rgba(15, 23, 42, 0.06)",
+  },
+
+  empresaSelectorCard: {
+    background: "#ffffff",
+    border: "1px solid #d7dbe2",
+    borderRadius: "22px",
+    padding: "18px 20px",
+    boxShadow: "0 10px 30px rgba(15, 23, 42, 0.06)",
+    display: "grid",
+    gap: "14px",
+    alignItems: "start",
+    position: "relative",
+    maxWidth: "720px",
+  },
+
+  empresaDropdownBtn: {
+    width: "100%",
+    marginTop: "6px",
+    padding: "12px 14px",
+    borderRadius: "12px",
+    border: "1px solid #cfd9e5",
+    background: "#fff",
+    cursor: "pointer",
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    fontWeight: "700",
+    color: "#574866",
+  },
+
+  empresaDropdown: {
+    position: "absolute",
+    zIndex: 20,
+    marginTop: "8px",
+    width: "min(420px, calc(100% - 40px))",
+    background: "#ffffff",
+    border: "1px solid #d7dbe2",
+    borderRadius: "16px",
+    padding: "12px",
+    boxShadow: "0 18px 40px rgba(15, 23, 42, 0.16)",
+  },
+
+  empresaDropdownActions: {
+    display: "flex",
+    gap: "8px",
+    marginBottom: "10px",
+  },
+
+  miniBtn: {
+    background: "#f4f0f7",
+    color: "#574866",
+    border: "1px solid #d3c7dd",
+    borderRadius: "10px",
+    padding: "8px 10px",
+    cursor: "pointer",
+    fontWeight: "700",
+    fontSize: "12px",
+  },
+
+  empresaOption: {
+    display: "flex",
+    gap: "10px",
+    alignItems: "center",
+    padding: "10px 8px",
+    borderRadius: "10px",
+    color: "#1f2937",
+    cursor: "pointer",
+    fontWeight: "600",
+  },
+
+  empresaSelectorInfo: {
+    background: "#f8f8fa",
+    border: "1px solid #e5e7eb",
+    borderRadius: "14px",
+    padding: "12px 14px",
+    color: "#64748b",
+    fontSize: "13px",
+    lineHeight: 1.5,
+  },
+  empresaSelectorHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: "12px",
+    flexWrap: "wrap",
+  },
+
+  empresaSelectorTitle: {
+    margin: 0,
+    color: "#574866",
+    fontSize: "17px",
+    fontWeight: "800",
+  },
+
+  empresaSelectorSub: {
+    margin: "4px 0 0 0",
+    color: "#64748b",
+    fontSize: "13px",
+  },
+
+  empresaListBox: {
+    marginTop: "12px",
+    maxHeight: "260px",
+    overflowY: "auto",
+    display: "grid",
+    gap: "8px",
+    paddingRight: "4px",
+  },
+
+  empresaListItem: {
+    display: "flex",
+    alignItems: "center",
+    gap: "12px",
+    width: "100%",
+    padding: "12px 14px",
+    borderRadius: "14px",
+    border: "1px solid #d7dbe2",
+    background: "#fff",
+    cursor: "pointer",
+    color: "#1f2937",
+    boxSizing: "border-box",
+  },
+
+  empresaListItemActive: {
+    background: "#eef6ff",
+    border: "1px solid #93c5fd",
+  },
+
+  fakeCheckbox: {
+    width: "22px",
+    height: "22px",
+    borderRadius: "6px",
+    border: "1px solid #cbd5e1",
+    background: "#fff",
+    display: "grid",
+    placeItems: "center",
+    color: "#2563eb",
+    fontWeight: "900",
+    flexShrink: 0,
+  },
+
+  hiddenCheckbox: {
+    display: "none",
+  },
+
+  empresaListName: {
+    fontWeight: "800",
+    lineHeight: 1.2,
+    wordBreak: "break-word",
+  },
+
+  multiSelectWrap: {
+    position: "relative",
+    width: "100%",
+    maxWidth: "520px",
+  },
+
+  multiSelectButton: {
+    width: "100%",
+    minHeight: "48px",
+    borderRadius: "14px",
+    border: "1px solid #cfd9e5",
+    background: "#fff",
+    color: "#1f2937",
+    fontWeight: "800",
+    padding: "12px 14px",
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: "12px",
+    cursor: "pointer",
+    textAlign: "left",
+    boxSizing: "border-box",
+  },
+
+  multiSelectArrow: {
+    fontSize: "18px",
+    color: "#574866",
+    flexShrink: 0,
+  },
+
+  multiSelectMenu: {
+    position: "absolute",
+    top: "calc(100% + 8px)",
+    left: 0,
+    right: 0,
+    zIndex: 50,
+    maxHeight: "280px",
+    overflowY: "auto",
+    background: "#fff",
+    border: "1px solid #d7dbe2",
+    borderRadius: "16px",
+    boxShadow: "0 18px 45px rgba(15, 23, 42, 0.14)",
+    padding: "8px",
+    display: "grid",
+    gap: "6px",
+  },
+
+  multiSelectOption: {
+    display: "flex",
+    alignItems: "center",
+    gap: "12px",
+    width: "100%",
+    padding: "12px 14px",
+    borderRadius: "12px",
+    border: "1px solid transparent",
+    background: "#fff",
+    cursor: "pointer",
+    color: "#1f2937",
+    boxSizing: "border-box",
+  },
+
+  multiSelectOptionActive: {
+    background: "#eef6ff",
+    border: "1px solid #93c5fd",
+  },
+
+  empresaBadge: {
+    display: "inline-flex",
+    alignItems: "center",
+    padding: "4px 8px",
+    borderRadius: "999px",
+    background: "#eef6ff",
+    color: "#1d4ed8",
+    border: "1px solid #bfdbfe",
+    fontWeight: "800",
+    fontSize: "12px",
   },
 
   filtros: {

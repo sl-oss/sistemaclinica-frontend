@@ -107,20 +107,131 @@ function Venta() {
   const [guardandoCliente, setGuardandoCliente] = useState(false);
   const [guardandoVenta, setGuardandoVenta] = useState(false);
 
-  const empresa = JSON.parse(localStorage.getItem("empresa") || "null");
+  // Multiusuario: el usuario puede tener acceso a una o varias empresas.
+  // Este módulo de venta siempre opera con UNA empresa activa para no mezclar caja, stock ni kardex.
+  const [empresaActiva, setEmpresaActiva] = useState(() =>
+    JSON.parse(localStorage.getItem("empresa") || "null")
+  );
+  const [empresasDisponibles, setEmpresasDisponibles] = useState([]);
+
+  const empresa = empresaActiva;
 
   useEffect(() => {
-    obtenerItems();
-    obtenerClientes();
-    obtenerMetodosPago();
+    cargarEmpresasDelUsuario();
 
-    const cita = JSON.parse(localStorage.getItem("citaActiva"));
+    const cita = JSON.parse(localStorage.getItem("citaActiva") || "null");
     if (cita) {
       setClienteSeleccionado(cita.cliente_id || "");
       setCitaActiva(cita);
       localStorage.removeItem("citaActiva");
     }
   }, []);
+
+  useEffect(() => {
+    if (!empresa?.id) return;
+
+    setItems([]);
+    setClientes([]);
+    setMetodosPago([]);
+
+    obtenerItems();
+    obtenerClientes();
+    obtenerMetodosPago();
+  }, [empresa?.id]);
+
+  const cargarEmpresasDelUsuario = async () => {
+    const empresaLocal = JSON.parse(localStorage.getItem("empresa") || "null");
+
+    const { data: authData, error: authError } = await supabase.auth.getUser();
+
+    if (authError) {
+      console.error("Error obteniendo usuario:", authError);
+    }
+
+    const user = authData?.user;
+
+    if (!user?.id) {
+      if (empresaLocal?.id) {
+        setEmpresaActiva(empresaLocal);
+        setEmpresasDisponibles([empresaLocal]);
+      }
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("empresa_usuarios")
+      .select(`
+        empresa_id,
+        rol,
+        activo,
+        empresas(id, nombre)
+      `)
+      .eq("user_id", user.id)
+      .eq("activo", true);
+
+    if (error) {
+      console.error("Error cargando empresas del usuario:", error);
+
+      if (empresaLocal?.id) {
+        setEmpresaActiva(empresaLocal);
+        setEmpresasDisponibles([empresaLocal]);
+      }
+      return;
+    }
+
+    const empresas = (data || [])
+      .map((fila) => ({
+        ...fila.empresas,
+        rol_usuario: fila.rol,
+      }))
+      .filter((e) => e?.id);
+
+    const empresasUnicas = Array.from(
+      new Map(empresas.map((e) => [String(e.id), e])).values()
+    );
+
+    if (empresasUnicas.length === 0) {
+      if (empresaLocal?.id) {
+        setEmpresaActiva(empresaLocal);
+        setEmpresasDisponibles([empresaLocal]);
+      }
+      return;
+    }
+
+    setEmpresasDisponibles(empresasUnicas);
+
+    const empresaLocalPermitida = empresasUnicas.find(
+      (e) => String(e.id) === String(empresaLocal?.id)
+    );
+
+    const siguienteEmpresa = empresaLocalPermitida || empresasUnicas[0];
+    setEmpresaActiva(siguienteEmpresa);
+    localStorage.setItem("empresa", JSON.stringify(siguienteEmpresa));
+  };
+
+  const cambiarEmpresaActiva = (empresaId) => {
+    const nuevaEmpresa = empresasDisponibles.find(
+      (e) => String(e.id) === String(empresaId)
+    );
+
+    if (!nuevaEmpresa) return;
+
+    if (seleccionados.length > 0 || totalPagado > 0) {
+      const confirmar = window.confirm(
+        "Cambiar de empresa limpiará la venta actual para no mezclar caja, stock ni kardex. ¿Deseás continuar?"
+      );
+
+      if (!confirmar) return;
+    }
+
+    localStorage.setItem("empresa", JSON.stringify(nuevaEmpresa));
+    setEmpresaActiva(nuevaEmpresa);
+    setSeleccionados([]);
+    setClienteSeleccionado("");
+    setCitaActiva(null);
+    setEstado("pagado");
+    setPagos([{ metodo_pago_id: "", monto: "", referencia: "" }]);
+  };
 
   const obtenerItems = async () => {
     if (!empresa?.id) return;
@@ -486,7 +597,23 @@ function Venta() {
           </div>
 
           <div style={styles.headerInfo}>
-            <div><strong>{empresa?.nombre || "Empresa"}</strong></div>
+            <label style={styles.empresaLabel}>Empresa activa</label>
+            {empresasDisponibles.length > 1 ? (
+              <select
+                style={styles.empresaSelect}
+                value={empresa?.id || ""}
+                onChange={(e) => cambiarEmpresaActiva(e.target.value)}
+                disabled={guardandoVenta}
+              >
+                {empresasDisponibles.map((emp) => (
+                  <option key={emp.id} value={emp.id}>
+                    {emp.nombre}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <div><strong>{empresa?.nombre || "Empresa"}</strong></div>
+            )}
             <div>Módulo de ventas</div>
             <div>Total actual: <strong>${total.toFixed(2)}</strong></div>
           </div>
@@ -843,6 +970,27 @@ const styles = {
     color: "#1f2937",
     fontSize: 14,
     lineHeight: 1.6,
+    minWidth: 240,
+  },
+
+  empresaLabel: {
+    display: "block",
+    color: "#64748b",
+    fontSize: 12,
+    fontWeight: 700,
+    marginBottom: 4,
+  },
+
+  empresaSelect: {
+    width: "100%",
+    padding: "9px 12px",
+    borderRadius: 12,
+    border: "1px solid #d7dbe2",
+    background: "#fff",
+    color: "#1f2937",
+    fontWeight: 700,
+    outline: "none",
+    marginBottom: 4,
   },
 
   layout: {

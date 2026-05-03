@@ -40,8 +40,43 @@ function formatearMonto(valor) {
 }
 
 export default function CajaDiaria() {
-  const empresa = JSON.parse(localStorage.getItem("empresa") || "null");
+  const empresaInicial = JSON.parse(localStorage.getItem("empresa") || "null");
+  const [empresa, setEmpresa] = useState(empresaInicial);
+  const [empresasDisponibles, setEmpresasDisponibles] = useState(
+    empresaInicial?.id ? [empresaInicial] : []
+  );
+  const [empresasReporteIds, setEmpresasReporteIds] = useState(() => {
+    const guardadas = JSON.parse(localStorage.getItem("empresas_caja_reporte_ids") || "null");
+    if (Array.isArray(guardadas) && guardadas.length > 0) return guardadas;
+    return empresaInicial?.id ? [empresaInicial.id] : [];
+  });
+  const [mostrarSelectorEmpresas, setMostrarSelectorEmpresas] = useState(false);
   const hoy = obtenerFechaLocalSV();
+
+  const empresaIdsReporte = useMemo(() => {
+    if (empresasReporteIds.length > 0) return empresasReporteIds;
+    return empresa?.id ? [empresa.id] : [];
+  }, [empresasReporteIds, empresa?.id]);
+
+  const modoSoloLecturaMultiempresa = empresaIdsReporte.length > 1;
+
+  const nombreEmpresasReporte = useMemo(() => {
+    const seleccionadas = empresasDisponibles.filter((emp) =>
+      empresaIdsReporte.some((id) => String(id) === String(emp.id))
+    );
+
+    if (seleccionadas.length === 0) return empresa?.nombre || "Empresa activa";
+    if (seleccionadas.length === 1) return seleccionadas[0].nombre;
+    return `${seleccionadas.length} empresas combinadas`;
+  }, [empresasDisponibles, empresaIdsReporte, empresa?.nombre]);
+
+  const obtenerNombreEmpresa = (empresaId) => {
+    return (
+      empresasDisponibles.find((emp) => String(emp.id) === String(empresaId))?.nombre ||
+      empresa?.nombre ||
+      "Empresa"
+    );
+  };
 
   const [fechaLocal, setFechaLocal] = useState(hoy);
   const [metodos, setMetodos] = useState([]);
@@ -69,6 +104,187 @@ export default function CajaDiaria() {
     filaUid: null,
   });
 
+  const [clasificaciones, setClasificaciones] = useState([]);
+  const [clasificacionesAsignadas, setClasificacionesAsignadas] = useState({});
+  const [modalClasificacion, setModalClasificacion] = useState({
+    open: false,
+    filaUid: null,
+  });
+
+  const [modalNuevaClasificacion, setModalNuevaClasificacion] = useState(false);
+  const [nuevoNombreClasificacion, setNuevoNombreClasificacion] = useState("");
+  const [nuevoMontoClasificacion, setNuevoMontoClasificacion] = useState("");
+  const [guardandoNuevaClasificacion, setGuardandoNuevaClasificacion] = useState(false);
+
+  const [empleadosComision, setEmpleadosComision] = useState([]);
+  const [mostrarSelectorEmpleadosComision, setMostrarSelectorEmpleadosComision] = useState(false);
+  const [empresasEmpleadosComisionIds, setEmpresasEmpleadosComisionIds] = useState(() => {
+    const guardadas = JSON.parse(localStorage.getItem("empresas_empleados_comision_ids") || "null");
+    if (Array.isArray(guardadas) && guardadas.length > 0) return guardadas;
+    return empresaInicial?.id ? [empresaInicial.id] : [];
+  });
+  const [fechaComisionDesde, setFechaComisionDesde] = useState(hoy);
+  const [fechaComisionHasta, setFechaComisionHasta] = useState(hoy);
+  const [loadingComision, setLoadingComision] = useState(false);
+
+  const cargarEmpresasDisponibles = async () => {
+    try {
+      const { data: userData, error: userError } = await supabase.auth.getUser();
+      if (userError) {
+        console.error(userError);
+        return;
+      }
+
+      const userId = userData?.user?.id;
+      if (!userId) return;
+
+      const { data, error } = await supabase
+        .from("empresa_usuarios")
+        .select(`
+          empresa_id,
+          activo,
+          empresas (
+            id,
+            nombre
+          )
+        `)
+        .eq("user_id", userId)
+        .eq("activo", true);
+
+      if (error) {
+        console.error(error);
+        return;
+      }
+
+      const empresas = (data || [])
+        .map((item) => item.empresas)
+        .filter(Boolean);
+
+      const mapa = new Map();
+      empresas.forEach((emp) => mapa.set(emp.id, emp));
+      if (empresa?.id) mapa.set(empresa.id, empresa);
+
+      const lista = Array.from(mapa.values());
+      setEmpresasDisponibles(lista);
+      if (lista.length > 0) {
+        const idsLista = lista.map((emp) => String(emp.id));
+        const idsEmpleadosValidos = empresasEmpleadosComisionIds.filter((id) =>
+          idsLista.includes(String(id))
+        );
+
+        if (idsEmpleadosValidos.length > 0) {
+          setEmpresasEmpleadosComisionIds(idsEmpleadosValidos);
+          localStorage.setItem("empresas_empleados_comision_ids", JSON.stringify(idsEmpleadosValidos));
+        } else {
+          const baseId = empresa?.id && idsLista.includes(String(empresa.id)) ? empresa.id : lista[0].id;
+          setEmpresasEmpleadosComisionIds([baseId]);
+          localStorage.setItem("empresas_empleados_comision_ids", JSON.stringify([baseId]));
+        }
+      }
+
+      const idsDisponibles = lista.map((emp) => String(emp.id));
+      const idsReporteValidos = empresasReporteIds.filter((id) =>
+        idsDisponibles.includes(String(id))
+      );
+
+      if (idsReporteValidos.length > 0) {
+        setEmpresasReporteIds(idsReporteValidos);
+        localStorage.setItem("empresas_caja_reporte_ids", JSON.stringify(idsReporteValidos));
+      } else if (empresa?.id && idsDisponibles.includes(String(empresa.id))) {
+        setEmpresasReporteIds([empresa.id]);
+        localStorage.setItem("empresas_caja_reporte_ids", JSON.stringify([empresa.id]));
+      } else if (lista.length > 0) {
+        setEmpresasReporteIds([lista[0].id]);
+        localStorage.setItem("empresas_caja_reporte_ids", JSON.stringify([lista[0].id]));
+      }
+
+      if (lista.length > 0 && !lista.some((emp) => emp.id === empresa?.id)) {
+        setEmpresa(lista[0]);
+        localStorage.setItem("empresa", JSON.stringify(lista[0]));
+      }
+    } catch (error) {
+      console.error("Error cargando empresas disponibles:", error);
+    }
+  };
+
+  const cambiarEmpresaActiva = (empresaId) => {
+    const seleccionada = empresasDisponibles.find((emp) => String(emp.id) === String(empresaId));
+    if (!seleccionada) return;
+
+    setEmpresa(seleccionada);
+    localStorage.setItem("empresa", JSON.stringify(seleccionada));
+  };
+
+  const alternarEmpresaReporte = (empresaId) => {
+    setEmpresasReporteIds((prev) => {
+      const existe = prev.some((id) => String(id) === String(empresaId));
+      let nuevosIds = existe
+        ? prev.filter((id) => String(id) !== String(empresaId))
+        : [...prev, empresaId];
+
+      if (nuevosIds.length === 0) nuevosIds = [empresaId];
+
+      localStorage.setItem("empresas_caja_reporte_ids", JSON.stringify(nuevosIds));
+      return nuevosIds;
+    });
+  };
+
+  const seleccionarSoloEmpresaActiva = () => {
+    if (!empresa?.id) return;
+    setEmpresasReporteIds([empresa.id]);
+    localStorage.setItem("empresas_caja_reporte_ids", JSON.stringify([empresa.id]));
+  };
+
+  const alternarEmpresaEmpleadosComision = (empresaId) => {
+    setEmpresasEmpleadosComisionIds((prev) => {
+      const existe = prev.some((id) => String(id) === String(empresaId));
+      let nuevosIds = existe
+        ? prev.filter((id) => String(id) !== String(empresaId))
+        : [...prev, empresaId];
+
+      if (nuevosIds.length === 0) nuevosIds = [empresaId];
+
+      localStorage.setItem("empresas_empleados_comision_ids", JSON.stringify(nuevosIds));
+      return nuevosIds;
+    });
+  };
+
+  const seleccionarSoloActivaEmpleadosComision = () => {
+    if (!empresa?.id) return;
+    setEmpresasEmpleadosComisionIds([empresa.id]);
+    localStorage.setItem("empresas_empleados_comision_ids", JSON.stringify([empresa.id]));
+  };
+
+  const seleccionarTodasEmpleadosComision = () => {
+    const ids = empresasDisponibles.map((emp) => emp.id).filter(Boolean);
+    if (!ids.length) return;
+    setEmpresasEmpleadosComisionIds(ids);
+    localStorage.setItem("empresas_empleados_comision_ids", JSON.stringify(ids));
+  };
+
+  const nombreEmpresasEmpleadosComision = () => {
+    const seleccionadas = empresasDisponibles.filter((emp) =>
+      empresasEmpleadosComisionIds.some((id) => String(id) === String(emp.id))
+    );
+
+    if (seleccionadas.length === 0) return "Sin empresas";
+    if (seleccionadas.length === 1) return seleccionadas[0].nombre;
+    return `${seleccionadas.length} empresas con empleados`;
+  };
+
+  const seleccionarTodasEmpresasReporte = () => {
+    const ids = empresasDisponibles.map((emp) => emp.id).filter(Boolean);
+    if (!ids.length) return;
+    setEmpresasReporteIds(ids);
+    localStorage.setItem("empresas_caja_reporte_ids", JSON.stringify(ids));
+  };
+
+
+
+  useEffect(() => {
+    cargarEmpresasDisponibles();
+  }, []);
+
   useEffect(() => {
     if (!empresa?.id) {
       setMetodos([]);
@@ -79,19 +295,25 @@ export default function CajaDiaria() {
     }
 
     cargarMetodos();
-  }, [empresa?.id]);
+    cargarClasificaciones();
+    cargarEmpleadosComision();
+  }, [
+    empresa?.id,
+    empresaIdsReporte.join("|"),
+    empresasEmpleadosComisionIds.join("|"),
+  ]);
 
   useEffect(() => {
     if (empresa?.id && metodos.length > 0 && fechaLocal) {
       cargarCajaDelDia(fechaLocal);
     }
-  }, [empresa?.id, metodos, fechaLocal]);
+  }, [empresa?.id, metodos, fechaLocal, empresaIdsReporte.join("|")]);
 
   useEffect(() => {
-    if (empresa?.id) {
+    if (empresaIdsReporte.length > 0) {
       cargarHistorialCajas();
     }
-  }, [empresa?.id, filtroDesde, filtroHasta]);
+  }, [empresaIdsReporte.join("|"), filtroDesde, filtroHasta]);
 
   const crearFilaVacia = (metodosActuales = metodos, nombrePaciente = "") => {
     const pagos = {};
@@ -110,6 +332,8 @@ export default function CajaDiaria() {
       venta_id: null,
       origen: "manual",
       grupoFacturacion: "",
+      empresaId: empresa?.id || null,
+      empresaNombre: empresa?.nombre || "Empresa",
     };
   };
 
@@ -125,17 +349,31 @@ export default function CajaDiaria() {
   };
 
   const limpiarCajaActual = () => {
+    if (modoSoloLecturaMultiempresa) {
+      return alert("Seleccioná solo una empresa para modificar la caja.");
+    }
+
     setFilas([]);
     limpiarFormularioCierre();
   };
 
+  const validarEdicionUnaEmpresa = () => {
+    if (modoSoloLecturaMultiempresa) {
+      alert("Modo combinado: solo podés consultar/exportar. Para modificar, seleccioná solo una empresa.");
+      return false;
+    }
+
+    return true;
+  };
+
   const cargarMetodos = async () => {
-    if (!empresa?.id) return;
+    const idsConsulta = empresaIdsReporte.length > 0 ? empresaIdsReporte : empresa?.id ? [empresa.id] : [];
+    if (idsConsulta.length === 0) return;
 
     const { data, error } = await supabase
       .from("metodos_pago")
       .select("*")
-      .eq("empresa_id", empresa.id)
+      .in("empresa_id", idsConsulta)
       .eq("activo", true)
       .order("orden", { ascending: true });
 
@@ -145,18 +383,700 @@ export default function CajaDiaria() {
       return;
     }
 
-    setMetodos(data || []);
+    const mapa = new Map();
+
+    (data || []).forEach((m) => {
+      const nombreNormalizado = String(m.nombre || "").trim().toLowerCase();
+
+      if (!mapa.has(nombreNormalizado)) {
+        mapa.set(nombreNormalizado, {
+          ...m,
+          id: nombreNormalizado,
+          metodoIds: [m.id],
+          empresasOrigen: [m.empresa_id],
+        });
+      } else {
+        const existente = mapa.get(nombreNormalizado);
+        existente.metodoIds.push(m.id);
+        existente.empresasOrigen.push(m.empresa_id);
+      }
+    });
+
+    setMetodos(Array.from(mapa.values()));
+  };
+
+  const cargarClasificaciones = async (empresaIdConsulta = empresa?.id) => {
+    if (!empresaIdConsulta) return;
+
+    const { data, error } = await supabase
+      .from("clasificaciones_pacientes")
+      .select("*")
+      .eq("empresa_id", empresaIdConsulta)
+      .eq("activo", true)
+      .order("nombre", { ascending: true });
+
+    if (error) {
+      console.error(error);
+      alert("Error al cargar clasificaciones de pacientes");
+      return;
+    }
+
+    setClasificaciones(data || []);
+  };
+
+  const cargarEmpleadosComision = async () => {
+    const ids = empresasEmpleadosComisionIds.length > 0 ? empresasEmpleadosComisionIds : empresa?.id ? [empresa.id] : [];
+    if (ids.length === 0) return;
+
+    const { data, error } = await supabase
+      .from("empleados_comision")
+      .select("*")
+      .in("empresa_id", ids)
+      .eq("activo", true)
+      .order("nombre", { ascending: true });
+
+    if (error) {
+      console.error(error);
+      alert("Error al cargar empleados de comisión");
+      return;
+    }
+
+    setEmpleadosComision(data || []);
+  };
+
+  const normalizarTextoLlave = (valor) => {
+    return String(valor || "").trim().toLowerCase();
+  };
+
+  const construirLlaveClasificacion = ({
+    empresaId,
+    fecha,
+    paciente,
+    ventaId = "",
+    grupoFacturacion = "",
+  }) => {
+    return [
+      String(empresaId || ""),
+      String(fecha || ""),
+      normalizarTextoLlave(paciente),
+      String(ventaId || ""),
+      String(grupoFacturacion || ""),
+    ].join("__");
+  };
+
+  const obtenerLlavesPosiblesClasificacion = (fila, fecha = fechaLocal) => {
+    if (!fila) return [];
+
+    const empresaId = fila.empresaId || empresa?.id;
+    const paciente = fila.paciente || "";
+
+    const llaves = [
+      construirLlaveClasificacion({
+        empresaId,
+        fecha,
+        paciente,
+        ventaId: fila.venta_id || "",
+        grupoFacturacion: fila.grupoFacturacion || "",
+      }),
+      construirLlaveClasificacion({
+        empresaId,
+        fecha,
+        paciente,
+        ventaId: fila.venta_id || "",
+        grupoFacturacion: "",
+      }),
+      construirLlaveClasificacion({
+        empresaId,
+        fecha,
+        paciente,
+        ventaId: "",
+        grupoFacturacion: fila.grupoFacturacion || "",
+      }),
+      construirLlaveClasificacion({
+        empresaId,
+        fecha,
+        paciente,
+        ventaId: "",
+        grupoFacturacion: "",
+      }),
+    ];
+
+    return Array.from(new Set(llaves));
+  };
+
+  const llaveClasificacionFila = (fila, fecha = fechaLocal, empresaId = empresa?.id) => {
+    return construirLlaveClasificacion({
+      empresaId: fila?.empresaId || empresaId,
+      fecha,
+      paciente: fila?.paciente || "",
+      ventaId: fila?.venta_id || "",
+      grupoFacturacion: fila?.grupoFacturacion || "",
+    });
+  };
+
+  const cargarClasificacionesAsignadas = async (fechaBuscada = fechaLocal, empresaId = empresa?.id) => {
+    if (!empresaId || !fechaBuscada) {
+      setClasificacionesAsignadas({});
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("caja_paciente_clasificaciones")
+      .select(`
+        id,
+        empresa_id,
+        fecha_local,
+        paciente,
+        venta_id,
+        grupo_facturacion,
+        clasificacion_id,
+        clasificaciones_pacientes (
+          id,
+          nombre,
+          monto
+        )
+      `)
+      .eq("empresa_id", empresaId)
+      .eq("fecha_local", fechaBuscada);
+
+    if (error) {
+      console.error(error);
+      alert("Error al cargar clasificaciones asignadas");
+      return;
+    }
+
+    const mapa = {};
+    (data || []).forEach((item) => {
+      const keys = [
+        construirLlaveClasificacion({
+          empresaId: item.empresa_id,
+          fecha: item.fecha_local,
+          paciente: item.paciente,
+          ventaId: item.venta_id || "",
+          grupoFacturacion: item.grupo_facturacion || "",
+        }),
+        construirLlaveClasificacion({
+          empresaId: item.empresa_id,
+          fecha: item.fecha_local,
+          paciente: item.paciente,
+          ventaId: item.venta_id || "",
+          grupoFacturacion: "",
+        }),
+        construirLlaveClasificacion({
+          empresaId: item.empresa_id,
+          fecha: item.fecha_local,
+          paciente: item.paciente,
+          ventaId: "",
+          grupoFacturacion: item.grupo_facturacion || "",
+        }),
+        construirLlaveClasificacion({
+          empresaId: item.empresa_id,
+          fecha: item.fecha_local,
+          paciente: item.paciente,
+          ventaId: "",
+          grupoFacturacion: "",
+        }),
+      ];
+
+      keys.forEach((key) => {
+        if (!mapa[key]) mapa[key] = [];
+        if (!mapa[key].some((x) => String(x.id) === String(item.id))) {
+          mapa[key].push(item);
+        }
+      });
+    });
+
+    setClasificacionesAsignadas(mapa);
+  };
+
+  const abrirModalClasificacion = async (filaUid) => {
+    const fila = filas.find((f) => f.uid === filaUid);
+    if (!fila) return;
+
+    await cargarClasificaciones(fila.empresaId || empresa?.id);
+
+    setModalClasificacion({
+      open: true,
+      filaUid,
+    });
+  };
+
+  const cerrarModalClasificacion = () => {
+    setModalClasificacion({
+      open: false,
+      filaUid: null,
+    });
+  };
+
+  const abrirNuevaClasificacionRapida = () => {
+    setNuevoNombreClasificacion("");
+    setNuevoMontoClasificacion("");
+    setModalNuevaClasificacion(true);
+  };
+
+  const cerrarNuevaClasificacionRapida = () => {
+    if (guardandoNuevaClasificacion) return;
+    setModalNuevaClasificacion(false);
+    setNuevoNombreClasificacion("");
+    setNuevoMontoClasificacion("");
+  };
+
+  const guardarNuevaClasificacionRapida = async () => {
+    const empresaBaseId = filaModalClasificacion?.empresaId || empresa?.id;
+    if (!empresaBaseId) return alert("No hay empresa para crear la clasificación");
+    if (!nuevoNombreClasificacion.trim()) {
+      return alert("Escribe el nombre de la clasificación");
+    }
+
+    setGuardandoNuevaClasificacion(true);
+
+    const { error } = await supabase
+      .from("clasificaciones_pacientes")
+      .insert([
+        {
+          empresa_id: empresaBaseId,
+          nombre: nuevoNombreClasificacion.trim(),
+          monto: Number(nuevoMontoClasificacion || 0),
+          activo: true,
+        },
+      ]);
+
+    setGuardandoNuevaClasificacion(false);
+
+    if (error) {
+      console.error(error);
+      return alert("Error al crear clasificación");
+    }
+
+    await cargarClasificaciones(empresaBaseId);
+    cerrarNuevaClasificacionRapida();
+  };
+
+  const filaModalClasificacion = filas.find((f) => f.uid === modalClasificacion.filaUid);
+
+  const obtenerClasificacionesFila = (fila) => {
+    if (!fila) return [];
+
+    const llaves = obtenerLlavesPosiblesClasificacion(fila);
+    const encontrados = [];
+
+    llaves.forEach((key) => {
+      (clasificacionesAsignadas[key] || []).forEach((item) => {
+        if (!encontrados.some((x) => String(x.id) === String(item.id))) {
+          encontrados.push(item);
+        }
+      });
+    });
+
+    return encontrados;
+  };
+
+  const asignarClasificacionAFila = async (clasificacionId) => {
+    const fila = filaModalClasificacion;
+    if (!fila) return;
+    const empresaFilaId = fila.empresaId || empresa?.id;
+    if (!empresaFilaId) return alert("No hay empresa para esta fila");
+    if (!fechaLocal) return alert("No hay fecha seleccionada");
+    if (!fila.paciente?.trim()) return alert("Primero escribe el nombre del paciente");
+
+    const { error } = await supabase
+      .from("caja_paciente_clasificaciones")
+      .insert([
+        {
+          empresa_id: empresaFilaId,
+          fecha_local: fechaLocal,
+          paciente: fila.paciente.trim(),
+          venta_id: fila.venta_id ? String(fila.venta_id) : null,
+          grupo_facturacion: fila.grupoFacturacion || null,
+          clasificacion_id: clasificacionId,
+        },
+      ]);
+
+    if (error) {
+      if (error.code === "23505") {
+        return alert("Esa clasificación ya está asignada a este paciente");
+      }
+      console.error(error);
+      return alert("Error al asignar clasificación");
+    }
+
+    await cargarCajaDelDia(fechaLocal);
+  };
+
+  const quitarClasificacionAsignada = async (registroId) => {
+    const { error } = await supabase
+      .from("caja_paciente_clasificaciones")
+      .delete()
+      .eq("id", registroId);
+
+    if (error) {
+      console.error(error);
+      return alert("Error al quitar clasificación");
+    }
+
+    await cargarCajaDelDia(fechaLocal);
+  };
+
+  const obtenerDatosComisiones = async () => {
+    const idsEmpresasCaja = empresaIdsReporte.length > 0 ? empresaIdsReporte : empresa?.id ? [empresa.id] : [];
+    const idsEmpresasEmpleados = empresasEmpleadosComisionIds.length > 0
+      ? empresasEmpleadosComisionIds
+      : empresa?.id
+      ? [empresa.id]
+      : [];
+
+    if (idsEmpresasCaja.length === 0) {
+      alert("Seleccioná al menos una empresa para calcular comisiones");
+      return null;
+    }
+
+    if (idsEmpresasEmpleados.length === 0) {
+      alert("Seleccioná al menos una empresa para tomar empleados");
+      return null;
+    }
+
+    if (!fechaComisionDesde || !fechaComisionHasta) {
+      alert("Seleccioná desde y hasta");
+      return null;
+    }
+
+    if (fechaComisionDesde > fechaComisionHasta) {
+      alert("La fecha desde no puede ser mayor que la fecha hasta");
+      return null;
+    }
+
+    setLoadingComision(true);
+
+    const [{ data: asignaciones, error: errorAsignaciones }, { data: empleados, error: errorEmpleados }] =
+      await Promise.all([
+        supabase
+          .from("caja_paciente_clasificaciones")
+          .select(`
+            id,
+            empresa_id,
+            fecha_local,
+            paciente,
+            clasificacion_id,
+            clasificaciones_pacientes (
+              id,
+              empresa_id,
+              nombre,
+              monto
+            )
+          `)
+          .in("empresa_id", idsEmpresasCaja)
+          .gte("fecha_local", fechaComisionDesde)
+          .lte("fecha_local", fechaComisionHasta),
+        supabase
+          .from("empleados_comision")
+          .select("*")
+          .in("empresa_id", idsEmpresasEmpleados)
+          .eq("activo", true)
+          .order("nombre", { ascending: true }),
+      ]);
+
+    setLoadingComision(false);
+
+    if (errorAsignaciones || errorEmpleados) {
+      console.error(errorAsignaciones || errorEmpleados);
+      alert("Error al obtener datos de comisión");
+      return null;
+    }
+
+    const resumenMap = new Map();
+
+    (asignaciones || []).forEach((asig) => {
+      const c = asig.clasificaciones_pacientes;
+      if (!c) return;
+
+      const nombreClasificacion = String(c.nombre || "").trim();
+      const montoClasificacion = Number(c.monto || 0);
+
+      // Une columnas cuando la clasificación tiene el mismo nombre y el mismo monto,
+      // aunque venga de empresas diferentes.
+      const key = `${nombreClasificacion.toLowerCase()}__${montoClasificacion.toFixed(2)}`;
+
+      if (!resumenMap.has(key)) {
+        resumenMap.set(key, {
+          id: key,
+          empresasIds: new Set(),
+          empresasNombres: new Set(),
+          nombre: nombreClasificacion,
+          monto: montoClasificacion,
+          cantidad: 0,
+          total: 0,
+        });
+      }
+
+      const item = resumenMap.get(key);
+      item.empresasIds.add(asig.empresa_id);
+      item.empresasNombres.add(obtenerNombreEmpresa(asig.empresa_id));
+      item.cantidad += 1;
+      item.total = item.cantidad * item.monto;
+    });
+
+    const resumenClasificaciones = Array.from(resumenMap.values())
+      .map((item) => ({
+        ...item,
+        empresasIds: Array.from(item.empresasIds),
+        empresasNombres: Array.from(item.empresasNombres),
+      }))
+      .sort((a, b) => {
+        const nombreCompare = String(a.nombre).localeCompare(String(b.nombre));
+        if (nombreCompare !== 0) return nombreCompare;
+        return Number(a.monto || 0) - Number(b.monto || 0);
+      });
+
+    const totalDevengado = resumenClasificaciones.reduce((acc, c) => acc + Number(c.total || 0), 0);
+
+    const filasEmpleados = (empleados || []).map((emp) => ({
+      empleado: emp.nombre,
+      empresaEmpleado: obtenerNombreEmpresa(emp.empresa_id),
+      clasificaciones: resumenClasificaciones,
+      totalDevengado,
+    }));
+
+    return {
+      empleados: filasEmpleados,
+      clasificaciones: resumenClasificaciones,
+      totalDevengado,
+      cantidadPacientes: resumenClasificaciones.reduce((acc, c) => acc + Number(c.cantidad || 0), 0),
+    };
+  };
+
+  const exportarComisionesExcel = async () => {
+    const datos = await obtenerDatosComisiones();
+    if (!datos) return;
+
+    if (datos.empleados.length === 0) {
+      return alert("No hay empleados activos para el reporte");
+    }
+
+    const rows = [
+      { Empleado: `Empresas calculadas: ${nombreEmpresasReporte}`, Total: "" },
+      { Empleado: `Empleados tomados de: ${nombreEmpresasEmpleadosComision()}`, Total: "" },
+      { Empleado: "Clasificaciones: según empresa donde fue clasificado cada paciente", Total: "" },
+      { Empleado: `COMISIONES DEL ${formatearFecha(fechaComisionDesde)} AL ${formatearFecha(fechaComisionHasta)}`, Total: "" },
+      {},
+    ];
+
+    datos.empleados.forEach((emp, index) => {
+      const fila = {
+        No: index + 1,
+        Empleado: emp.empleado,
+      };
+
+      emp.clasificaciones.forEach((c) => {
+        fila[`${c.nombre} (${formatearMonto(c.monto)})`] = c.cantidad;
+      });
+
+      fila["Total devengado"] = formatearMonto(emp.totalDevengado);
+      rows.push(fila);
+    });
+
+    const totalFila = {
+      No: "",
+      Empleado: "TOTAL COMISIONES DEL PERIODO",
+    };
+
+    datos.clasificaciones.forEach((c) => {
+      totalFila[`${c.nombre} (${formatearMonto(c.monto)})`] = c.cantidad;
+    });
+
+    totalFila["Total devengado"] = formatearMonto(datos.totalDevengado * datos.empleados.length);
+    rows.push(totalFila);
+
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.json_to_sheet(rows);
+    ws["!cols"] = Object.keys(rows.find((r) => Object.keys(r).length > 2) || { Empleado: "" }).map((k) => ({
+      wch: k === "Empleado" ? 34 : 18,
+    }));
+    XLSX.utils.book_append_sheet(wb, ws, "Comisiones");
+    XLSX.writeFile(wb, `Comisiones_${nombreEmpresasReporte || "Empresas"}_${fechaComisionDesde}_a_${fechaComisionHasta}.xlsx`);
+  };
+
+  const exportarComisionesPDF = async () => {
+    const datos = await obtenerDatosComisiones();
+    if (!datos) return;
+
+    if (datos.empleados.length === 0) {
+      return alert("No hay empleados activos para el reporte");
+    }
+
+    const doc = new jsPDF("landscape", "mm", "a4");
+    const pageWidth = doc.internal.pageSize.getWidth();
+
+    const totalGeneralComisiones = datos.totalDevengado * datos.empleados.length;
+    const totalPacientes = datos.cantidadPacientes || 0;
+
+    // Encabezado profesional
+    doc.setFillColor(87, 72, 102);
+    doc.rect(0, 0, pageWidth, 30, "F");
+
+    doc.setFillColor(244, 240, 247);
+    doc.roundedRect(12, 8, 16, 16, 4, 4, "F");
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(16);
+    doc.setTextColor(255, 255, 255);
+    doc.text((empresa?.nombre || "EMPRESA").toUpperCase(), pageWidth / 2, 12, {
+      align: "center",
+    });
+
+    doc.setFontSize(11);
+    doc.text(
+      `CÁLCULO DE COMISIONES DEL ${formatearFecha(fechaComisionDesde)} AL ${formatearFecha(fechaComisionHasta)}`,
+      pageWidth / 2,
+      20,
+      { align: "center" }
+    );
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.setTextColor(226, 232, 240);
+    doc.text(
+      `Empresas calculadas: ${nombreEmpresasReporte}  ·  Empleados: ${nombreEmpresasEmpleadosComision()}`,
+      pageWidth / 2,
+      26,
+      { align: "center" }
+    );
+
+    // Tarjetas resumen
+    const cardY = 36;
+    const cardW = 62;
+    const cardH = 18;
+    const cardGap = 6;
+    const cardStartX = 14;
+
+    const summaryCards = [
+      { title: "Pacientes clasificados", value: String(totalPacientes) },
+      { title: "Clasificaciones usadas", value: String(datos.clasificaciones.length) },
+      { title: "Empleados en reporte", value: String(datos.empleados.length) },
+      { title: "Total general", value: `$${formatearMonto(totalGeneralComisiones)}` },
+    ];
+
+    summaryCards.forEach((card, index) => {
+      const x = cardStartX + index * (cardW + cardGap);
+
+      doc.setFillColor(250, 250, 252);
+      doc.setDrawColor(226, 232, 240);
+      doc.roundedRect(x, cardY, cardW, cardH, 3, 3, "FD");
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(7);
+      doc.setTextColor(100, 116, 139);
+      doc.text(card.title, x + 4, cardY + 6);
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(12);
+      doc.setTextColor(87, 72, 102);
+      doc.text(card.value, x + 4, cardY + 14);
+    });
+
+    const head = [[
+      "No.",
+      "Empleado",
+      ...datos.clasificaciones.map((c) => `${c.nombre}\n$${formatearMonto(c.monto)}`),
+      "Total devengado",
+    ]];
+
+    const body = datos.empleados.map((emp, index) => [
+      index + 1,
+      emp.empleado,
+      ...emp.clasificaciones.map((c) => String(c.cantidad)),
+      `$${formatearMonto(emp.totalDevengado)}`,
+    ]);
+
+    const foot = [[
+      "",
+      "TOTAL COMISIONES DEL PERIODO",
+      ...datos.clasificaciones.map((c) => String(c.cantidad)),
+      `$${formatearMonto(totalGeneralComisiones)}`,
+    ]];
+
+    autoTable(doc, {
+      startY: 62,
+      head,
+      body,
+      foot,
+      theme: "grid",
+      tableLineColor: [203, 213, 225],
+      tableLineWidth: 0.1,
+      styles: {
+        fontSize: 8.5,
+        cellPadding: 3,
+        textColor: [31, 41, 55],
+        halign: "center",
+        valign: "middle",
+        lineColor: [226, 232, 240],
+        lineWidth: 0.1,
+      },
+      columnStyles: {
+        0: { cellWidth: 12 },
+        1: { cellWidth: 66, halign: "left", fontStyle: "bold" },
+      },
+      headStyles: {
+        fillColor: [107, 90, 122],
+        textColor: [255, 255, 255],
+        fontStyle: "bold",
+        halign: "center",
+      },
+      bodyStyles: {
+        fillColor: [255, 255, 255],
+      },
+      alternateRowStyles: {
+        fillColor: [250, 250, 252],
+      },
+      footStyles: {
+        fillColor: [244, 240, 247],
+        textColor: [87, 72, 102],
+        fontStyle: "bold",
+      },
+      didParseCell: (data) => {
+        const lastColumnIndex = data.table.columns.length - 1;
+
+        if (data.section === "body" && data.column.index === lastColumnIndex) {
+          data.cell.styles.fontStyle = "bold";
+          data.cell.styles.textColor = [87, 72, 102];
+          data.cell.styles.fillColor = [248, 245, 250];
+        }
+
+        if (data.section === "foot") {
+          data.cell.styles.fontStyle = "bold";
+        }
+      },
+    });
+
+    const finalY = doc.lastAutoTable?.finalY || 72;
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(7.5);
+    doc.setTextColor(100, 116, 139);
+    doc.text(
+      "Nota: las clasificaciones con el mismo nombre y el mismo monto se consolidan en una sola columna, aunque pertenezcan a empresas distintas.",
+      14,
+      Math.min(finalY + 8, 195)
+    );
+
+    doc.setDrawColor(226, 232, 240);
+    doc.line(14, 202, pageWidth - 14, 202);
+
+    doc.setFontSize(7);
+    doc.text(`Generado: ${formatearFecha(obtenerFechaLocalSV())}`, 14, 207);
+    doc.text("Reporte de comisiones", pageWidth - 14, 207, { align: "right" });
+
+    doc.save(`Comisiones_${nombreEmpresasReporte || "Empresas"}_${fechaComisionDesde}_a_${fechaComisionHasta}.pdf`);
   };
 
   const cargarCajaDelDia = async (fechaBuscada) => {
-    if (!empresa?.id) return;
+    const idsConsulta = empresaIdsReporte.length > 0 ? empresaIdsReporte : empresa?.id ? [empresa.id] : [];
+    if (idsConsulta.length === 0) return;
 
-    const { data: caja, error: errorCaja } = await supabase
+    const { data: cajas, error: errorCaja } = await supabase
       .from("cajas_diarias")
       .select("*")
-      .eq("empresa_id", empresa.id)
-      .eq("fecha_local", fechaBuscada)
-      .maybeSingle();
+      .in("empresa_id", idsConsulta)
+      .eq("fecha_local", fechaBuscada);
 
     if (errorCaja) {
       console.error(errorCaja);
@@ -164,25 +1084,41 @@ export default function CajaDiaria() {
       return;
     }
 
-    if (!caja) {
-      setFilas([]);
+    const cajaActiva = (cajas || []).find((c) => String(c.empresa_id) === String(empresa?.id));
+
+    if (cajaActiva) {
+      setCierreRealizado(Boolean(cajaActiva.cierre_realizado));
+      setRemesaEfectivo(Boolean(cajaActiva.remesa_efectivo));
+      setCuentaDestinoEfectivo(cajaActiva.cuenta_destino_efectivo || "");
+      setNumeroRemesaEfectivo(cajaActiva.numero_remesa_efectivo || "");
+      setComentarioCierre(cajaActiva.comentario_cierre || "");
+      setResponsableCaja(cajaActiva.responsable_caja || "");
+      setElaboradoPor(cajaActiva.elaborado_por || "");
+      setRevisadoPor(cajaActiva.revisado_por || "");
+    } else {
       limpiarFormularioCierre();
+    }
+
+    if (!cajas || cajas.length === 0) {
+      setFilas([]);
+      setClasificacionesAsignadas({});
       return;
     }
 
-    setCierreRealizado(Boolean(caja.cierre_realizado));
-    setRemesaEfectivo(Boolean(caja.remesa_efectivo));
-    setCuentaDestinoEfectivo(caja.cuenta_destino_efectivo || "");
-    setNumeroRemesaEfectivo(caja.numero_remesa_efectivo || "");
-    setComentarioCierre(caja.comentario_cierre || "");
-    setResponsableCaja(caja.responsable_caja || "");
-    setElaboradoPor(caja.elaborado_por || "");
-    setRevisadoPor(caja.revisado_por || "");
+    const idsCajas = cajas.map((c) => c.id);
+    const empresaPorCajaId = {};
+    cajas.forEach((caja) => {
+      empresaPorCajaId[caja.id] = {
+        id: caja.empresa_id,
+        nombre: obtenerNombreEmpresa(caja.empresa_id),
+      };
+    });
 
     const { data: detalle, error: errorDetalle } = await supabase
       .from("caja_diaria_detalle")
       .select(`
         id,
+        caja_diaria_id,
         paciente,
         metodo_pago_id,
         monto,
@@ -190,7 +1126,7 @@ export default function CajaDiaria() {
         venta_id,
         grupo_facturacion
       `)
-      .eq("caja_diaria_id", caja.id);
+      .in("caja_diaria_id", idsCajas);
 
     if (errorDetalle) {
       console.error(errorDetalle);
@@ -198,13 +1134,25 @@ export default function CajaDiaria() {
       return;
     }
 
+    const metodoColumnaPorId = {};
+    metodos.forEach((m) => {
+      (m.metodoIds || [m.id]).forEach((realId) => {
+        metodoColumnaPorId[String(realId)] = m.id;
+      });
+    });
+
     const mapa = {};
 
     (detalle || []).forEach((item) => {
       const nombrePaciente = item.paciente?.trim() || "Sin nombre";
+      const empresaFila = empresaPorCajaId[item.caja_diaria_id] || {
+        id: empresa?.id,
+        nombre: empresa?.nombre || "Empresa",
+      };
+
       const llave = item.venta_id
-        ? `${nombrePaciente}__venta__${item.venta_id}`
-        : `${nombrePaciente}__manual__${item.grupo_facturacion || item.id}`;
+        ? `${empresaFila.id}__${nombrePaciente}__venta__${item.venta_id}`
+        : `${empresaFila.id}__${nombrePaciente}__manual__${item.grupo_facturacion || item.id}`;
 
       if (!mapa[llave]) {
         mapa[llave] = {
@@ -212,17 +1160,18 @@ export default function CajaDiaria() {
           venta_id: item.venta_id || null,
           origen: item.venta_id ? "venta" : "manual",
           grupoFacturacion: item.grupo_facturacion || "",
+          empresaId: empresaFila.id,
+          empresaNombre: empresaFila.nombre,
         };
       }
 
-      const montoActual = Number(
-        mapa[llave].pagos[item.metodo_pago_id] || 0
-      );
+      const metodoColumnaId = metodoColumnaPorId[String(item.metodo_pago_id)] || String(item.metodo_pago_id);
+      const montoActual = Number(mapa[llave].pagos[metodoColumnaId] || 0);
 
-      mapa[llave].pagos[item.metodo_pago_id] =
+      mapa[llave].pagos[metodoColumnaId] =
         montoActual + Number(item.monto || 0);
 
-      const refActual = mapa[llave].referencias[item.metodo_pago_id] || "";
+      const refActual = mapa[llave].referencias[metodoColumnaId] || "";
       const nuevaRef = item.referencia || "";
 
       if (nuevaRef) {
@@ -239,10 +1188,79 @@ export default function CajaDiaria() {
     });
 
     setFilas(Object.values(mapa));
+
+    // Carga clasificaciones asignadas de todas las empresas seleccionadas para esa fecha.
+    const { data: asignadas, error: errorAsignadas } = await supabase
+      .from("caja_paciente_clasificaciones")
+      .select(`
+        id,
+        empresa_id,
+        fecha_local,
+        paciente,
+        venta_id,
+        grupo_facturacion,
+        clasificacion_id,
+        clasificaciones_pacientes (
+          id,
+          nombre,
+          monto
+        )
+      `)
+      .in("empresa_id", idsConsulta)
+      .eq("fecha_local", fechaBuscada);
+
+    if (errorAsignadas) {
+      console.error(errorAsignadas);
+      alert("Error al cargar clasificaciones asignadas");
+      return;
+    }
+
+    const mapaAsignadas = {};
+    (asignadas || []).forEach((item) => {
+      const keys = [
+        construirLlaveClasificacion({
+          empresaId: item.empresa_id,
+          fecha: item.fecha_local,
+          paciente: item.paciente,
+          ventaId: item.venta_id || "",
+          grupoFacturacion: item.grupo_facturacion || "",
+        }),
+        construirLlaveClasificacion({
+          empresaId: item.empresa_id,
+          fecha: item.fecha_local,
+          paciente: item.paciente,
+          ventaId: item.venta_id || "",
+          grupoFacturacion: "",
+        }),
+        construirLlaveClasificacion({
+          empresaId: item.empresa_id,
+          fecha: item.fecha_local,
+          paciente: item.paciente,
+          ventaId: "",
+          grupoFacturacion: item.grupo_facturacion || "",
+        }),
+        construirLlaveClasificacion({
+          empresaId: item.empresa_id,
+          fecha: item.fecha_local,
+          paciente: item.paciente,
+          ventaId: "",
+          grupoFacturacion: "",
+        }),
+      ];
+
+      keys.forEach((key) => {
+        if (!mapaAsignadas[key]) mapaAsignadas[key] = [];
+        if (!mapaAsignadas[key].some((x) => String(x.id) === String(item.id))) {
+          mapaAsignadas[key].push(item);
+        }
+      });
+    });
+
+    setClasificacionesAsignadas(mapaAsignadas);
   };
 
   const cargarHistorialCajas = async () => {
-    if (!empresa?.id || !filtroDesde || !filtroHasta) return;
+    if (empresaIdsReporte.length === 0 || !filtroDesde || !filtroHasta) return;
 
     setLoadingHistorial(true);
 
@@ -250,6 +1268,7 @@ export default function CajaDiaria() {
       .from("cajas_diarias")
       .select(`
         id,
+        empresa_id,
         fecha_local,
         cierre_realizado,
         remesa_efectivo,
@@ -263,7 +1282,7 @@ export default function CajaDiaria() {
           monto
         )
       `)
-      .eq("empresa_id", empresa.id)
+      .in("empresa_id", empresaIdsReporte)
       .gte("fecha_local", filtroDesde)
       .lte("fecha_local", filtroHasta)
       .order("fecha_local", { ascending: false });
@@ -278,6 +1297,10 @@ export default function CajaDiaria() {
 
     const cajas = (data || []).map((caja) => ({
       ...caja,
+      empresas: {
+        id: caja.empresa_id,
+        nombre: obtenerNombreEmpresa(caja.empresa_id),
+      },
       total: (caja.caja_diaria_detalle || []).reduce(
         (acc, d) => acc + Number(d.monto || 0),
         0
@@ -287,9 +1310,19 @@ export default function CajaDiaria() {
     setHistorialCajas(cajas);
   };
 
-  const abrirCajaHistorial = async (fecha) => {
-    setFechaLocal(fecha);
-    await cargarCajaDelDia(fecha);
+  const abrirCajaHistorial = async (cajaHistorial) => {
+    const fecha = typeof cajaHistorial === "string" ? cajaHistorial : cajaHistorial?.fecha_local;
+    const empresaCaja = cajaHistorial?.empresas || null;
+
+    if (empresaCaja?.id && String(empresaCaja.id) !== String(empresa?.id)) {
+      setEmpresa(empresaCaja);
+      localStorage.setItem("empresa", JSON.stringify(empresaCaja));
+      setFechaLocal(fecha);
+    } else {
+      setFechaLocal(fecha);
+      await cargarCajaDelDia(fecha);
+    }
+
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
@@ -304,11 +1337,18 @@ export default function CajaDiaria() {
   };
 
   const agregarFila = () => {
+    if (!validarEdicionUnaEmpresa()) return;
     setFilas((prev) => [...prev, crearFilaVacia()]);
   };
 
   const eliminarFila = (index) => {
+    if (!validarEdicionUnaEmpresa()) return;
+
     const fila = filas[index];
+
+    if (String(fila?.empresaId || empresa?.id) !== String(empresa?.id)) {
+      return alert("Esta fila pertenece a otra empresa. Cambiá la empresa activa para eliminarla.");
+    }
 
     if (fila?.origen === "venta") {
       return alert("Esa fila viene de una venta. Editala desde el historial de ventas.");
@@ -320,7 +1360,13 @@ export default function CajaDiaria() {
   };
 
   const actualizarPaciente = (index, valor) => {
+    if (!validarEdicionUnaEmpresa()) return;
+
     const nuevas = [...filas];
+
+    if (String(nuevas[index]?.empresaId || empresa?.id) !== String(empresa?.id)) {
+      return alert("Este registro pertenece a otra empresa. Cambiá la empresa activa para editarlo.");
+    }
 
     if (nuevas[index]?.origen === "venta") {
       return alert("Ese registro viene de una venta. Editalo desde ventas.");
@@ -331,7 +1377,17 @@ export default function CajaDiaria() {
   };
 
   const actualizarMonto = (filaIndex, metodoId, valor) => {
+    if (!validarEdicionUnaEmpresa()) return;
+
     const nuevas = [...filas];
+
+    if (String(nuevas[filaIndex]?.empresaId || empresa?.id) !== String(empresa?.id)) {
+      return alert("Este registro pertenece a otra empresa. Cambiá la empresa activa para editarlo.");
+    }
+
+    if (String(nuevas[filaIndex]?.empresaId || empresa?.id) !== String(empresa?.id)) {
+      return alert("Este registro pertenece a otra empresa. Cambiá la empresa activa para editarlo.");
+    }
 
     if (nuevas[filaIndex]?.origen === "venta") {
       return alert("Ese registro viene de una venta. Editalo desde ventas.");
@@ -342,6 +1398,8 @@ export default function CajaDiaria() {
   };
 
   const actualizarReferencia = (filaIndex, metodoId, valor) => {
+    if (!validarEdicionUnaEmpresa()) return;
+
     const nuevas = [...filas];
 
     if (nuevas[filaIndex]?.origen === "venta") {
@@ -353,6 +1411,8 @@ export default function CajaDiaria() {
   };
 
   const abrirModalFacturacion = (filaUid) => {
+    if (!validarEdicionUnaEmpresa()) return;
+
     setModalFacturacion({
       open: true,
       filaUid,
@@ -367,6 +1427,7 @@ export default function CajaDiaria() {
   };
 
   const asignarFacturacionJunta = (filaUidOrigen, filaUidDestino) => {
+    if (!validarEdicionUnaEmpresa()) return;
     if (!filaUidOrigen || !filaUidDestino || filaUidOrigen === filaUidDestino) return;
 
     const filaOrigen = filas.find((f) => f.uid === filaUidOrigen);
@@ -389,6 +1450,8 @@ export default function CajaDiaria() {
   };
 
   const quitarFacturacionJunta = (filaUid) => {
+    if (!validarEdicionUnaEmpresa()) return;
+
     setFilas((prev) =>
       prev.map((fila) =>
         fila.uid === filaUid ? { ...fila, grupoFacturacion: "" } : fila
@@ -427,12 +1490,17 @@ export default function CajaDiaria() {
 
         grupos[key] = {
           fecha: item.fecha,
+          empresa: [],
           paciente: [],
           origen: [],
           metodos: metodosIniciales,
           referencias: refsIniciales,
           grupoFacturacion: item.grupoFacturacion || "",
         };
+      }
+
+      if (item.empresa && !grupos[key].empresa.includes(item.empresa)) {
+        grupos[key].empresa.push(item.empresa);
       }
 
       if (item.paciente && !grupos[key].paciente.includes(item.paciente)) {
@@ -470,6 +1538,7 @@ export default function CajaDiaria() {
 
     return Object.values(grupos).map((g) => ({
       fecha: g.fecha,
+      empresa: g.empresa.join(" + "),
       paciente: g.paciente.join(" + "),
       origen:
         g.origen.length > 1
@@ -484,11 +1553,17 @@ export default function CajaDiaria() {
   };
 
   const guardarCaja = async () => {
+    if (!validarEdicionUnaEmpresa()) return;
+
     if (!empresa?.id) {
       return alert("No hay empresa seleccionada");
     }
 
-    const filasValidas = filas.filter((fila) => fila.paciente.trim() !== "");
+    const filasValidas = filas.filter(
+      (fila) =>
+        fila.paciente.trim() !== "" &&
+        String(fila.empresaId || empresa.id) === String(empresa.id)
+    );
     const filasManual = filasValidas.filter((fila) => !fila.venta_id);
     const filasVenta = filasValidas.filter((fila) => fila.venta_id);
 
@@ -598,10 +1673,15 @@ export default function CajaDiaria() {
           valor !== undefined &&
           Number(valor) !== 0
         ) {
+          const metodoRealId =
+            (metodo.empresasOrigen || []).some((empId) => String(empId) === String(empresa.id))
+              ? metodo.metodoIds[(metodo.empresasOrigen || []).findIndex((empId) => String(empId) === String(empresa.id))]
+              : metodo.id;
+
           detalleParaGuardar.push({
             caja_diaria_id: cajaId,
             paciente: fila.paciente.trim(),
-            metodo_pago_id: metodo.id,
+            metodo_pago_id: metodoRealId,
             monto: Number(valor),
             referencia: referencia?.trim() || null,
             venta_id: null,
@@ -649,8 +1729,8 @@ export default function CajaDiaria() {
   };
 
   const obtenerDatosReporte = async () => {
-    if (!empresa?.id) {
-      alert("No hay empresa seleccionada");
+    if (empresaIdsReporte.length === 0) {
+      alert("Seleccioná al menos una empresa para el reporte");
       return null;
     }
 
@@ -668,6 +1748,7 @@ export default function CajaDiaria() {
       .from("cajas_diarias")
       .select(`
         id,
+        empresa_id,
         fecha_local,
         cierre_realizado,
         remesa_efectivo,
@@ -689,7 +1770,7 @@ export default function CajaDiaria() {
           )
         )
       `)
-      .eq("empresa_id", empresa.id)
+      .in("empresa_id", empresaIdsReporte)
       .gte("fecha_local", filtroDesde)
       .lte("fecha_local", filtroHasta)
       .order("fecha_local", { ascending: true });
@@ -721,6 +1802,7 @@ export default function CajaDiaria() {
         if (!mapaPacientes[llave]) {
           mapaPacientes[llave] = {
             fecha: caja.fecha_local,
+            empresa: obtenerNombreEmpresa(caja.empresa_id),
             paciente,
             origen,
             grupoFacturacion,
@@ -758,6 +1840,7 @@ export default function CajaDiaria() {
 
       cierres.push({
         fecha: caja.fecha_local,
+        empresa: obtenerNombreEmpresa(caja.empresa_id),
         responsableCaja: caja.responsable_caja || "",
         elaboradoPor: caja.elaborado_por || "",
         revisadoPor: caja.revisado_por || "",
@@ -807,7 +1890,7 @@ export default function CajaDiaria() {
     }
 
     const rows = [
-      { Fecha: "", Paciente: empresa?.nombre || "Empresa activa" },
+      { Fecha: "", Paciente: nombreEmpresasReporte },
       {
         Fecha: "",
         Paciente: `Período: ${formatearFecha(filtroDesde)} al ${formatearFecha(
@@ -820,6 +1903,7 @@ export default function CajaDiaria() {
     datos.detalle.forEach((item) => {
       const fila = {
         Fecha: formatearFecha(item.fecha),
+        Empresa: item.empresa || "",
         Paciente: item.paciente,
         Origen: item.origen || "",
       };
@@ -846,6 +1930,7 @@ export default function CajaDiaria() {
 
     const filaTotales = {
       Fecha: "",
+      Empresa: "",
       Paciente: "TOTALES",
       Origen: "",
     };
@@ -878,7 +1963,7 @@ export default function CajaDiaria() {
     }
 
     const rows = [
-      { "Método de Pago": empresa?.nombre || "Empresa activa", Total: "" },
+      { "Método de Pago": nombreEmpresasReporte, Total: "" },
       {
         "Método de Pago": `Período: ${formatearFecha(filtroDesde)} al ${formatearFecha(
           filtroHasta
@@ -925,7 +2010,7 @@ export default function CajaDiaria() {
     doc.setFont("helvetica", "normal");
     doc.setFontSize(10);
     doc.setTextColor(71, 85, 105);
-    doc.text(`Empresa: ${empresa?.nombre || "Empresa activa"}`, 14, 24);
+    doc.text(`Empresa(s): ${nombreEmpresasReporte}`, 14, 24);
     doc.text(
       `Período: ${formatearFecha(filtroDesde)} al ${formatearFecha(filtroHasta)}`,
       120,
@@ -934,6 +2019,7 @@ export default function CajaDiaria() {
 
     const head = [[
       "Fecha",
+      "Empresa",
       "Paciente",
       "Origen",
       ...metodos.map((m) => m.nombre),
@@ -958,6 +2044,7 @@ export default function CajaDiaria() {
 
       return [
         formatearFecha(item.fecha),
+        item.empresa || "",
         item.paciente,
         item.origen || "",
         ...metodos.map((m) => `$${formatearMonto(item.metodos[m.nombre] || 0)}`),
@@ -967,6 +2054,7 @@ export default function CajaDiaria() {
     });
 
     const foot = [[
+      "",
       "",
       "TOTALES",
       "",
@@ -1030,7 +2118,7 @@ export default function CajaDiaria() {
     doc.setFont("helvetica", "normal");
     doc.setFontSize(10);
     doc.setTextColor(71, 85, 105);
-    doc.text(`Empresa: ${empresa?.nombre || "Empresa activa"}`, 14, 24);
+    doc.text(`Empresa(s): ${nombreEmpresasReporte}`, 14, 24);
     doc.text(
       `Período: ${formatearFecha(filtroDesde)} al ${formatearFecha(filtroHasta)}`,
       110,
@@ -1099,7 +2187,7 @@ export default function CajaDiaria() {
     doc.text("INFORME DE CIERRE DE CAJA DIARIA", 105, 14, { align: "center" });
 
     doc.setFontSize(12);
-    doc.text(empresa?.nombre || "EMPRESA ACTIVA", 105, 22, { align: "center" });
+    doc.text(nombreEmpresasReporte || "EMPRESA ACTIVA", 105, 22, { align: "center" });
 
     doc.setFont("helvetica", "normal");
     doc.setFontSize(10);
@@ -1224,6 +2312,9 @@ export default function CajaDiaria() {
             <p style={styles.companyPill}>
               Empresa activa: <strong>{empresa?.nombre || "No seleccionada"}</strong>
             </p>
+            <p style={styles.companyPill}>
+              Reportes: <strong>{nombreEmpresasReporte}</strong>
+            </p>
           </div>
 
           <div style={styles.totalBadge}>
@@ -1250,17 +2341,109 @@ export default function CajaDiaria() {
                 style={styles.input}
               />
             </div>
+
+            <div style={styles.formGroup}>
+              <label style={styles.label}>Empresa activa para operar</label>
+              <select
+                value={empresa?.id || ""}
+                onChange={(e) => cambiarEmpresaActiva(e.target.value)}
+                style={styles.input}
+              >
+                {empresasDisponibles.map((emp) => (
+                  <option key={emp.id} value={emp.id}>
+                    {emp.nombre}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div style={styles.formGroupWide}>
+              <div style={styles.empresaSelectorHeader}>
+                <div>
+                  <label style={styles.label}>Empresas para reportes combinados</label>
+                  <p style={styles.selectorHelp}>Seleccioná una o varias empresas para historial e informes.</p>
+                </div>
+
+                <div style={styles.empresaDropdownActions}>
+                  <button type="button" style={styles.miniBtn} onClick={seleccionarSoloEmpresaActiva}>
+                    Solo activa
+                  </button>
+
+                  <button type="button" style={styles.miniBtn} onClick={seleccionarTodasEmpresasReporte}>
+                    Todas
+                  </button>
+                </div>
+              </div>
+
+              {modoSoloLecturaMultiempresa && (
+                <div style={styles.readOnlyMiniNote}>
+                  Modo combinado: solo lectura.
+                </div>
+              )}
+
+              <div style={styles.multiSelectWrap}>
+                <button
+                  type="button"
+                  style={styles.multiSelectButton}
+                  onClick={() => setMostrarSelectorEmpresas((prev) => !prev)}
+                >
+                  <span>{nombreEmpresasReporte}</span>
+                  <span style={styles.multiSelectArrow}>{mostrarSelectorEmpresas ? "▴" : "▾"}</span>
+                </button>
+
+                {mostrarSelectorEmpresas && (
+                  <div style={styles.multiSelectMenu}>
+                    {empresasDisponibles.map((emp) => {
+                      const checked = empresaIdsReporte.some((id) => String(id) === String(emp.id));
+
+                      return (
+                        <label
+                          key={emp.id}
+                          style={{
+                            ...styles.multiSelectOption,
+                            ...(checked ? styles.multiSelectOptionActive : {}),
+                          }}
+                        >
+                          <span style={styles.fakeCheckbox}>{checked ? "✓" : ""}</span>
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => alternarEmpresaReporte(emp.id)}
+                            style={styles.hiddenCheckbox}
+                          />
+                          <span style={styles.empresaListName}>{emp.nombre}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
 
           <div style={styles.actionGridSimple}>
-            <button type="button" onClick={agregarFila} style={styles.primarySoftBtn}>
+            <button
+              type="button"
+              onClick={agregarFila}
+              style={{
+                ...styles.primarySoftBtn,
+                ...(modoSoloLecturaMultiempresa ? styles.disabledBtn : {}),
+              }}
+              disabled={modoSoloLecturaMultiempresa}
+              title={modoSoloLecturaMultiempresa ? "Seleccioná solo una empresa para agregar registros" : ""}
+            >
               + Manual
             </button>
 
             <button
               type="button"
               onClick={limpiarCajaActual}
-              style={styles.clearBtn}
+              style={{
+                ...styles.clearBtn,
+                ...(modoSoloLecturaMultiempresa ? styles.disabledBtn : {}),
+              }}
+              disabled={modoSoloLecturaMultiempresa}
+              title={modoSoloLecturaMultiempresa ? "Seleccioná solo una empresa para limpiar o modificar" : ""}
             >
               Limpiar formulario
             </button>
@@ -1308,11 +2491,42 @@ export default function CajaDiaria() {
                         onChange={(e) => actualizarPaciente(index, e.target.value)}
                         placeholder="Nombre del paciente"
                         style={styles.input}
-                        disabled={fila.origen === "venta"}
+                        disabled={
+                          modoSoloLecturaMultiempresa ||
+                          fila.origen === "venta" ||
+                          String(fila.empresaId || empresa?.id) !== String(empresa?.id)
+                        }
                       />
+
+                      <div style={styles.clasificacionBox}>
+                        <button
+                          type="button"
+                          style={styles.classifyBtn}
+                          onClick={() => abrirModalClasificacion(fila.uid)}
+                          title="Clasificar paciente"
+                        >
+                          Clasificar paciente
+                        </button>
+
+                        <div style={styles.clasificacionChips}>
+                          {obtenerClasificacionesFila(fila).length === 0 ? (
+                            <span style={styles.clasificacionEmpty}>Sin clasificación</span>
+                          ) : (
+                            obtenerClasificacionesFila(fila).map((asig) => (
+                              <span key={asig.id} style={styles.clasificacionChip}>
+                                {asig.clasificaciones_pacientes?.nombre || "Clasificación"}
+                              </span>
+                            ))
+                          )}
+                        </div>
+                      </div>
                     </td>
 
                     <td style={styles.tdCenter}>
+                      <div style={styles.empresaTagCaja}>
+                        {fila.empresaNombre || obtenerNombreEmpresa(fila.empresaId || empresa?.id)}
+                      </div>
+
                       <span
                         style={{
                           ...styles.badge,
@@ -1340,8 +2554,13 @@ export default function CajaDiaria() {
                               actualizarMonto(index, metodo.id, e.target.value)
                             }
                             style={{ ...styles.input, textAlign: "right" }}
-                            placeholder="0.00"
-                            disabled={fila.origen === "venta"}
+                            placeholder={metodo.nombre}
+                            disabled={
+                              modoSoloLecturaMultiempresa ||
+                              fila.origen === "venta" ||
+                              String(fila.empresaId || empresa?.id) !== String(empresa?.id) ||
+                              !(metodo.empresasOrigen || [empresa?.id]).some((empId) => String(empId) === String(empresa?.id))
+                            }
                           />
                           <input
                             type="text"
@@ -1351,7 +2570,12 @@ export default function CajaDiaria() {
                             }
                             style={styles.subInput}
                             placeholder="Voucher / referencia"
-                            disabled={fila.origen === "venta"}
+                            disabled={
+                              modoSoloLecturaMultiempresa ||
+                              fila.origen === "venta" ||
+                              String(fila.empresaId || empresa?.id) !== String(empresa?.id) ||
+                              !(metodo.empresasOrigen || [empresa?.id]).some((empId) => String(empId) === String(empresa?.id))
+                            }
                           />
                         </div>
                       </td>
@@ -1449,7 +2673,12 @@ export default function CajaDiaria() {
           </div>
         </div>
 
-        <div style={styles.card}>
+        <div
+          style={{
+            ...styles.card,
+            ...(modoSoloLecturaMultiempresa ? styles.readOnlySection : {}),
+          }}
+        >
           <div style={styles.cardHeader}>
             <h3 style={styles.sectionTitleSmall}>Cierre de caja</h3>
             <p style={styles.sectionSubtitle}>
@@ -1577,6 +2806,7 @@ export default function CajaDiaria() {
               <thead>
                 <tr style={styles.theadRow}>
                   <th style={styles.th}>Fecha</th>
+                  <th style={styles.th}>Empresa</th>
                   <th style={styles.th}>Total</th>
                   <th style={styles.th}>Cierre</th>
                   <th style={styles.th}>Responsable</th>
@@ -1586,16 +2816,19 @@ export default function CajaDiaria() {
               <tbody>
                 {loadingHistorial ? (
                   <tr>
-                    <td colSpan="5" style={styles.emptyTd}>Cargando historial...</td>
+                    <td colSpan="6" style={styles.emptyTd}>Cargando historial...</td>
                   </tr>
                 ) : historialCajas.length === 0 ? (
                   <tr>
-                    <td colSpan="5" style={styles.emptyTd}>No hay cajas en ese rango</td>
+                    <td colSpan="6" style={styles.emptyTd}>No hay cajas en ese rango</td>
                   </tr>
                 ) : (
                   historialCajas.map((caja) => (
                     <tr key={caja.id}>
                       <td style={styles.tdCenter}>{formatearFecha(caja.fecha_local)}</td>
+                      <td style={styles.tdCenter}>
+                        <span style={styles.empresaBadge}>{caja.empresas?.nombre || "Empresa"}</span>
+                      </td>
                       <td style={styles.tdCenter}>${formatearMonto(caja.total)}</td>
                       <td style={styles.tdCenter}>
                         <span
@@ -1615,7 +2848,7 @@ export default function CajaDiaria() {
                       <td style={styles.tdCenter}>
                         <button
                           type="button"
-                          onClick={() => abrirCajaHistorial(caja.fecha_local)}
+                          onClick={() => abrirCajaHistorial(caja)}
                           style={styles.openBtn}
                         >
                           Abrir / Editar
@@ -1627,6 +2860,109 @@ export default function CajaDiaria() {
               </tbody>
             </table>
           </div>
+        </div>
+
+        <div style={styles.card}>
+          <div style={styles.cardHeader}>
+            <h3 style={styles.sectionTitleSmall}>Reporte de comisiones</h3>
+            <p style={styles.sectionSubtitle}>
+              Calcula comisiones según las clasificaciones asignadas a pacientes.
+            </p>
+          </div>
+
+          <div style={styles.reportTopGrid}>
+            <div style={styles.comisionSelectorBox}>
+              <div style={styles.comisionSelectorHeader}>
+                <strong>Empleados para comisión</strong>
+                <div style={styles.empresaDropdownActions}>
+                  <button type="button" style={styles.miniBtn} onClick={seleccionarSoloActivaEmpleadosComision}>
+                    Solo activa
+                  </button>
+                  <button type="button" style={styles.miniBtn} onClick={seleccionarTodasEmpleadosComision}>
+                    Todas
+                  </button>
+                </div>
+              </div>
+
+              <div style={styles.multiSelectWrap}>
+                <button
+                  type="button"
+                  style={styles.multiSelectButton}
+                  onClick={() => setMostrarSelectorEmpleadosComision((prev) => !prev)}
+                >
+                  <span>{nombreEmpresasEmpleadosComision()}</span>
+                  <span style={styles.multiSelectArrow}>
+                    {mostrarSelectorEmpleadosComision ? "▴" : "▾"}
+                  </span>
+                </button>
+
+                {mostrarSelectorEmpleadosComision && (
+                  <div style={styles.multiSelectMenu}>
+                    {empresasDisponibles.map((emp) => {
+                      const checked = empresasEmpleadosComisionIds.some(
+                        (id) => String(id) === String(emp.id)
+                      );
+
+                      return (
+                        <label
+                          key={emp.id}
+                          style={{
+                            ...styles.multiSelectOption,
+                            ...(checked ? styles.multiSelectOptionActive : {}),
+                          }}
+                        >
+                          <span style={styles.fakeCheckbox}>{checked ? "✓" : ""}</span>
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => alternarEmpresaEmpleadosComision(emp.id)}
+                            style={styles.hiddenCheckbox}
+                          />
+                          <span style={styles.empresaListName}>{emp.nombre}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <input
+              type="date"
+              value={fechaComisionDesde}
+              onChange={(e) => setFechaComisionDesde(e.target.value)}
+              style={styles.input}
+            />
+
+            <input
+              type="date"
+              value={fechaComisionHasta}
+              onChange={(e) => setFechaComisionHasta(e.target.value)}
+              style={styles.input}
+            />
+
+            <button
+              type="button"
+              onClick={exportarComisionesPDF}
+              style={styles.reportBtnPdf}
+              disabled={loadingComision}
+            >
+              PDF Comisiones
+            </button>
+
+            <button
+              type="button"
+              onClick={exportarComisionesExcel}
+              style={styles.reportBtnExcel}
+              disabled={loadingComision}
+            >
+              Excel Comisiones
+            </button>
+          </div>
+
+          <p style={styles.infoText}>
+            El reporte calcula las empresas seleccionadas y toma empleados de las empresas marcadas en el desplegable.
+          </p>
         </div>
 
         <div style={styles.card}>
@@ -1668,6 +3004,143 @@ export default function CajaDiaria() {
           </p>
         </div>
       </div>
+
+      {modalClasificacion.open && filaModalClasificacion && (
+        <div style={styles.modalOverlay} onClick={cerrarModalClasificacion}>
+          <div style={styles.modalBox} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.modalHeaderSimple}>
+              <div>
+                <h3 style={styles.modalTitle}>Clasificar paciente</h3>
+                <p style={styles.modalText}>
+                  {filaModalClasificacion.paciente || "Sin nombre"} · {formatearFecha(fechaLocal)}
+                  <br />
+                  Clasificaciones tomadas de: {obtenerNombreEmpresa(filaModalClasificacion.empresaId || empresa?.id)}
+                </p>
+              </div>
+
+              <button type="button" onClick={cerrarModalClasificacion} style={styles.modalCloseBtn}>
+                ✕
+              </button>
+            </div>
+
+            <div style={styles.quickModalActions}>
+              <button type="button" style={styles.primarySoftBtn} onClick={abrirNuevaClasificacionRapida}>
+                + Crear clasificación
+              </button>
+            </div>
+
+            <div style={styles.modalList}>
+              {clasificaciones.length === 0 ? (
+                <div style={styles.emptyTd}>
+                  No hay clasificaciones activas. Crealas en el módulo “Clasificación de pacientes”.
+                </div>
+              ) : (
+                clasificaciones.map((clasificacion) => (
+                  <button
+                    key={clasificacion.id}
+                    type="button"
+                    onClick={() => asignarClasificacionAFila(clasificacion.id)}
+                    style={styles.modalOptionBtn}
+                  >
+                    <strong>{clasificacion.nombre}</strong>
+                    <span style={styles.modalOptionSub}>
+                      Comisión: ${formatearMonto(clasificacion.monto)}
+                    </span>
+                  </button>
+                ))
+              )}
+            </div>
+
+            <div style={{ marginTop: 14 }}>
+              <h4 style={{ margin: "0 0 8px 0", color: "#574866" }}>Asignadas</h4>
+              <div style={styles.clasificacionChips}>
+                {obtenerClasificacionesFila(filaModalClasificacion).length === 0 ? (
+                  <span style={styles.clasificacionEmpty}>Sin clasificación</span>
+                ) : (
+                  obtenerClasificacionesFila(filaModalClasificacion).map((asig) => (
+                    <button
+                      key={asig.id}
+                      type="button"
+                      style={styles.clasificacionChipRemove}
+                      onClick={() => quitarClasificacionAsignada(asig.id)}
+                    >
+                      {asig.clasificaciones_pacientes?.nombre || "Clasificación"} ✕
+                    </button>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {modalNuevaClasificacion && (
+        <div style={styles.modalOverlay} onClick={cerrarNuevaClasificacionRapida}>
+          <div style={styles.modalBoxSmall} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.modalHeaderSimple}>
+              <div>
+                <h3 style={styles.modalTitle}>Nueva clasificación</h3>
+                <p style={styles.modalText}>
+                  Se creará en la empresa de este paciente: {obtenerNombreEmpresa(filaModalClasificacion?.empresaId || empresa?.id)}.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={cerrarNuevaClasificacionRapida}
+                style={styles.modalCloseBtn}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div style={styles.modalFormGrid}>
+              <div>
+                <label style={styles.label}>Nombre</label>
+                <input
+                  style={styles.input}
+                  value={nuevoNombreClasificacion}
+                  onChange={(e) => setNuevoNombreClasificacion(e.target.value)}
+                  placeholder="Ej: Paciente terminado"
+                />
+              </div>
+
+              <div>
+                <label style={styles.label}>Monto comisión</label>
+                <input
+                  style={styles.input}
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={nuevoMontoClasificacion}
+                  onChange={(e) => setNuevoMontoClasificacion(e.target.value)}
+                  placeholder="Ej: 2.00"
+                />
+              </div>
+            </div>
+
+            <div style={styles.modalActionsInline}>
+              <button
+                type="button"
+                style={styles.saveBtn}
+                onClick={guardarNuevaClasificacionRapida}
+                disabled={guardandoNuevaClasificacion}
+              >
+                {guardandoNuevaClasificacion ? "Guardando..." : "Guardar clasificación"}
+              </button>
+
+              <button
+                type="button"
+                style={styles.clearBtn}
+                onClick={cerrarNuevaClasificacionRapida}
+                disabled={guardandoNuevaClasificacion}
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {modalFacturacion.open && (
         <div style={styles.modalOverlay} onClick={cerrarModalFacturacion}>
@@ -1762,6 +3235,18 @@ const styles = {
     display: "inline-block",
   },
 
+  empresaSelect: {
+    marginTop: 8,
+    maxWidth: 360,
+    padding: "10px 12px",
+    borderRadius: "12px",
+    border: "1px solid #d7dbe2",
+    background: "#fff",
+    color: "#1f2937",
+    fontSize: 14,
+    outline: "none",
+  },
+
   totalBadge: {
     background: "#f4f0f7",
     border: "1px solid #d3c7dd",
@@ -1806,6 +3291,179 @@ const styles = {
     fontSize: "14px",
   },
 
+
+
+
+  comisionSelectorBox: {
+    gridColumn: "span 2",
+    border: "1px solid #d7dbe2",
+    borderRadius: "14px",
+    padding: "12px",
+    background: "#f8f8fa",
+    display: "grid",
+    gap: "8px",
+    position: "relative",
+    zIndex: 30,
+  },
+
+  comisionSelectorHeader: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: "10px",
+    flexWrap: "wrap",
+    color: "#574866",
+  },
+
+  comisionSelectorTitle: {
+    padding: "8px 10px",
+    borderRadius: "10px",
+    background: "#fff",
+    border: "1px solid #d7dbe2",
+    color: "#1f2937",
+    fontWeight: "800",
+  },
+
+  comisionEmpresaChecks: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+    gap: "6px",
+  },
+
+  comisionEmpresaItem: {
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    padding: "8px 10px",
+    borderRadius: "10px",
+    background: "#fff",
+    border: "1px solid #e2e8f0",
+    color: "#334155",
+    fontWeight: "700",
+  },
+
+
+  readOnlyMiniNote: {
+    color: "#9a3412",
+    background: "#fff7ed",
+    border: "1px solid #fed7aa",
+    borderRadius: "10px",
+    padding: "7px 10px",
+    fontSize: "12px",
+    fontWeight: "800",
+    marginBottom: "8px",
+  },
+
+
+  multiSelectWrap: {
+    position: "relative",
+    width: "100%",
+  },
+
+  multiSelectButton: {
+    width: "100%",
+    minHeight: "48px",
+    borderRadius: "14px",
+    border: "1px solid #cfd9e5",
+    background: "#fff",
+    color: "#1f2937",
+    fontWeight: "800",
+    padding: "12px 14px",
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: "12px",
+    cursor: "pointer",
+    textAlign: "left",
+    boxSizing: "border-box",
+  },
+
+  multiSelectArrow: {
+    fontSize: "18px",
+    color: "#574866",
+    flexShrink: 0,
+  },
+
+  multiSelectMenu: {
+    position: "absolute",
+    top: "calc(100% + 8px)",
+    left: 0,
+    right: 0,
+    zIndex: 80,
+    maxHeight: "280px",
+    overflowY: "auto",
+    background: "#fff",
+    border: "1px solid #d7dbe2",
+    borderRadius: "16px",
+    boxShadow: "0 18px 45px rgba(15, 23, 42, 0.14)",
+    padding: "8px",
+    display: "grid",
+    gap: "6px",
+  },
+
+  multiSelectOption: {
+    display: "flex",
+    alignItems: "center",
+    gap: "12px",
+    width: "100%",
+    padding: "12px 14px",
+    borderRadius: "12px",
+    border: "1px solid transparent",
+    background: "#fff",
+    cursor: "pointer",
+    color: "#1f2937",
+    boxSizing: "border-box",
+  },
+
+  multiSelectOptionActive: {
+    background: "#eef6ff",
+    border: "1px solid #93c5fd",
+  },
+
+
+  empresaChecks: {
+    display: "flex",
+    gap: 8,
+    flexWrap: "wrap",
+  },
+
+  fakeCheckbox: {
+    width: "22px",
+    height: "22px",
+    borderRadius: "6px",
+    border: "1px solid #cbd5e1",
+    background: "#fff",
+    display: "grid",
+    placeItems: "center",
+    color: "#2563eb",
+    fontWeight: "900",
+    flexShrink: 0,
+  },
+
+  hiddenCheckbox: {
+    display: "none",
+  },
+
+  empresaListName: {
+    fontWeight: "800",
+    lineHeight: 1.2,
+    wordBreak: "break-word",
+  },
+
+  empresaCheckLabel: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 6,
+    background: "#f8f8fa",
+    border: "1px solid #d7dbe2",
+    borderRadius: 999,
+    padding: "8px 11px",
+    fontSize: 12,
+    color: "#334155",
+    fontWeight: "700",
+    cursor: "pointer",
+  },
+
   topGrid: {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
@@ -1824,6 +3482,13 @@ const styles = {
   formGroup: {
     display: "grid",
     gap: "6px",
+  },
+
+  formGroupWide: {
+    display: "grid",
+    gap: "8px",
+    position: "relative",
+    zIndex: 20,
   },
 
   label: {
@@ -2155,6 +3820,138 @@ const styles = {
     margin: 0,
     color: "#64748b",
     fontSize: "13px",
+  },
+
+
+
+
+  disabledBtn: {
+    opacity: 0.55,
+    cursor: "not-allowed",
+    filter: "grayscale(0.2)",
+  },
+
+  readOnlyBanner: {
+    background: "#fff7ed",
+    color: "#9a3412",
+    border: "1px solid #fed7aa",
+    borderRadius: "14px",
+    padding: "12px 14px",
+    fontWeight: "800",
+    marginBottom: "14px",
+  },
+
+  readOnlySection: {
+    opacity: 0.72,
+    pointerEvents: "none",
+    userSelect: "none",
+  },
+
+
+  empresaTagCaja: {
+    display: "flex",
+    width: "fit-content",
+    maxWidth: "100%",
+    margin: "0 auto 8px auto",
+    padding: "5px 9px",
+    borderRadius: "999px",
+    background: "#eef6ff",
+    color: "#1d4ed8",
+    border: "1px solid #bfdbfe",
+    fontWeight: "800",
+    fontSize: "11px",
+    wordBreak: "break-word",
+    justifyContent: "center",
+  },
+
+  quickModalActions: {
+    display: "flex",
+    justifyContent: "flex-end",
+    margin: "8px 0 12px 0",
+  },
+
+  modalBoxSmall: {
+    background: "#fff",
+    borderRadius: "18px",
+    padding: "18px",
+    width: "min(94vw, 520px)",
+    boxShadow: "0 20px 45px rgba(0,0,0,0.22)",
+    border: "1px solid #d7dbe2",
+  },
+
+  modalFormGrid: {
+    display: "grid",
+    gap: "12px",
+    marginTop: "12px",
+  },
+
+  modalActionsInline: {
+    display: "flex",
+    justifyContent: "flex-end",
+    gap: "10px",
+    flexWrap: "wrap",
+    marginTop: "16px",
+  },
+
+
+  clasificacionBox: {
+    marginTop: "8px",
+    display: "grid",
+    gap: "6px",
+  },
+
+  classifyBtn: {
+    background: "#eef6ff",
+    color: "#1d4ed8",
+    border: "1px solid #bfdbfe",
+    borderRadius: "10px",
+    padding: "8px 10px",
+    cursor: "pointer",
+    fontWeight: "800",
+    fontSize: "12px",
+  },
+
+  clasificacionChips: {
+    display: "flex",
+    gap: "6px",
+    flexWrap: "wrap",
+  },
+
+  clasificacionChip: {
+    display: "inline-flex",
+    alignItems: "center",
+    padding: "4px 8px",
+    borderRadius: "999px",
+    background: "#eefcf3",
+    color: "#0f7a4d",
+    border: "1px solid #c7eed5",
+    fontWeight: "800",
+    fontSize: "11px",
+  },
+
+  clasificacionChipRemove: {
+    display: "inline-flex",
+    alignItems: "center",
+    padding: "6px 9px",
+    borderRadius: "999px",
+    background: "#fff1f2",
+    color: "#be123c",
+    border: "1px solid #fecdd3",
+    fontWeight: "800",
+    fontSize: "12px",
+    cursor: "pointer",
+  },
+
+  clasificacionEmpty: {
+    display: "inline-flex",
+    alignItems: "center",
+    padding: "4px 8px",
+    borderRadius: "999px",
+    background: "#f8f8fa",
+    color: "#64748b",
+    border: "1px solid #d7dbe2",
+    fontWeight: "700",
+    fontSize: "11px",
   },
 
   modalOverlay: {

@@ -5,7 +5,11 @@ import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
 function CajaChica() {
-  const empresa = JSON.parse(localStorage.getItem("empresa") || "null");
+  const empresaInicial = JSON.parse(localStorage.getItem("empresa") || "null");
+  const [empresa, setEmpresa] = useState(empresaInicial);
+  const [empresasDisponibles, setEmpresasDisponibles] = useState(
+    empresaInicial?.id ? [empresaInicial] : []
+  );
 
   const [fechaDesde, setFechaDesde] = useState(hoyTexto());
   const [fechaHasta, setFechaHasta] = useState(hoyTexto());
@@ -56,6 +60,71 @@ function CajaChica() {
   const [cargandoHistorial, setCargandoHistorial] = useState(false);
   const [mostrarHistorial, setMostrarHistorial] = useState(false);
   const [idActual, setIdActual] = useState(null);
+
+
+
+  const cargarEmpresasDisponibles = async () => {
+    try {
+      const { data: userData, error: userError } = await supabase.auth.getUser();
+      if (userError) {
+        console.error(userError);
+        return;
+      }
+
+      const userId = userData?.user?.id;
+      if (!userId) return;
+
+      const { data, error } = await supabase
+        .from("empresa_usuarios")
+        .select(`
+          empresa_id,
+          activo,
+          empresas (
+            id,
+            nombre
+          )
+        `)
+        .eq("user_id", userId)
+        .eq("activo", true);
+
+      if (error) {
+        console.error(error);
+        return;
+      }
+
+      const empresas = (data || [])
+        .map((item) => item.empresas)
+        .filter(Boolean);
+
+      const mapa = new Map();
+      empresas.forEach((emp) => mapa.set(emp.id, emp));
+      if (empresa?.id) mapa.set(empresa.id, empresa);
+
+      const lista = Array.from(mapa.values());
+      setEmpresasDisponibles(lista);
+
+      if (lista.length > 0 && !lista.some((emp) => emp.id === empresa?.id)) {
+        setEmpresa(lista[0]);
+        localStorage.setItem("empresa", JSON.stringify(lista[0]));
+      }
+    } catch (error) {
+      console.error("Error cargando empresas disponibles:", error);
+    }
+  };
+
+  const cambiarEmpresaActiva = (empresaId) => {
+    const seleccionada = empresasDisponibles.find((emp) => String(emp.id) === String(empresaId));
+    if (!seleccionada) return;
+
+    setEmpresa(seleccionada);
+    localStorage.setItem("empresa", JSON.stringify(seleccionada));
+  };
+
+
+
+  useEffect(() => {
+    cargarEmpresasDisponibles();
+  }, []);
 
   useEffect(() => {
     if (!empresa?.id) return;
@@ -1498,6 +1567,17 @@ function CajaChica() {
 }
 
 const ui = {
+  empresaSelect: {
+    marginTop: 8,
+    width: "100%",
+    padding: "8px 10px",
+    borderRadius: "10px",
+    border: "1px solid #d7dbe2",
+    background: "#fff",
+    color: "#1f2937",
+    fontSize: 13,
+    outline: "none",
+  },
   cardPad: {
     padding: 18,
     marginBottom: 18,

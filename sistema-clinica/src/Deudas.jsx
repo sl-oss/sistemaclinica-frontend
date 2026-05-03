@@ -124,6 +124,16 @@ async function registrarPagosEnCajaDiaria({
 }
 
 function Deudas() {
+  const empresaGuardada = JSON.parse(localStorage.getItem("empresa") || "null");
+
+  const [empresa, setEmpresa] = useState(empresaGuardada);
+  const [empresasUsuario, setEmpresasUsuario] = useState([]);
+  const [empresasReporteIds, setEmpresasReporteIds] = useState(() => {
+    const guardadas = JSON.parse(localStorage.getItem("empresas_deudas_ids") || "[]");
+    if (Array.isArray(guardadas) && guardadas.length > 0) return guardadas;
+    return empresaGuardada?.id ? [empresaGuardada.id] : [];
+  });
+  const [mostrarSelectorEmpresas, setMostrarSelectorEmpresas] = useState(false);
   const [ventas, setVentas] = useState([]);
   const [metodosPago, setMetodosPago] = useState([]);
   const [ventaAbierta, setVentaAbierta] = useState(null);
@@ -132,22 +142,140 @@ function Deudas() {
   ]);
   const [guardando, setGuardando] = useState(false);
 
-  const empresa = JSON.parse(localStorage.getItem("empresa") || "null");
+  useEffect(() => {
+    cargarEmpresasUsuario();
+  }, []);
 
   useEffect(() => {
     if (empresa?.id) {
-      obtenerMetodosPago();
-      obtenerCuentasPorCobrar();
+      obtenerMetodosPago(empresa.id);
+    } else {
+      setMetodosPago([]);
     }
-  }, []);
+  }, [empresa?.id]);
 
-  const obtenerMetodosPago = async () => {
-    if (!empresa?.id) return;
+  useEffect(() => {
+    if (empresa?.id || empresasReporteIds.length > 0) {
+      localStorage.setItem("empresas_deudas_ids", JSON.stringify(empresasReporteIds));
+      obtenerCuentasPorCobrar();
+    } else {
+      setVentas([]);
+    }
+  }, [empresa?.id, empresasReporteIds.join("|")]);
+
+  const cargarEmpresasUsuario = async () => {
+    try {
+      const { data: authData } = await supabase.auth.getUser();
+      const userId = authData?.user?.id;
+
+      if (!userId) {
+        if (empresaGuardada?.id) setEmpresasUsuario([empresaGuardada]);
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from("empresa_usuarios")
+        .select("empresa_id, activo, empresas(id, nombre)")
+        .eq("user_id", userId)
+        .eq("activo", true);
+
+      if (error) throw error;
+
+      const empresas = (data || [])
+        .map((fila) => fila.empresas)
+        .filter(Boolean);
+
+      setEmpresasUsuario(empresas);
+
+      if (empresas.length > 0) {
+        const sigueDisponible = empresas.some(
+          (e) => String(e.id) === String(empresaGuardada?.id)
+        );
+
+        const empresaInicial = sigueDisponible ? empresaGuardada : empresas[0];
+        setEmpresa(empresaInicial);
+        localStorage.setItem("empresa", JSON.stringify(empresaInicial));
+
+        const idsDisponibles = empresas.map((e) => String(e.id));
+        const idsGuardadosValidos = empresasReporteIds.filter((id) =>
+          idsDisponibles.includes(String(id))
+        );
+        const idsIniciales = idsGuardadosValidos.length
+          ? idsGuardadosValidos
+          : empresaInicial?.id
+          ? [empresaInicial.id]
+          : [empresas[0].id];
+
+        setEmpresasReporteIds(idsIniciales);
+        localStorage.setItem("empresas_deudas_ids", JSON.stringify(idsIniciales));
+      }
+    } catch (error) {
+      console.error(error);
+      if (empresaGuardada?.id) setEmpresasUsuario([empresaGuardada]);
+    }
+  };
+
+  const cambiarEmpresaActiva = (empresaId) => {
+    const nuevaEmpresa = empresasUsuario.find(
+      (e) => String(e.id) === String(empresaId)
+    );
+
+    if (!nuevaEmpresa) return;
+
+    setEmpresa(nuevaEmpresa);
+    localStorage.setItem("empresa", JSON.stringify(nuevaEmpresa));
+    cerrarCobro();
+  };
+
+  const toggleEmpresaReporte = (empresaId) => {
+    setEmpresasReporteIds((prev) => {
+      const existe = prev.some((id) => String(id) === String(empresaId));
+      const nuevos = existe
+        ? prev.filter((id) => String(id) !== String(empresaId))
+        : [...prev, empresaId];
+
+      const resultado = nuevos.length ? nuevos : prev;
+      localStorage.setItem("empresas_deudas_ids", JSON.stringify(resultado));
+      return resultado;
+    });
+  };
+
+  const seleccionarTodasEmpresasReporte = () => {
+    const ids = empresasUsuario.map((e) => e.id).filter(Boolean);
+    if (ids.length > 0) {
+      setEmpresasReporteIds(ids);
+      localStorage.setItem("empresas_deudas_ids", JSON.stringify(ids));
+    }
+  };
+
+  const seleccionarSoloEmpresaActiva = () => {
+    if (empresa?.id) {
+      setEmpresasReporteIds([empresa.id]);
+      localStorage.setItem("empresas_deudas_ids", JSON.stringify([empresa.id]));
+    }
+  };
+
+  const obtenerNombreEmpresa = (empresaId) => {
+    return empresasUsuario.find((e) => String(e.id) === String(empresaId))?.nombre || "Empresa";
+  };
+
+  const tituloEmpresasReporte = useMemo(() => {
+    const seleccionadas = empresasUsuario.filter((e) =>
+      empresasReporteIds.some((id) => String(id) === String(e.id))
+    );
+
+    if (seleccionadas.length === 0) return empresa?.nombre || "Empresa activa";
+    if (seleccionadas.length === 1) return seleccionadas[0].nombre;
+    return `${seleccionadas.length} empresas combinadas`;
+  }, [empresasUsuario, empresasReporteIds, empresa?.nombre]);
+
+  const obtenerMetodosPago = async (empresaId = empresa?.id) => {
+    if (!empresaId) return;
 
     const { data, error } = await supabase
       .from("metodos_pago")
       .select("*")
-      .eq("empresa_id", empresa.id)
+      .eq("empresa_id", empresaId)
       .eq("activo", true)
       .order("orden", { ascending: true });
 
@@ -160,12 +288,18 @@ function Deudas() {
   };
 
   const obtenerCuentasPorCobrar = async () => {
-    if (!empresa?.id) return;
+    const idsConsulta = empresasReporteIds.length > 0
+      ? empresasReporteIds
+      : empresa?.id
+      ? [empresa.id]
+      : [];
+
+    if (idsConsulta.length === 0) return;
 
     const { data, error } = await supabase
       .from("ventas")
       .select("*, clientes(nombre), venta_pagos(monto)")
-      .eq("empresa_id", empresa.id)
+      .in("empresa_id", idsConsulta)
       .neq("estado", "pagado")
       .order("fecha_local", { ascending: false });
 
@@ -186,6 +320,7 @@ function Deudas() {
 
       return {
         ...venta,
+        empresa_nombre: obtenerNombreEmpresa(venta.empresa_id),
         abonado,
         saldo,
         ha_abonado: abonado > 0 ? "Sí" : "No",
@@ -197,7 +332,8 @@ function Deudas() {
     setVentas(ventasConSaldo.filter((v) => v.saldo > 0));
   };
 
-  const abrirCobro = (venta) => {
+  const abrirCobro = async (venta) => {
+    await obtenerMetodosPago(venta.empresa_id || empresa?.id);
     setVentaAbierta(venta);
     setPagos([{ metodo_pago_id: "", monto: "", referencia: "" }]);
   };
@@ -244,7 +380,9 @@ function Deudas() {
 
     const rows = [
       {
-        Cliente: empresa?.nombre || "Empresa activa",
+        Empresa: tituloEmpresasReporte || empresa?.nombre || "Empresa activa",
+        Empresa: "",
+        Cliente: "",
         "Fecha venta": "",
         "Días de antigüedad": "",
         "Rango antigüedad": "",
@@ -255,7 +393,9 @@ function Deudas() {
         Estado: "",
       },
       {
-        Cliente: `Fecha de emisión: ${formatearFecha(obtenerFechaLocalSV())}`,
+        Empresa: `Fecha de emisión: ${formatearFecha(obtenerFechaLocalSV())}`,
+        Empresa: "",
+        Cliente: "",
         "Fecha venta": "",
         "Días de antigüedad": "",
         "Rango antigüedad": "",
@@ -266,6 +406,7 @@ function Deudas() {
         Estado: "",
       },
       {
+        Empresa: "",
         Cliente: "",
         "Fecha venta": "",
         "Días de antigüedad": "",
@@ -277,6 +418,7 @@ function Deudas() {
         Estado: "",
       },
       ...ventas.map((v) => ({
+        Empresa: v.empresa_nombre || obtenerNombreEmpresa(v.empresa_id),
         Cliente: v.clientes?.nombre || "Sin nombre",
         "Fecha venta": formatearFecha(v.fecha_local),
         "Días de antigüedad": v.dias_mora,
@@ -295,6 +437,7 @@ function Deudas() {
     );
 
     rows.push({
+      Empresa: "",
       Cliente: "TOTAL GENERAL",
       "Fecha venta": "",
       "Días de antigüedad": "",
@@ -341,7 +484,7 @@ function Deudas() {
     doc.setFont("helvetica", "normal");
     doc.setTextColor(...colorTexto);
     doc.setFontSize(10);
-    doc.text(empresa?.nombre || "Empresa activa", 14, 25);
+    doc.text(tituloEmpresasReporte || empresa?.nombre || "Empresa activa", 14, 25);
     doc.text(`Fecha de emisión: ${formatearFecha(obtenerFechaLocalSV())}`, 14, 31);
 
     doc.setFont("helvetica", "bold");
@@ -352,6 +495,7 @@ function Deudas() {
     autoTable(doc, {
       startY: 40,
       head: [[
+        "Empresa",
         "Cliente",
         "Fecha venta",
         "Días",
@@ -363,6 +507,7 @@ function Deudas() {
         "Estado",
       ]],
       body: ventas.map((v) => [
+        v.empresa_nombre || obtenerNombreEmpresa(v.empresa_id),
         v.clientes?.nombre || "Sin nombre",
         formatearFecha(v.fecha_local),
         String(v.dias_mora || 0),
@@ -374,6 +519,7 @@ function Deudas() {
         v.estado || "",
       ]),
       foot: [[
+        "",
         "",
         "",
         "",
@@ -406,15 +552,16 @@ function Deudas() {
       },
       margin: { left: 10, right: 10 },
       columnStyles: {
-        0: { cellWidth: 55 },
-        1: { cellWidth: 24, halign: "center" },
-        2: { cellWidth: 15, halign: "center" },
-        3: { cellWidth: 30, halign: "center" },
-        4: { cellWidth: 24, halign: "right" },
-        5: { cellWidth: 24, halign: "right" },
-        6: { cellWidth: 24, halign: "right" },
-        7: { cellWidth: 22, halign: "center" },
-        8: { cellWidth: 22, halign: "center" },
+        0: { cellWidth: 38 },
+        1: { cellWidth: 48 },
+        2: { cellWidth: 24, halign: "center" },
+        3: { cellWidth: 15, halign: "center" },
+        4: { cellWidth: 28, halign: "center" },
+        5: { cellWidth: 22, halign: "right" },
+        6: { cellWidth: 22, halign: "right" },
+        7: { cellWidth: 22, halign: "right" },
+        8: { cellWidth: 20, halign: "center" },
+        9: { cellWidth: 20, halign: "center" },
       },
     });
 
@@ -457,9 +604,11 @@ function Deudas() {
 
     const fechaLocal = obtenerFechaHoraSVISO();
 
+    const empresaPagoId = ventaAbierta.empresa_id || empresa?.id;
+
     const pagosParaGuardar = pagosValidos.map((p) => ({
       venta_id: ventaAbierta.id,
-      empresa_id: empresa.id,
+      empresa_id: empresaPagoId,
       metodo_pago_id: Number(p.metodo_pago_id),
       monto: Number(p.monto),
       referencia: p.referencia?.trim() || null,
@@ -478,7 +627,7 @@ function Deudas() {
 
     try {
       await registrarPagosEnCajaDiaria({
-        empresaId: empresa.id,
+        empresaId: empresaPagoId,
         ventaId: ventaAbierta.id,
         nombrePaciente: ventaAbierta.clientes?.nombre || "Cliente",
         pagosValidos,
@@ -503,7 +652,7 @@ function Deudas() {
       .from("ventas")
       .update({ estado: nuevoEstado })
       .eq("id", ventaAbierta.id)
-      .eq("empresa_id", empresa.id);
+      .eq("empresa_id", empresaPagoId);
 
     setGuardando(false);
 
@@ -529,7 +678,23 @@ function Deudas() {
           </div>
 
           <div style={styles.headerInfo}>
-            <div><strong>{empresa?.nombre || "Empresa"}</strong></div>
+            <div>
+              {empresasUsuario.length > 1 ? (
+                <select
+                  value={empresa?.id || ""}
+                  onChange={(e) => cambiarEmpresaActiva(e.target.value)}
+                  style={styles.empresaSelect}
+                >
+                  {empresasUsuario.map((emp) => (
+                    <option key={emp.id} value={emp.id}>
+                      {emp.nombre}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <strong>{empresa?.nombre || "Empresa"}</strong>
+              )}
+            </div>
             <div>Módulo de cuentas por cobrar</div>
             <div>Registros pendientes: <strong>{ventas.length}</strong></div>
           </div>
@@ -541,7 +706,65 @@ function Deudas() {
             <p style={styles.reportText}>
               Exportá el listado completo de clientes que deben, con antigüedad, abonos y saldo.
             </p>
+            <p style={styles.reportText}>
+              Vista actual: <strong>{tituloEmpresasReporte}</strong>
+            </p>
           </div>
+
+          {empresasUsuario.length > 1 && (
+            <div style={styles.headerEmpresaSelect}>
+              <div style={styles.headerEmpresaTop}>
+                <span style={styles.headerEmpresaLabel}>Empresas a combinar</span>
+
+                <div style={styles.headerEmpresaActions}>
+                  <button type="button" style={styles.miniBtn} onClick={seleccionarSoloEmpresaActiva}>
+                    Solo activa
+                  </button>
+                  <button type="button" style={styles.miniBtn} onClick={seleccionarTodasEmpresasReporte}>
+                    Todas
+                  </button>
+                </div>
+              </div>
+
+              <div style={styles.multiSelectWrap}>
+                <button
+                  type="button"
+                  style={styles.multiSelectButton}
+                  onClick={() => setMostrarSelectorEmpresas((prev) => !prev)}
+                >
+                  <span>{tituloEmpresasReporte}</span>
+                  <span style={styles.multiSelectArrow}>{mostrarSelectorEmpresas ? "▴" : "▾"}</span>
+                </button>
+
+                {mostrarSelectorEmpresas && (
+                  <div style={styles.multiSelectMenu}>
+                    {empresasUsuario.map((emp) => {
+                      const checked = empresasReporteIds.some((id) => String(id) === String(emp.id));
+
+                      return (
+                        <label
+                          key={emp.id}
+                          style={{
+                            ...styles.multiSelectOption,
+                            ...(checked ? styles.multiSelectOptionActive : {}),
+                          }}
+                        >
+                          <span style={styles.fakeCheckbox}>{checked ? "✓" : ""}</span>
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => toggleEmpresaReporte(emp.id)}
+                            style={styles.hiddenCheckbox}
+                          />
+                          <span style={styles.empresaListName}>{emp.nombre}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           <div style={styles.reportButtons}>
             <button type="button" style={styles.pdfBtn} onClick={exportarCxcPDF}>
@@ -568,6 +791,9 @@ function Deudas() {
                   </h3>
                   <div style={styles.estadoBadge}>
                     Estado: {v.estado}
+                  </div>
+                  <div style={styles.empresaTag}>
+                    {v.empresa_nombre || obtenerNombreEmpresa(v.empresa_id)}
                   </div>
                 </div>
 
@@ -627,6 +853,9 @@ function Deudas() {
                   <p style={styles.modalSubtitle}>
                     Cliente: {ventaAbierta.clientes?.nombre || "Sin nombre"}
                   </p>
+                  <div style={styles.empresaTag}>
+                    {ventaAbierta.empresa_nombre || obtenerNombreEmpresa(ventaAbierta.empresa_id)}
+                  </div>
                 </div>
 
                 <button type="button" style={styles.btnCerrar} onClick={cerrarCobro}>
@@ -809,6 +1038,209 @@ const styles = {
     lineHeight: 1.6,
   },
 
+  empresaSelect: {
+    width: "100%",
+    minWidth: 220,
+    padding: "10px 12px",
+    borderRadius: "12px",
+    border: "1px solid #d7dbe2",
+    background: "#fff",
+    color: "#1f2937",
+    fontWeight: "700",
+    outline: "none",
+  },
+
+  empresasReporteBox: {
+    minWidth: "260px",
+    maxWidth: "440px",
+    background: "#f8f8fa",
+    border: "1px solid #d7dbe2",
+    borderRadius: "16px",
+    padding: "12px",
+  },
+
+  empresasReporteTitulo: {
+    fontSize: "13px",
+    color: "#574866",
+    fontWeight: "800",
+    marginBottom: "8px",
+  },
+
+  empresasReporteAcciones: {
+    display: "flex",
+    gap: "8px",
+    flexWrap: "wrap",
+    marginBottom: "8px",
+  },
+
+  miniBtn: {
+    background: "#f4f0f7",
+    color: "#574866",
+    border: "1px solid #d3c7dd",
+    borderRadius: "10px",
+    padding: "7px 10px",
+    cursor: "pointer",
+    fontWeight: "700",
+    fontSize: "12px",
+  },
+
+  empresaListBox: {
+    display: "flex",
+    gap: "8px",
+    flexWrap: "wrap",
+  },
+
+  empresaListItem: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "6px",
+    background: "#ffffff",
+    border: "1px solid #d7dbe2",
+    borderRadius: "999px",
+    padding: "6px 10px",
+    color: "#334155",
+    fontSize: "12px",
+    fontWeight: "700",
+    cursor: "pointer",
+  },
+
+  empresaTexto: {
+    marginTop: "6px",
+    color: "#64748b",
+    fontSize: "13px",
+    fontWeight: "600",
+  },
+
+  headerEmpresaSelect: {
+    flex: "1 1 360px",
+    maxWidth: "520px",
+    minWidth: "300px",
+    alignSelf: "center",
+    position: "relative",
+    zIndex: 20,
+  },
+
+  headerEmpresaTop: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: "8px",
+    marginBottom: "6px",
+  },
+
+  headerEmpresaLabel: {
+    color: "#574866",
+    fontSize: "12px",
+    fontWeight: "800",
+  },
+
+  headerEmpresaActions: {
+    display: "flex",
+    gap: "6px",
+    flexWrap: "wrap",
+  },
+
+  multiSelectWrap: {
+    position: "relative",
+    width: "100%",
+  },
+
+  multiSelectButton: {
+    width: "100%",
+    minHeight: "48px",
+    borderRadius: "14px",
+    border: "1px solid #cfd9e5",
+    background: "#fff",
+    color: "#1f2937",
+    fontWeight: "800",
+    padding: "12px 14px",
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: "12px",
+    cursor: "pointer",
+    textAlign: "left",
+    boxSizing: "border-box",
+  },
+
+  multiSelectArrow: {
+    fontSize: "18px",
+    color: "#574866",
+    flexShrink: 0,
+  },
+
+  multiSelectMenu: {
+    position: "absolute",
+    top: "calc(100% + 8px)",
+    left: 0,
+    right: 0,
+    zIndex: 50,
+    maxHeight: "280px",
+    overflowY: "auto",
+    background: "#fff",
+    border: "1px solid #d7dbe2",
+    borderRadius: "16px",
+    boxShadow: "0 18px 45px rgba(15, 23, 42, 0.14)",
+    padding: "8px",
+    display: "grid",
+    gap: "6px",
+  },
+
+  multiSelectOption: {
+    display: "flex",
+    alignItems: "center",
+    gap: "12px",
+    width: "100%",
+    padding: "12px 14px",
+    borderRadius: "12px",
+    border: "1px solid transparent",
+    background: "#fff",
+    cursor: "pointer",
+    color: "#1f2937",
+    boxSizing: "border-box",
+  },
+
+  multiSelectOptionActive: {
+    background: "#eef6ff",
+    border: "1px solid #93c5fd",
+  },
+
+  fakeCheckbox: {
+    width: "22px",
+    height: "22px",
+    borderRadius: "6px",
+    border: "1px solid #cbd5e1",
+    background: "#fff",
+    display: "grid",
+    placeItems: "center",
+    color: "#2563eb",
+    fontWeight: "900",
+    flexShrink: 0,
+  },
+
+  hiddenCheckbox: {
+    display: "none",
+  },
+
+  empresaListName: {
+    fontWeight: "800",
+    lineHeight: 1.2,
+    wordBreak: "break-word",
+  },
+
+  empresaTag: {
+    display: "inline-flex",
+    alignItems: "center",
+    marginTop: "6px",
+    padding: "4px 8px",
+    borderRadius: "999px",
+    background: "#eef6ff",
+    color: "#1d4ed8",
+    border: "1px solid #bfdbfe",
+    fontWeight: "800",
+    fontSize: "11px",
+  },
+
   reportCard: {
     background: "#ffffff",
     border: "1px solid #d7dbe2",
@@ -820,6 +1252,8 @@ const styles = {
     gap: "16px",
     flexWrap: "wrap",
     boxShadow: "0 10px 30px rgba(15, 23, 42, 0.06)",
+    position: "relative",
+    zIndex: 20,
   },
 
   reportTitle: {

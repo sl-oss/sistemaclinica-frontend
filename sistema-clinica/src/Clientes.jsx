@@ -7,11 +7,66 @@ function Clientes() {
   const [telefono, setTelefono] = useState("");
   const [busqueda, setBusqueda] = useState("");
 
-  const empresa = JSON.parse(localStorage.getItem("empresa") || "null");
+  const [empresa, setEmpresa] = useState(
+    JSON.parse(localStorage.getItem("empresa") || "null")
+  );
+  const [empresasUsuario, setEmpresasUsuario] = useState([]);
+
+  useEffect(() => {
+    cargarEmpresasUsuario();
+  }, []);
 
   useEffect(() => {
     if (empresa?.id) obtenerClientes();
-  }, []);
+  }, [empresa?.id]);
+
+  const cargarEmpresasUsuario = async () => {
+    const { data: authData } = await supabase.auth.getUser();
+    const userId = authData?.user?.id;
+
+    if (!userId) {
+      setEmpresasUsuario(empresa ? [empresa] : []);
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("empresa_usuarios")
+      .select("empresa_id, empresas(id, nombre)")
+      .eq("user_id", userId)
+      .eq("activo", true);
+
+    if (error) {
+      console.error(error);
+      setEmpresasUsuario(empresa ? [empresa] : []);
+      return;
+    }
+
+    const empresas = (data || [])
+      .map((row) => row.empresas)
+      .filter(Boolean);
+
+    setEmpresasUsuario(empresas);
+
+    if (empresas.length > 0) {
+      const empresaActualExiste = empresas.some((e) => e.id === empresa?.id);
+      if (!empresa?.id || !empresaActualExiste) {
+        setEmpresa(empresas[0]);
+        localStorage.setItem("empresa", JSON.stringify(empresas[0]));
+      }
+    }
+  };
+
+  const cambiarEmpresaActiva = (empresaId) => {
+    const seleccionada = empresasUsuario.find((e) => e.id === empresaId);
+    if (!seleccionada) return;
+
+    setEmpresa(seleccionada);
+    localStorage.setItem("empresa", JSON.stringify(seleccionada));
+    setClientes([]);
+    setNombre("");
+    setTelefono("");
+    setBusqueda("");
+  };
 
   const obtenerClientes = async () => {
     if (!empresa?.id) return;
@@ -80,6 +135,19 @@ function Clientes() {
 
           <div style={styles.headerInfo}>
             <div><strong>{empresa?.nombre || "Empresa"}</strong></div>
+            {empresasUsuario.length > 1 && (
+              <select
+                style={styles.empresaSelect}
+                value={empresa?.id || ""}
+                onChange={(e) => cambiarEmpresaActiva(e.target.value)}
+              >
+                {empresasUsuario.map((emp) => (
+                  <option key={emp.id} value={emp.id}>
+                    {emp.nombre}
+                  </option>
+                ))}
+              </select>
+            )}
             <div>Total registros</div>
             <div><strong>{clientes.length}</strong></div>
           </div>
@@ -273,6 +341,18 @@ const styles = {
     borderRadius: "10px",
     padding: "8px 12px",
     fontWeight: "600",
+  },
+
+
+  empresaSelect: {
+    width: "100%",
+    margin: "6px 0",
+    padding: "8px 10px",
+    borderRadius: "10px",
+    border: "1px solid #cfd9e5",
+    background: "#fff",
+    color: "#1f2937",
+    fontSize: "13px",
   },
 
   empty: {
