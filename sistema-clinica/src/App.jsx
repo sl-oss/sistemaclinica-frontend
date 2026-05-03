@@ -453,45 +453,49 @@ function App() {
 
   if (!user) {
     return (
-      <div style={styles.authBg}>
-        <div style={styles.authLayout}>
-          <div style={styles.authBrandPanel}>
-            <div style={styles.logoBig}>🦷</div>
-            <h1 style={styles.brandTitle}>Sistema Dental</h1>
-            <p style={styles.brandText}>
-              Control de citas, ventas, caja diaria, comisiones y reportes multiempresa.
+      <div style={styles.authBgPro}>
+        <div style={styles.loginShellPro}>
+          <div style={styles.loginInfoPanel}>
+            <div style={styles.loginLogoCircle}>🦷</div>
+            <h1 style={styles.loginBrandTitle}>Sistema Dental</h1>
+            <p style={styles.loginBrandText}>
+              Control multiempresa para citas, ventas, caja diaria, comisiones y reportes.
             </p>
 
-            <div style={styles.brandPills}>
-              <span>Multiempresa</span>
-              <span>Multiusuario</span>
-              <span>Comisiones</span>
+            <div style={styles.loginFeatureGrid}>
+              <span>✅ Multiempresa</span>
+              <span>✅ Multiusuario</span>
+              <span>✅ Caja diaria</span>
+              <span>✅ Comisiones</span>
             </div>
           </div>
 
-          <div style={styles.authCardModern}>
-            <div style={styles.authHeader}>
-              <h2 style={styles.authTitle}>Bienvenido</h2>
-              <p style={styles.authSubtitle}>Ingresa tus credenciales para continuar.</p>
+          <div style={styles.loginCardPro}>
+            <div style={styles.loginHeaderPro}>
+              <div style={styles.loginMiniLogo}>🦷</div>
+              <h2 style={styles.loginTitlePro}>Iniciar sesión</h2>
+              <p style={styles.loginSubtitlePro}>
+                Ingresa con tu correo y contraseña.
+              </p>
             </div>
 
-            <div style={styles.authField}>
-              <label style={styles.authLabel}>Correo electrónico</label>
+            <div style={styles.loginFieldPro}>
+              <label style={styles.loginLabelPro}>Correo</label>
               <input
-                style={styles.authInputModern}
+                style={styles.loginInputPro}
                 placeholder="correo@clinica.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
               />
             </div>
 
-            <div style={styles.authField}>
-              <label style={styles.authLabel}>Contraseña</label>
-              <div style={styles.passwordWrap}>
+            <div style={styles.loginFieldPro}>
+              <label style={styles.loginLabelPro}>Contraseña</label>
+              <div style={styles.passwordBoxPro}>
                 <input
-                  style={{ ...styles.authInputModern, paddingRight: "48px" }}
+                  style={styles.loginInputPasswordPro}
                   type={mostrarPassword ? "text" : "password"}
-                  placeholder="Tu contraseña"
+                  placeholder="Contraseña"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   onKeyDown={(e) => {
@@ -501,25 +505,24 @@ function App() {
 
                 <button
                   type="button"
+                  style={styles.showPasswordBtnPro}
                   onClick={() => setMostrarPassword((prev) => !prev)}
-                  style={styles.eyeBtn}
-                  title={mostrarPassword ? "Ocultar contraseña" : "Mostrar contraseña"}
                 >
-                  {mostrarPassword ? "🙈" : "👁️"}
+                  {mostrarPassword ? "Ocultar" : "Mostrar"}
                 </button>
               </div>
             </div>
 
-            <button style={styles.btnPrimaryModern} onClick={login}>
+            <button style={styles.loginPrimaryBtnPro} onClick={login}>
               Iniciar sesión
             </button>
 
-            <button style={styles.btnGhost} onClick={register}>
-              Crear cuenta nueva
+            <button style={styles.loginSecondaryBtnPro} onClick={register}>
+              Crear cuenta
             </button>
 
-            <p style={styles.authFooterText}>
-              Si fuiste invitado, crea tu cuenta con el mismo correo de la invitación.
+            <p style={styles.loginHelpText}>
+              Si te invitaron, crea la cuenta con el mismo correo de la invitación.
             </p>
           </div>
         </div>
@@ -529,26 +532,26 @@ function App() {
 
   if (membresias.length === 0) {
     return (
-      <div style={styles.authBg}>
-        <div style={styles.emptyCompanyCard}>
-          <div style={styles.logoBig}>🦷</div>
-          <h2 style={styles.authTitle}>Crear primera empresa</h2>
-          <p style={styles.authSubtitle}>
-            Aún no tienes empresas asignadas. Puedes crear una o cerrar sesión si esperas una invitación.
+      <div style={styles.authBgPro}>
+        <div style={styles.simpleCenterCardPro}>
+          <div style={styles.loginMiniLogo}>🦷</div>
+          <h2 style={styles.loginTitlePro}>Crear primera empresa</h2>
+          <p style={styles.loginSubtitlePro}>
+            Todavía no tienes empresas asignadas. Puedes crear una o cerrar sesión si estás esperando una invitación.
           </p>
 
           <input
-            style={styles.authInputModern}
+            style={styles.loginInputPro}
             placeholder="Nombre de empresa"
             value={nuevaEmpresa}
             onChange={(e) => setNuevaEmpresa(e.target.value)}
           />
 
-          <button style={styles.btnPrimaryModern} onClick={crearEmpresa}>
+          <button style={styles.loginPrimaryBtnPro} onClick={crearEmpresa}>
             Crear empresa
           </button>
 
-          <button style={styles.btnDangerModern} onClick={logout}>
+          <button style={styles.loginDangerBtnPro} onClick={logout}>
             Cerrar sesión
           </button>
         </div>
@@ -558,52 +561,50 @@ function App() {
 
   if (!empresaActiva) {
     return (
-      <div style={styles.authBg}>
-        <div style={styles.selectCompanyModern}>
-          <div style={styles.selectHeader}>
-            <div style={styles.logoBig}>🦷</div>
-            <div>
-              <h2 style={styles.authTitle}>Selecciona tu empresa</h2>
-              <p style={styles.authSubtitle}>
-                Elige con qué empresa deseas trabajar en esta sesión.
-              </p>
-            </div>
+      <div style={styles.authBgPro}>
+        <div style={styles.companySelectCardPro}>
+          <div style={styles.loginHeaderPro}>
+            <div style={styles.loginMiniLogo}>🦷</div>
+            <h2 style={styles.loginTitlePro}>Seleccionar empresa</h2>
+            <p style={styles.loginSubtitlePro}>
+              Elige con qué empresa deseas trabajar.
+            </p>
           </div>
 
-          <div style={styles.companyGridModern}>
+          <div style={styles.companyListPro}>
             {membresias.map((m) => (
               <button
                 key={m.id}
-                style={styles.companyCardModern}
+                style={styles.companyOptionPro}
                 onClick={() => seleccionarEmpresaDesdeMembresia(m)}
               >
-                <div style={styles.companyIcon}>🏢</div>
-                <div style={styles.companyCardText}>
+                <span style={styles.companyOptionIconPro}>🏢</span>
+
+                <span style={styles.companyOptionTextPro}>
                   <strong>{m.empresa?.nombre}</strong>
-                  <span style={styles.companyRoleModern}>Rol: {m.rol}</span>
-                </div>
-                <span style={styles.companyArrow}>›</span>
+                  <small>Rol: {m.rol}</small>
+                </span>
+
+                <span style={styles.companyOptionArrowPro}>›</span>
               </button>
             ))}
           </div>
 
-          <div style={styles.newCompanyModern}>
-            <div>
-              <label style={styles.authLabel}>Crear nueva empresa</label>
-              <input
-                style={styles.authInputModern}
-                placeholder="Nombre de nueva empresa"
-                value={nuevaEmpresa}
-                onChange={(e) => setNuevaEmpresa(e.target.value)}
-              />
-            </div>
+          <div style={styles.createCompanyBoxPro}>
+            <label style={styles.loginLabelPro}>Crear nueva empresa</label>
+            <input
+              style={styles.loginInputPro}
+              placeholder="Nombre de nueva empresa"
+              value={nuevaEmpresa}
+              onChange={(e) => setNuevaEmpresa(e.target.value)}
+            />
 
-            <button style={styles.btnPrimaryModern} onClick={crearEmpresa}>
+            <button style={styles.loginPrimaryBtnPro} onClick={crearEmpresa}>
               Crear empresa
             </button>
           </div>
 
-          <button style={styles.btnDangerModern} onClick={logout}>
+          <button style={styles.loginDangerBtnPro} onClick={logout}>
             Cerrar sesión
           </button>
         </div>
@@ -676,6 +677,300 @@ function App() {
 }
 
 const styles = {
+  authBgPro: {
+    minHeight: "100vh",
+    width: "100%",
+    display: "grid",
+    placeItems: "center",
+    background:
+      "radial-gradient(circle at top left, rgba(255,255,255,0.18), transparent 32%), linear-gradient(135deg, #5d4b6b 0%, #8b789d 55%, #6b5a7a 100%)",
+    padding: "24px",
+    boxSizing: "border-box",
+  },
+
+  loginShellPro: {
+    width: "100%",
+    maxWidth: "980px",
+    display: "grid",
+    gridTemplateColumns: "1.05fr 430px",
+    gap: "24px",
+    alignItems: "stretch",
+  },
+
+  loginInfoPanel: {
+    borderRadius: "30px",
+    padding: "38px",
+    color: "#fff",
+    background: "rgba(255,255,255,0.13)",
+    border: "1px solid rgba(255,255,255,0.22)",
+    boxShadow: "0 28px 80px rgba(0,0,0,0.22)",
+    backdropFilter: "blur(14px)",
+    display: "flex",
+    flexDirection: "column",
+    justifyContent: "center",
+  },
+
+  loginLogoCircle: {
+    width: "76px",
+    height: "76px",
+    borderRadius: "26px",
+    display: "grid",
+    placeItems: "center",
+    background: "rgba(255,255,255,0.22)",
+    border: "1px solid rgba(255,255,255,0.26)",
+    fontSize: "38px",
+    marginBottom: "18px",
+  },
+
+  loginBrandTitle: {
+    margin: 0,
+    fontSize: "44px",
+    lineHeight: 1,
+    fontWeight: "950",
+    letterSpacing: "-0.05em",
+  },
+
+  loginBrandText: {
+    margin: "14px 0 0 0",
+    color: "rgba(255,255,255,0.86)",
+    fontSize: "16px",
+    lineHeight: 1.65,
+    maxWidth: "520px",
+  },
+
+  loginFeatureGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
+    gap: "10px",
+    marginTop: "26px",
+  },
+
+  loginCardPro: {
+    background: "rgba(255,255,255,0.97)",
+    border: "1px solid rgba(255,255,255,0.62)",
+    borderRadius: "30px",
+    padding: "32px",
+    boxShadow: "0 28px 80px rgba(0,0,0,0.24)",
+    display: "grid",
+    gap: "15px",
+    boxSizing: "border-box",
+  },
+
+  loginHeaderPro: {
+    textAlign: "center",
+    display: "grid",
+    justifyItems: "center",
+    gap: "4px",
+    marginBottom: "4px",
+  },
+
+  loginMiniLogo: {
+    width: "58px",
+    height: "58px",
+    borderRadius: "20px",
+    display: "grid",
+    placeItems: "center",
+    background: "#f4f0f7",
+    border: "1px solid #d3c7dd",
+    fontSize: "29px",
+    boxShadow: "0 10px 24px rgba(107,90,122,0.12)",
+  },
+
+  loginTitlePro: {
+    margin: "8px 0 0 0",
+    color: "#4f3f5f",
+    fontSize: "31px",
+    fontWeight: "950",
+    letterSpacing: "-0.03em",
+  },
+
+  loginSubtitlePro: {
+    margin: "4px 0 0 0",
+    color: "#64748b",
+    fontSize: "14px",
+    lineHeight: 1.5,
+    textAlign: "center",
+  },
+
+  loginFieldPro: {
+    display: "grid",
+    gap: "7px",
+  },
+
+  loginLabelPro: {
+    color: "#4b5f78",
+    fontSize: "13px",
+    fontWeight: "850",
+  },
+
+  loginInputPro: {
+    width: "100%",
+    boxSizing: "border-box",
+    padding: "14px 15px",
+    borderRadius: "16px",
+    border: "1px solid #cfd9e5",
+    background: "#fff",
+    outline: "none",
+    fontSize: "14px",
+    color: "#1f2937",
+    boxShadow: "inset 0 1px 0 rgba(15,23,42,0.02)",
+  },
+
+  passwordBoxPro: {
+    position: "relative",
+    display: "flex",
+    alignItems: "center",
+  },
+
+  loginInputPasswordPro: {
+    width: "100%",
+    boxSizing: "border-box",
+    padding: "14px 96px 14px 15px",
+    borderRadius: "16px",
+    border: "1px solid #cfd9e5",
+    background: "#fff",
+    outline: "none",
+    fontSize: "14px",
+    color: "#1f2937",
+  },
+
+  showPasswordBtnPro: {
+    position: "absolute",
+    right: "8px",
+    top: "50%",
+    transform: "translateY(-50%)",
+    height: "34px",
+    padding: "0 12px",
+    borderRadius: "12px",
+    border: "1px solid #d3c7dd",
+    background: "#f4f0f7",
+    color: "#574866",
+    cursor: "pointer",
+    fontSize: "12px",
+    fontWeight: "900",
+  },
+
+  loginPrimaryBtnPro: {
+    background: "linear-gradient(135deg, #6b5a7a 0%, #8a79a0 100%)",
+    color: "#fff",
+    border: "none",
+    borderRadius: "16px",
+    padding: "14px 16px",
+    cursor: "pointer",
+    fontWeight: "950",
+    fontSize: "14px",
+    boxShadow: "0 14px 28px rgba(107,90,122,0.28)",
+  },
+
+  loginSecondaryBtnPro: {
+    background: "#f4f0f7",
+    color: "#574866",
+    border: "1px solid #d3c7dd",
+    borderRadius: "16px",
+    padding: "13px 16px",
+    cursor: "pointer",
+    fontWeight: "900",
+    fontSize: "14px",
+  },
+
+  loginDangerBtnPro: {
+    background: "#ef4444",
+    color: "#fff",
+    border: "none",
+    borderRadius: "16px",
+    padding: "13px 16px",
+    cursor: "pointer",
+    fontWeight: "900",
+    fontSize: "14px",
+  },
+
+  loginHelpText: {
+    margin: "2px 0 0 0",
+    color: "#64748b",
+    fontSize: "12px",
+    textAlign: "center",
+    lineHeight: 1.45,
+  },
+
+  simpleCenterCardPro: {
+    width: "100%",
+    maxWidth: "470px",
+    background: "rgba(255,255,255,0.97)",
+    borderRadius: "30px",
+    padding: "32px",
+    display: "grid",
+    gap: "14px",
+    boxShadow: "0 28px 80px rgba(0,0,0,0.24)",
+    boxSizing: "border-box",
+  },
+
+  companySelectCardPro: {
+    width: "100%",
+    maxWidth: "820px",
+    background: "rgba(255,255,255,0.97)",
+    borderRadius: "30px",
+    padding: "32px",
+    display: "grid",
+    gap: "18px",
+    boxShadow: "0 28px 80px rgba(0,0,0,0.24)",
+    boxSizing: "border-box",
+  },
+
+  companyListPro: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))",
+    gap: "12px",
+  },
+
+  companyOptionPro: {
+    width: "100%",
+    border: "1px solid #d7dbe2",
+    background: "linear-gradient(180deg, #ffffff 0%, #faf7fc 100%)",
+    borderRadius: "20px",
+    padding: "16px",
+    cursor: "pointer",
+    display: "grid",
+    gridTemplateColumns: "46px minmax(0, 1fr) 22px",
+    gap: "12px",
+    alignItems: "center",
+    color: "#1f2937",
+    textAlign: "left",
+    boxShadow: "0 10px 24px rgba(15,23,42,0.06)",
+  },
+
+  companyOptionIconPro: {
+    width: "46px",
+    height: "46px",
+    borderRadius: "16px",
+    background: "#f4f0f7",
+    border: "1px solid #d3c7dd",
+    display: "grid",
+    placeItems: "center",
+    fontSize: "21px",
+  },
+
+  companyOptionTextPro: {
+    display: "grid",
+    gap: "4px",
+    minWidth: 0,
+  },
+
+  companyOptionArrowPro: {
+    color: "#6b5a7a",
+    fontSize: "30px",
+    fontWeight: "900",
+  },
+
+  createCompanyBoxPro: {
+    display: "grid",
+    gap: "10px",
+    padding: "14px",
+    background: "#f8fafc",
+    border: "1px solid #e2e8f0",
+    borderRadius: "20px",
+  },
+
+
   authLayout: {
     width: "100%",
     maxWidth: "980px",
