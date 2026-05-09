@@ -578,7 +578,17 @@ Le recordamos su cita para el ${formatearFechaPantalla(cita.fecha)} a las ${norm
 Para confirmar, cancelar o reagendar su cita, toque aquí:
 ${linkConfirmacion}`;
 
-      window.open(`https://wa.me/${telefono}?text=${encodeURIComponent(mensaje)}`, "_blank");
+      const texto = encodeURIComponent(mensaje);
+
+const esApple =
+  /iPad|iPhone|iPod|Macintosh/i.test(navigator.userAgent);
+
+const urlWhatsapp = esApple
+  ? `https://api.whatsapp.com/send?phone=${telefono}&text=${texto}`
+  : `https://wa.me/${telefono}?text=${texto}`;
+
+window.location.href = urlWhatsapp;
+
     } catch (error) {
       console.error(error);
       alert(error.message || "No se pudo generar el enlace de confirmación");
@@ -1522,7 +1532,7 @@ autoTable(doc, {
               <div>
                 <h3 style={{ margin: 0, color: "#574866" }}>Reporte editable de citas</h3>
                 <p style={styles.modalSubText}>
-                  Marcá columnas y exportá. “Observación manual” queda más ancha para escribir en Excel o PDF.
+                  Marcá columnas y exportá el reporte.
                 </p>
               </div>
               <button type="button" style={styles.btnCerrarModal} onClick={() => setMostrarModalReporte(false)}>
@@ -3625,6 +3635,127 @@ const styles = {
     fontSize: "12px",
     fontWeight: "850",
     marginBottom: "10px",
+  },
+  // ===== FIX RESPONSIVE MODAL REPORTE CITAS TABLET / IPAD =====
+  modalReporte: {
+    width: "min(980px, calc(100vw - 28px))",
+    maxHeight: "calc(100vh - 32px)",
+    overflowY: "auto",
+    background: "#fff",
+    borderRadius: "22px",
+    padding: "18px",
+    border: "1px solid #d7dbe2",
+    boxShadow: "0 24px 80px rgba(15, 23, 42, 0.22)",
+    boxSizing: "border-box",
+  },
+
+  reportFiltersGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+    gap: "10px",
+    alignItems: "center",
+    background: "#fbfbfc",
+    border: "1px solid #e2e8f0",
+    borderRadius: "18px",
+    padding: "12px",
+    marginBottom: "12px",
+    overflow: "hidden",
+  },
+
+  columnGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(155px, 1fr))",
+    gap: "9px",
+    marginTop: "10px",
+    marginBottom: "14px",
+  },
+
+  columnCheck: {
+    display: "grid",
+    gridTemplateColumns: "24px minmax(0, 1fr)",
+    gap: "8px",
+    alignItems: "center",
+    background: "#f8fafc",
+    border: "1px solid #e2e8f0",
+    borderRadius: "14px",
+    padding: "10px 11px",
+    color: "#334155",
+    fontSize: "13px",
+    fontWeight: "850",
+    minWidth: 0,
+    boxSizing: "border-box",
+  },
+
+  reportCounter: {
+    minHeight: "42px",
+    borderRadius: "14px",
+    border: "1px solid #bfdbfe",
+    background: "#eff6ff",
+    color: "#1d4ed8",
+    display: "grid",
+    placeItems: "center",
+    padding: "0 12px",
+    fontWeight: "950",
+    fontSize: "14px",
+    whiteSpace: "nowrap",
+  },
+
+  modalActions: {
+    display: "flex",
+    justifyContent: "flex-end",
+    gap: "9px",
+    flexWrap: "wrap",
+    marginTop: "10px",
+  },
+
+  modalHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: "12px",
+    marginBottom: "12px",
+  },
+
+  modalSubText: {
+    margin: "4px 0 0 0",
+    color: "#64748b",
+    fontSize: "12px",
+    lineHeight: 1.35,
+  },
+
+  btnCerrarModal: {
+    border: "none",
+    background: "#f1f5f9",
+    color: "#334155",
+    borderRadius: "12px",
+    width: "38px",
+    height: "38px",
+    cursor: "pointer",
+    fontWeight: "950",
+    fontSize: "16px",
+    flexShrink: 0,
+  },
+
+  btnGuardarModal: {
+    background: "#6b5a7a",
+    color: "#fff",
+    border: "none",
+    borderRadius: "13px",
+    padding: "11px 15px",
+    cursor: "pointer",
+    fontWeight: "950",
+    fontSize: "13px",
+  },
+
+  btnCancelarModal: {
+    background: "#ef4444",
+    color: "#fff",
+    border: "none",
+    borderRadius: "13px",
+    padding: "11px 15px",
+    cursor: "pointer",
+    fontWeight: "950",
+    fontSize: "13px",
   },
 
 };
