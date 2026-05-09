@@ -13,6 +13,7 @@ import Dashboard from "./Dashboard";
 import UsuariosAccesos from "./UsuariosAccesos";
 import EmpleadosComision from "./EmpleadosComision";
 import ClasificacionesPacientes from "./ClasificacionesPacientes";
+import ConfirmarCitaPublica from "./ConfirmarCitaPublica";
 
 function App() {
   const [user, setUser] = useState(null);
@@ -44,6 +45,11 @@ function App() {
   const [nuevaEmpresa, setNuevaEmpresa] = useState("");
   const [pantalla, setPantalla] = useState("dashboard");
   const [esMovil, setEsMovil] = useState(window.innerWidth < 900);
+
+  const tokenConfirmacion = window.location.pathname.startsWith("/confirmar-cita/")
+    ? window.location.pathname.split("/confirmar-cita/")[1]
+    : null;
+
 
   useEffect(() => {
     const cargarSesion = async () => {
@@ -447,72 +453,88 @@ function App() {
     );
   };
 
+
+  if (tokenConfirmacion) {
+    return <ConfirmarCitaPublica token={tokenConfirmacion} />;
+  }
+
   if (loading) {
     return <div style={styles.loading}>Cargando...</div>;
   }
 
   if (!user) {
     return (
-      <div style={styles.cleanAuthBg}>
-        <div style={styles.cleanAuthCard}>
-          <div style={styles.cleanLogoWrap}>
-            <span style={styles.cleanLogo}>🦷</span>
-          </div>
-
-          <div style={styles.cleanHeader}>
-            <h1 style={styles.cleanTitle}>Sistema Dental</h1>
-            <p style={styles.cleanSubtitle}>
-              Accedé a tu panel de clínica.
+      <div style={styles.authBgPro}>
+        <div style={styles.loginShellPro}>
+          <div style={styles.loginInfoPanel}>
+            <div style={styles.loginLogoCircle}>🦷</div>
+            <h1 style={styles.loginBrandTitle}>Sistema Dental</h1>
+            <p style={styles.loginBrandText}>
+              Control multiempresa para citas, ventas, caja diaria, comisiones y reportes.
             </p>
-          </div>
 
-          <div style={styles.cleanField}>
-            <label style={styles.cleanLabel}>Correo electrónico</label>
-            <input
-              style={styles.cleanInput}
-              placeholder="correo@clinica.com"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              autoComplete="email"
-            />
-          </div>
-
-          <div style={styles.cleanField}>
-            <label style={styles.cleanLabel}>Contraseña</label>
-
-            <div style={styles.cleanPasswordWrap}>
-              <input
-                style={styles.cleanPasswordInput}
-                type={mostrarPassword ? "text" : "password"}
-                placeholder="Contraseña"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                autoComplete="current-password"
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") login();
-                }}
-              />
-
-              <button
-                type="button"
-                style={styles.cleanShowPassword}
-                onClick={() => setMostrarPassword((prev) => !prev)}
-              >
-                {mostrarPassword ? "Ocultar" : "Mostrar"}
-              </button>
+            <div style={styles.loginFeatureGrid}>
+              <span>✅ Multiempresa</span>
+              <span>✅ Multiusuario</span>
+              <span>✅ Caja diaria</span>
+              <span>✅ Comisiones</span>
             </div>
           </div>
 
-          <button style={styles.cleanPrimaryBtn} onClick={login}>
-            Iniciar sesión
-          </button>
+          <div style={styles.loginCardPro}>
+            <div style={styles.loginHeaderPro}>
+              <div style={styles.loginMiniLogo}>🦷</div>
+              <h2 style={styles.loginTitlePro}>Iniciar sesión</h2>
+              <p style={styles.loginSubtitlePro}>
+                Ingresa con tu correo y contraseña.
+              </p>
+            </div>
 
-          <button style={styles.cleanSecondaryBtn} onClick={register}>
-            Crear cuenta
-          </button>
+            <div style={styles.loginFieldPro}>
+              <label style={styles.loginLabelPro}>Correo</label>
+              <input
+                style={styles.loginInputPro}
+                placeholder="correo@clinica.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+              />
+            </div>
 
-          <div style={styles.cleanNote}>
-            Si recibiste una invitación, creá tu cuenta con el mismo correo.
+            <div style={styles.loginFieldPro}>
+              <label style={styles.loginLabelPro}>Contraseña</label>
+              <div style={styles.passwordBoxPro}>
+                <input
+                  style={styles.loginInputPasswordPro}
+                  type={mostrarPassword ? "text" : "password"}
+                  placeholder="Contraseña"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") login();
+                  }}
+                />
+
+                <button
+                  type="button"
+                  style={styles.showPasswordBtnPro}
+                  onClick={() => setMostrarPassword((prev) => !prev)}
+                >
+                  {mostrarPassword ? "Ocultar" : "Mostrar"}
+                </button>
+              </div>
+            </div>
+
+            <button style={styles.loginPrimaryBtnPro} onClick={login}>
+              Iniciar sesión
+            </button>
+
+            <button style={styles.loginSecondaryBtnPro} onClick={register}>
+              Crear cuenta
+            </button>
+
+            <p style={styles.loginHelpText}>
+              Si te invitaron, crea la cuenta con el mismo correo de la invitación.
+            </p>
           </div>
         </div>
       </div>
@@ -521,34 +543,26 @@ function App() {
 
   if (membresias.length === 0) {
     return (
-      <div style={styles.cleanAuthBg}>
-        <div style={styles.cleanAuthCard}>
-          <div style={styles.cleanLogoWrap}>
-            <span style={styles.cleanLogo}>🦷</span>
-          </div>
+      <div style={styles.authBgPro}>
+        <div style={styles.simpleCenterCardPro}>
+          <div style={styles.loginMiniLogo}>🦷</div>
+          <h2 style={styles.loginTitlePro}>Crear primera empresa</h2>
+          <p style={styles.loginSubtitlePro}>
+            Todavía no tienes empresas asignadas. Puedes crear una o cerrar sesión si estás esperando una invitación.
+          </p>
 
-          <div style={styles.cleanHeader}>
-            <h1 style={styles.cleanTitle}>Crear empresa</h1>
-            <p style={styles.cleanSubtitle}>
-              Todavía no tenés empresas asignadas. Podés crear una nueva o cerrar sesión.
-            </p>
-          </div>
+          <input
+            style={styles.loginInputPro}
+            placeholder="Nombre de empresa"
+            value={nuevaEmpresa}
+            onChange={(e) => setNuevaEmpresa(e.target.value)}
+          />
 
-          <div style={styles.cleanField}>
-            <label style={styles.cleanLabel}>Nombre de empresa</label>
-            <input
-              style={styles.cleanInput}
-              placeholder="Ej: Clínica Dental"
-              value={nuevaEmpresa}
-              onChange={(e) => setNuevaEmpresa(e.target.value)}
-            />
-          </div>
-
-          <button style={styles.cleanPrimaryBtn} onClick={crearEmpresa}>
+          <button style={styles.loginPrimaryBtnPro} onClick={crearEmpresa}>
             Crear empresa
           </button>
 
-          <button style={styles.cleanDangerBtn} onClick={logout}>
+          <button style={styles.loginDangerBtnPro} onClick={logout}>
             Cerrar sesión
           </button>
         </div>
@@ -558,53 +572,50 @@ function App() {
 
   if (!empresaActiva) {
     return (
-      <div style={styles.cleanAuthBg}>
-        <div style={styles.cleanCompanyCard}>
-          <div style={styles.cleanLogoWrap}>
-            <span style={styles.cleanLogo}>🦷</span>
-          </div>
-
-          <div style={styles.cleanHeader}>
-            <h1 style={styles.cleanTitle}>Seleccionar empresa</h1>
-            <p style={styles.cleanSubtitle}>
-              Elegí la empresa con la que querés trabajar.
+      <div style={styles.authBgPro}>
+        <div style={styles.companySelectCardPro}>
+          <div style={styles.loginHeaderPro}>
+            <div style={styles.loginMiniLogo}>🦷</div>
+            <h2 style={styles.loginTitlePro}>Seleccionar empresa</h2>
+            <p style={styles.loginSubtitlePro}>
+              Elige con qué empresa deseas trabajar.
             </p>
           </div>
 
-          <div style={styles.cleanCompanyList}>
+          <div style={styles.companyListPro}>
             {membresias.map((m) => (
               <button
                 key={m.id}
-                style={styles.cleanCompanyItem}
+                style={styles.companyOptionPro}
                 onClick={() => seleccionarEmpresaDesdeMembresia(m)}
               >
-                <div style={styles.cleanCompanyIcon}>🏢</div>
+                <span style={styles.companyOptionIconPro}>🏢</span>
 
-                <div style={styles.cleanCompanyText}>
+                <span style={styles.companyOptionTextPro}>
                   <strong>{m.empresa?.nombre}</strong>
-                  <span>Rol: {m.rol}</span>
-                </div>
+                  <small>Rol: {m.rol}</small>
+                </span>
 
-                <div style={styles.cleanCompanyArrow}>›</div>
+                <span style={styles.companyOptionArrowPro}>›</span>
               </button>
             ))}
           </div>
 
-          <div style={styles.cleanCreateBox}>
-            <label style={styles.cleanLabel}>Crear nueva empresa</label>
+          <div style={styles.createCompanyBoxPro}>
+            <label style={styles.loginLabelPro}>Crear nueva empresa</label>
             <input
-              style={styles.cleanInput}
+              style={styles.loginInputPro}
               placeholder="Nombre de nueva empresa"
               value={nuevaEmpresa}
               onChange={(e) => setNuevaEmpresa(e.target.value)}
             />
 
-            <button style={styles.cleanPrimaryBtn} onClick={crearEmpresa}>
+            <button style={styles.loginPrimaryBtnPro} onClick={crearEmpresa}>
               Crear empresa
             </button>
           </div>
 
-          <button style={styles.cleanDangerBtn} onClick={logout}>
+          <button style={styles.loginDangerBtnPro} onClick={logout}>
             Cerrar sesión
           </button>
         </div>
@@ -677,242 +688,6 @@ function App() {
 }
 
 const styles = {
-  cleanAuthBg: {
-    minHeight: "100vh",
-    width: "100%",
-    display: "grid",
-    placeItems: "center",
-    background:
-      "linear-gradient(180deg, #f8fafc 0%, #eef2f7 100%)",
-    padding: "22px",
-    boxSizing: "border-box",
-  },
-
-  cleanAuthCard: {
-    width: "100%",
-    maxWidth: "420px",
-    background: "#ffffff",
-    border: "1px solid #e5e7eb",
-    borderRadius: "28px",
-    padding: "34px",
-    boxShadow: "0 24px 70px rgba(15, 23, 42, 0.12)",
-    display: "grid",
-    gap: "15px",
-    boxSizing: "border-box",
-  },
-
-  cleanCompanyCard: {
-    width: "100%",
-    maxWidth: "760px",
-    background: "#ffffff",
-    border: "1px solid #e5e7eb",
-    borderRadius: "28px",
-    padding: "34px",
-    boxShadow: "0 24px 70px rgba(15, 23, 42, 0.12)",
-    display: "grid",
-    gap: "18px",
-    boxSizing: "border-box",
-  },
-
-  cleanLogoWrap: {
-    display: "grid",
-    placeItems: "center",
-  },
-
-  cleanLogo: {
-    width: "58px",
-    height: "58px",
-    borderRadius: "20px",
-    background: "#f4f0f7",
-    border: "1px solid #d3c7dd",
-    display: "grid",
-    placeItems: "center",
-    fontSize: "30px",
-    boxShadow: "0 10px 28px rgba(107, 90, 122, 0.14)",
-  },
-
-  cleanHeader: {
-    textAlign: "center",
-    display: "grid",
-    gap: "4px",
-    marginBottom: "4px",
-  },
-
-  cleanTitle: {
-    margin: 0,
-    color: "#4f3f5f",
-    fontSize: "31px",
-    fontWeight: "950",
-    letterSpacing: "-0.035em",
-  },
-
-  cleanSubtitle: {
-    margin: 0,
-    color: "#64748b",
-    fontSize: "14px",
-    lineHeight: 1.55,
-  },
-
-  cleanField: {
-    display: "grid",
-    gap: "7px",
-  },
-
-  cleanLabel: {
-    color: "#475569",
-    fontSize: "13px",
-    fontWeight: "850",
-  },
-
-  cleanInput: {
-    width: "100%",
-    boxSizing: "border-box",
-    padding: "14px 15px",
-    borderRadius: "16px",
-    border: "1px solid #cfd9e5",
-    background: "#fff",
-    outline: "none",
-    fontSize: "14px",
-    color: "#0f172a",
-  },
-
-  cleanPasswordWrap: {
-    position: "relative",
-    display: "flex",
-    alignItems: "center",
-  },
-
-  cleanPasswordInput: {
-    width: "100%",
-    boxSizing: "border-box",
-    padding: "14px 98px 14px 15px",
-    borderRadius: "16px",
-    border: "1px solid #cfd9e5",
-    background: "#fff",
-    outline: "none",
-    fontSize: "14px",
-    color: "#0f172a",
-  },
-
-  cleanShowPassword: {
-    position: "absolute",
-    right: "8px",
-    top: "50%",
-    transform: "translateY(-50%)",
-    height: "34px",
-    padding: "0 12px",
-    borderRadius: "12px",
-    border: "1px solid #d3c7dd",
-    background: "#f4f0f7",
-    color: "#574866",
-    cursor: "pointer",
-    fontSize: "12px",
-    fontWeight: "900",
-  },
-
-  cleanPrimaryBtn: {
-    width: "100%",
-    background: "linear-gradient(135deg, #6b5a7a 0%, #8a79a0 100%)",
-    color: "#fff",
-    border: "none",
-    borderRadius: "16px",
-    padding: "14px 16px",
-    cursor: "pointer",
-    fontWeight: "950",
-    fontSize: "14px",
-    boxShadow: "0 14px 28px rgba(107, 90, 122, 0.25)",
-  },
-
-  cleanSecondaryBtn: {
-    width: "100%",
-    background: "#f4f0f7",
-    color: "#574866",
-    border: "1px solid #d3c7dd",
-    borderRadius: "16px",
-    padding: "13px 16px",
-    cursor: "pointer",
-    fontWeight: "900",
-    fontSize: "14px",
-  },
-
-  cleanDangerBtn: {
-    width: "100%",
-    background: "#ef4444",
-    color: "#fff",
-    border: "none",
-    borderRadius: "16px",
-    padding: "13px 16px",
-    cursor: "pointer",
-    fontWeight: "900",
-    fontSize: "14px",
-  },
-
-  cleanNote: {
-    background: "#f8fafc",
-    border: "1px solid #e2e8f0",
-    borderRadius: "14px",
-    padding: "11px 12px",
-    color: "#64748b",
-    fontSize: "12px",
-    lineHeight: 1.45,
-    textAlign: "center",
-  },
-
-  cleanCompanyList: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
-    gap: "12px",
-  },
-
-  cleanCompanyItem: {
-    width: "100%",
-    border: "1px solid #e2e8f0",
-    background: "linear-gradient(180deg, #ffffff 0%, #faf7fc 100%)",
-    borderRadius: "20px",
-    padding: "16px",
-    cursor: "pointer",
-    display: "grid",
-    gridTemplateColumns: "46px minmax(0, 1fr) 22px",
-    gap: "12px",
-    alignItems: "center",
-    color: "#1f2937",
-    textAlign: "left",
-    boxShadow: "0 10px 24px rgba(15,23,42,0.06)",
-  },
-
-  cleanCompanyIcon: {
-    width: "46px",
-    height: "46px",
-    borderRadius: "16px",
-    background: "#f4f0f7",
-    border: "1px solid #d3c7dd",
-    display: "grid",
-    placeItems: "center",
-    fontSize: "21px",
-  },
-
-  cleanCompanyText: {
-    display: "grid",
-    gap: "4px",
-    minWidth: 0,
-  },
-
-  cleanCompanyArrow: {
-    color: "#6b5a7a",
-    fontSize: "30px",
-    fontWeight: "900",
-  },
-
-  cleanCreateBox: {
-    display: "grid",
-    gap: "10px",
-    padding: "14px",
-    background: "#f8fafc",
-    border: "1px solid #e2e8f0",
-    borderRadius: "20px",
-  },
-
-
   authBgPro: {
     minHeight: "100vh",
     width: "100%",

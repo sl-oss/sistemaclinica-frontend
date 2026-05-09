@@ -1,6 +1,23 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "./supabaseClient";
 
+function generarTokenSeguro() {
+  if (window.crypto?.randomUUID) {
+    return window.crypto.randomUUID().replaceAll("-", "");
+  }
+
+  return `${Date.now()}${Math.random().toString(16).slice(2)}${Math.random()
+    .toString(16)
+    .slice(2)}`;
+}
+
+function obtenerBaseUrlPublica() {
+  const envUrl = import.meta.env?.VITE_PUBLIC_APP_URL;
+  const base = envUrl || window.location.origin;
+  return String(base).replace(/\/$/, "");
+}
+
+
 function Citas() {
   const empresaInicial = JSON.parse(localStorage.getItem("empresa") || "null");
 
@@ -57,6 +74,10 @@ function Citas() {
   const [fechaConfirmacion, setFechaConfirmacion] = useState(obtenerFechaSV());
   const [citasConfirmacion, setCitasConfirmacion] = useState([]);
   const [cargandoConfirmacion, setCargandoConfirmacion] = useState(false);
+  const [confirmacionTexto, setConfirmacionTexto] = useState("");
+  const [confirmacionPrioridad, setConfirmacionPrioridad] = useState("todos");
+  const [confirmacionEstado, setConfirmacionEstado] = useState("pendientes");
+  const [confirmacionEmpresaId, setConfirmacionEmpresaId] = useState("todas");
 
   const [mostrarModalReagendar, setMostrarModalReagendar] = useState(false);
   const [citaParaReagendar, setCitaParaReagendar] = useState(null);
@@ -186,6 +207,46 @@ function Citas() {
       return coincideTexto && coincideRango && coincideEstado && coincidePrioridad;
     });
   }, [citas, reporteTexto, reporteDesde, reporteHasta, reporteEstado, reportePrioridad, empresasUsuario]);
+
+  const citasConfirmacionFiltradas = useMemo(() => {
+    const texto = confirmacionTexto.trim().toLowerCase();
+
+    return citasConfirmacion.filter((cita) => {
+      const info = leerServicio(cita.servicio);
+      const nombre = cita.clientes?.nombre || "";
+      const telefono = cita.clientes?.telefono || "";
+      const empresaNombre = cita.empresas?.nombre || obtenerNombreEmpresa(cita.empresa_id, cita.empresas);
+
+      const coincideTexto =
+        !texto ||
+        nombre.toLowerCase().includes(texto) ||
+        telefono.toLowerCase().includes(texto) ||
+        empresaNombre.toLowerCase().includes(texto) ||
+        info.comentario.toLowerCase().includes(texto);
+
+      const coincidePrioridad =
+        confirmacionPrioridad === "todos" || info.tipo === confirmacionPrioridad;
+
+      const coincideEstado =
+        confirmacionEstado === "todos" ||
+        (confirmacionEstado === "pendientes" && cita.estado === "pendiente") ||
+        (confirmacionEstado === "sin_confirmar" && !cita.confirmada) ||
+        (confirmacionEstado === "confirmadas" && cita.confirmada);
+
+      const coincideEmpresa =
+        confirmacionEmpresaId === "todas" ||
+        String(cita.empresa_id) === String(confirmacionEmpresaId);
+
+      return coincideTexto && coincidePrioridad && coincideEstado && coincideEmpresa;
+    });
+  }, [
+    citasConfirmacion,
+    confirmacionTexto,
+    confirmacionPrioridad,
+    confirmacionEstado,
+    confirmacionEmpresaId,
+    empresasUsuario,
+  ]);
 
   const citasPorFecha = useMemo(() => {
     const mapa = {};
@@ -415,6 +476,10 @@ function Citas() {
 
   const abrirConfirmaciones = async () => {
     setMostrarModalConfirmar(true);
+    setConfirmacionTexto("");
+    setConfirmacionPrioridad("todos");
+    setConfirmacionEstado("pendientes");
+    setConfirmacionEmpresaId("todas");
     await cargarCitasConfirmacion(fechaConfirmacion);
   };
 
@@ -448,15 +513,76 @@ function Citas() {
     await obtenerCitas();
   };
 
-  const abrirWhatsapp = (cita) => {
+  const obtenerTokenPublicoCita = async (cita) => {
+    if (!cita?.id || !cita?.empresa_id) {
+      throw new Error("Cita inválida para generar enlace");
+    }
+
+    const { data: existente, error: errorBuscar } = await supabase
+      .from("citas_tokens_publicos")
+      .select("token, expira_en")
+      .eq("cita_id", cita.id)
+      .eq("empresa_id", cita.empresa_id)
+      .maybeSingle();
+
+    if (errorBuscar) {
+      console.error(errorBuscar);
+      throw new Error("No se pudo revisar el token de la cita");
+    }
+
+    if (existente?.token) {
+      return existente.token;
+    }
+
+    const token = generarTokenSeguro();
+    const expira = new Date();
+    expira.setDate(expira.getDate() + 15);
+
+    const { error: errorInsertar } = await supabase
+      .from("citas_tokens_publicos")
+      .insert([
+        {
+          cita_id: cita.id,
+          empresa_id: cita.empresa_id,
+          token,
+          expira_en: expira.toISOString(),
+          usado: false,
+        },
+      ]);
+
+    if (errorInsertar) {
+      console.error(errorInsertar);
+      throw new Error("No se pudo crear el enlace público de la cita");
+    }
+
+    return token;
+  };
+
+  const construirLinkConfirmacion = async (cita) => {
+    const token = await obtenerTokenPublicoCita(cita);
+    return `${obtenerBaseUrlPublica()}/confirmar-cita/${token}`;
+  };
+
+  const abrirWhatsapp = async (cita) => {
     const telefono = limpiarTelefono(cita.clientes?.telefono || "");
     if (!telefono) return alert("Este paciente no tiene teléfono registrado");
 
-    const info = leerServicio(cita.servicio);
-    const empresaNombre = obtenerNombreEmpresa(cita.empresa_id, cita.empresas);
-    const mensaje = `Hola ${cita.clientes?.nombre || ""}, le saludamos de ${empresaNombre}. Le recordamos su cita para el ${formatearFechaPantalla(cita.fecha)} a las ${normalizarHora(cita.hora)}. ¿Nos confirma su asistencia, por favor?`;
+    try {
+      const empresaNombre = obtenerNombreEmpresa(cita.empresa_id, cita.empresas);
+      const linkConfirmacion = await construirLinkConfirmacion(cita);
 
-    window.open(`https://wa.me/${telefono}?text=${encodeURIComponent(mensaje)}`, "_blank");
+      const mensaje = `Hola ${cita.clientes?.nombre || ""}, le saludamos de ${empresaNombre}.
+
+Le recordamos su cita para el ${formatearFechaPantalla(cita.fecha)} a las ${normalizarHora(cita.hora)}.
+
+Para confirmar, cancelar o reagendar su cita, toque aquí:
+${linkConfirmacion}`;
+
+      window.open(`https://wa.me/${telefono}?text=${encodeURIComponent(mensaje)}`, "_blank");
+    } catch (error) {
+      console.error(error);
+      alert(error.message || "No se pudo generar el enlace de confirmación");
+    }
   };
 
   const toggleColumnaReporte = (key) => {
@@ -1492,7 +1618,7 @@ autoTable(doc, {
               <div>
                 <h3 style={{ margin: 0, color: "#574866" }}>Confirmar citas</h3>
                 <p style={styles.modalSubText}>
-                  Elegí la fecha, llamá a pacientes y marcá el resultado.
+                  Elegí la fecha, filtrá pacientes y enviá el enlace por WhatsApp.
                 </p>
               </div>
               <button type="button" style={styles.btnCerrarModal} onClick={() => setMostrarModalConfirmar(false)}>
@@ -1500,25 +1626,70 @@ autoTable(doc, {
               </button>
             </div>
 
-            <div style={styles.confirmToolbar}>
+            <div style={styles.confirmToolbarPro}>
               <input
                 type="date"
                 style={styles.input}
                 value={fechaConfirmacion}
                 onChange={(e) => setFechaConfirmacion(e.target.value)}
               />
+
+              <input
+                style={styles.input}
+                placeholder="Buscar paciente, teléfono, empresa o comentario..."
+                value={confirmacionTexto}
+                onChange={(e) => setConfirmacionTexto(e.target.value)}
+              />
+
+              <select
+                style={styles.input}
+                value={confirmacionPrioridad}
+                onChange={(e) => setConfirmacionPrioridad(e.target.value)}
+              >
+                <option value="todos">Todas las prioridades</option>
+                <option value="normal">Normal</option>
+                <option value="importante">Importante</option>
+                <option value="emergencia">Emergencia</option>
+              </select>
+
+              <select
+                style={styles.input}
+                value={confirmacionEstado}
+                onChange={(e) => setConfirmacionEstado(e.target.value)}
+              >
+                <option value="pendientes">Pendientes</option>
+                <option value="sin_confirmar">Sin confirmar</option>
+                <option value="confirmadas">Confirmadas</option>
+                <option value="todos">Todas</option>
+              </select>
+
+              <select
+                style={styles.input}
+                value={confirmacionEmpresaId}
+                onChange={(e) => setConfirmacionEmpresaId(e.target.value)}
+              >
+                <option value="todas">Todas las empresas</option>
+                {empresasUsuario.map((emp) => (
+                  <option key={emp.id} value={emp.id}>{emp.nombre}</option>
+                ))}
+              </select>
+
               <button style={styles.btnGuardar} onClick={() => cargarCitasConfirmacion(fechaConfirmacion)}>
-                Cargar fecha
+                Cargar
               </button>
+            </div>
+
+            <div style={styles.confirmCounter}>
+              Mostrando {citasConfirmacionFiltradas.length} de {citasConfirmacion.length} cita(s)
             </div>
 
             {cargandoConfirmacion ? (
               <div style={styles.emptyState}>Cargando citas...</div>
-            ) : citasConfirmacion.length === 0 ? (
+            ) : citasConfirmacionFiltradas.length === 0 ? (
               <div style={styles.emptyState}>No hay citas pendientes para esa fecha.</div>
             ) : (
               <div style={styles.confirmList}>
-                {citasConfirmacion.map((cita) => {
+                {citasConfirmacionFiltradas.map((cita) => {
                   const info = leerServicio(cita.servicio);
                   return (
                     <div key={cita.id} style={{ ...styles.confirmItem, ...prioridadBorderStyle(info.tipo) }}>
@@ -1557,7 +1728,7 @@ autoTable(doc, {
               <div>
                 <h3 style={{ margin: 0, color: "#574866" }}>Reagendar cita</h3>
                 <p style={styles.modalSubText}>
-                  {citaParaReagendar.clientes?.nombre || "Paciente"} · cupos visibles por hora.
+                  {citaParaReagendar.clientes?.nombre || "Paciente"} · cupos visibles por bloque de 15 minutos.
                 </p>
               </div>
               <button type="button" style={styles.btnCerrarModal} onClick={() => setMostrarModalReagendar(false)}>
@@ -3435,6 +3606,27 @@ const styles = {
     cursor: "pointer",
     fontWeight: "700",
   },
+
+  // ===== CONFIRMAR CITAS CON FILTROS =====
+  confirmToolbarPro: {
+    display: "grid",
+    gridTemplateColumns: "150px minmax(230px, 1fr) 160px 145px 170px auto",
+    gap: "10px",
+    alignItems: "center",
+    marginBottom: "10px",
+  },
+
+  confirmCounter: {
+    background: "#f8fafc",
+    border: "1px solid #e2e8f0",
+    color: "#64748b",
+    borderRadius: "12px",
+    padding: "8px 10px",
+    fontSize: "12px",
+    fontWeight: "850",
+    marginBottom: "10px",
+  },
+
 };
 
 export default Citas;
