@@ -1410,6 +1410,32 @@ export default function CajaDiaria() {
     return (principales.length > 0 ? principales : ordenados).slice(0, 2).map((m) => m.id);
   };
 
+  const obtenerKeyMetodosManual = () => {
+    return `caja_metodos_manual_ids_${empresa?.id || "sin_empresa"}`;
+  };
+
+  const obtenerMetodosManualGuardados = () => {
+    try {
+      const guardados = JSON.parse(localStorage.getItem(obtenerKeyMetodosManual()) || "null");
+      if (Array.isArray(guardados) && guardados.length > 0) {
+        const idsValidos = guardados.filter((id) =>
+          metodos.some((metodo) => String(metodo.id) === String(id))
+        );
+
+        if (idsValidos.length > 0) return idsValidos;
+      }
+    } catch (error) {
+      console.error("Error leyendo métodos manuales guardados:", error);
+    }
+
+    return obtenerMetodosRapidosDefault();
+  };
+
+  const guardarMetodosManualSeleccionados = (ids) => {
+    const idsUnicos = Array.from(new Set((ids || []).map((id) => String(id))));
+    localStorage.setItem(obtenerKeyMetodosManual(), JSON.stringify(idsUnicos));
+  };
+
   const abrirModalManualNuevo = async () => {
     if (!validarEdicionUnaEmpresa()) return;
 
@@ -1423,7 +1449,7 @@ export default function CajaDiaria() {
     setBusquedaClasificacionManual("");
     setMostrarTodosMetodosManual(false);
     setModalMetodosManual(false);
-    setMetodosManualIds(obtenerMetodosRapidosDefault());
+    setMetodosManualIds(obtenerMetodosManualGuardados());
     setModalManual({
       open: true,
       editando: false,
@@ -1464,7 +1490,7 @@ export default function CajaDiaria() {
       .map(([metodoId]) => metodoId);
 
     setMetodosManualIds(
-      Array.from(new Set([...obtenerMetodosRapidosDefault(), ...metodosConMonto]))
+      Array.from(new Set([...obtenerMetodosManualGuardados(), ...metodosConMonto]))
     );
 
     setModalManual({
@@ -1696,6 +1722,7 @@ export default function CajaDiaria() {
     setMetodosManualIds((prev) => {
       const id = String(metodoId);
       const existe = prev.some((item) => String(item) === id);
+      let nuevosIds = [];
 
       if (existe) {
         const tieneMonto = Number(modalManual.fila?.pagos?.[metodoId] || 0) > 0;
@@ -1705,10 +1732,13 @@ export default function CajaDiaria() {
           return prev;
         }
 
-        return prev.filter((item) => String(item) !== id);
+        nuevosIds = prev.filter((item) => String(item) !== id);
+      } else {
+        nuevosIds = [...prev, metodoId];
       }
 
-      return [...prev, metodoId];
+      guardarMetodosManualSeleccionados(nuevosIds);
+      return nuevosIds;
     });
   };
 
@@ -3744,7 +3774,10 @@ export default function CajaDiaria() {
               <button
                 type="button"
                 style={styles.saveBtn}
-                onClick={() => setModalMetodosManual(false)}
+                onClick={() => {
+                  guardarMetodosManualSeleccionados(metodosManualIds);
+                  setModalMetodosManual(false);
+                }}
               >
                 Listo
               </button>
@@ -6369,6 +6402,88 @@ const styles = {
     display: "flex",
     justifyContent: "flex-end",
     paddingTop: "4px",
+  },
+  // ===== AJUSTE FINAL: ALINEACIÓN Y MÉTODOS PERSISTENTES =====
+  page: {
+    width: "100%",
+    minHeight: "100%",
+    boxSizing: "border-box",
+    background: "#f3f1f6",
+    padding: "8px 10px",
+  },
+
+  container: {
+    width: "100%",
+    maxWidth: "none",
+    margin: "0",
+    display: "grid",
+    gap: "12px",
+  },
+
+  headerCard: {
+    background: "linear-gradient(135deg, #ffffff 0%, #fbf8fd 100%)",
+    border: "1px solid #ddd6e6",
+    borderRadius: "18px",
+    padding: "14px 16px",
+    boxShadow: "0 8px 24px rgba(15, 23, 42, 0.06)",
+    display: "grid",
+    gridTemplateColumns: "minmax(0, 1fr) auto",
+    gap: "12px",
+    alignItems: "center",
+  },
+
+  card: {
+    background: "#ffffff",
+    border: "1px solid #dddfe7",
+    borderRadius: "18px",
+    padding: "14px 16px",
+    boxShadow: "0 8px 24px rgba(15, 23, 42, 0.045)",
+  },
+
+  quickSelectedMethodsInfo: {
+    color: "#64748b",
+    background: "#f8fafc",
+    border: "1px solid #e2e8f0",
+    borderRadius: "10px",
+    padding: "6px 8px",
+    fontSize: "10.5px",
+  },
+
+  quickMethodListTable: {
+    minHeight: 0,
+    overflowY: "auto",
+    display: "grid",
+    gap: "5px",
+    paddingRight: "2px",
+  },
+
+  quickMethodListRow: {
+    display: "grid",
+    gridTemplateColumns: "minmax(160px, 1fr) 96px",
+    gap: "7px",
+    alignItems: "center",
+    background: "#fbfbfc",
+    border: "1px solid #e2e8f0",
+    borderRadius: "12px",
+    padding: "7px",
+  },
+
+  quickMethodListRowActive: {
+    background: "#f0fdf4",
+    border: "1px solid #bbf7d0",
+  },
+
+  quickReferenceListInput: {
+    gridColumn: "1 / -1",
+    width: "100%",
+    boxSizing: "border-box",
+    padding: "7px 8px",
+    borderRadius: "10px",
+    border: "1px solid #cfd9e5",
+    background: "#fff",
+    outline: "none",
+    fontSize: "11.5px",
+    minHeight: "31px",
   },
 
 };
