@@ -82,6 +82,7 @@ export default function CajaDiaria() {
   const [metodos, setMetodos] = useState([]);
   const [filas, setFilas] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [accionesAbiertasUid, setAccionesAbiertasUid] = useState(null);
 
   const [filtroDesde, setFiltroDesde] = useState(hoy);
   const [filtroHasta, setFiltroHasta] = useState(hoy);
@@ -103,6 +104,20 @@ export default function CajaDiaria() {
     open: false,
     filaUid: null,
   });
+
+  const [modalManual, setModalManual] = useState({
+    open: false,
+    editando: false,
+    filaOriginalUid: null,
+    fila: null,
+  });
+  const [manualClasificacionesIds, setManualClasificacionesIds] = useState([]);
+  const [guardandoManual, setGuardandoManual] = useState(false);
+  const [busquedaMetodoManual, setBusquedaMetodoManual] = useState("");
+  const [busquedaClasificacionManual, setBusquedaClasificacionManual] = useState("");
+  const [mostrarTodosMetodosManual, setMostrarTodosMetodosManual] = useState(false);
+  const [modalMetodosManual, setModalMetodosManual] = useState(false);
+  const [metodosManualIds, setMetodosManualIds] = useState([]);
 
   const [clasificaciones, setClasificaciones] = useState([]);
   const [clasificacionesAsignadas, setClasificacionesAsignadas] = useState({});
@@ -669,6 +684,40 @@ export default function CajaDiaria() {
     });
 
     return encontrados;
+  };
+
+  const obtenerReferenciasFila = (fila) => {
+    if (!fila?.referencias) return [];
+
+    return metodos
+      .map((metodo) => {
+        const valor = fila.referencias?.[metodo.id];
+        if (!valor || !String(valor).trim()) return null;
+
+        return {
+          metodo: metodo.nombre,
+          valor: String(valor).trim(),
+        };
+      })
+      .filter(Boolean);
+  };
+
+  const obtenerTextoClasificacionesParaReporte = (item) => {
+    if (!item) return "";
+
+    const filaTemporal = {
+      paciente: item.paciente || "",
+      venta_id: item.venta_id || "",
+      grupoFacturacion: item.grupoFacturacion || item.grupo_facturacion || "",
+      empresaId: item.empresaId || item.empresa_id || empresa?.id,
+    };
+
+    const encontradas = obtenerClasificacionesFila(filaTemporal);
+
+    return encontradas
+      .map((asig) => asig.clasificaciones_pacientes?.nombre)
+      .filter(Boolean)
+      .join(", ");
   };
 
   const asignarClasificacionAFila = async (clasificacionId) => {
@@ -1328,6 +1377,7 @@ export default function CajaDiaria() {
 
   const irAEditarVenta = (fila) => {
     if (!fila?.venta_id) return;
+    setAccionesAbiertasUid(null);
 
     localStorage.setItem("ventaEditarRapidoId", String(fila.venta_id));
     localStorage.setItem("ventaEditarRapidoOrigen", "caja_diaria");
@@ -1336,13 +1386,392 @@ export default function CajaDiaria() {
     window.dispatchEvent(new Event("irAReporte"));
   };
 
-  const agregarFila = () => {
+  const obtenerMetodosRapidosDefault = () => {
+    const prioridad = ["efectivo", "reserva", "tarjeta", "credito", "crédito", "transferencia", "cheque"];
+
+    const ordenados = [...metodos].sort((a, b) => {
+      const aNombre = String(a.nombre || "").toLowerCase();
+      const bNombre = String(b.nombre || "").toLowerCase();
+
+      const aIndex = prioridad.findIndex((p) => aNombre.includes(p));
+      const bIndex = prioridad.findIndex((p) => bNombre.includes(p));
+
+      const aPeso = aIndex === -1 ? 999 : aIndex;
+      const bPeso = bIndex === -1 ? 999 : bIndex;
+
+      if (aPeso !== bPeso) return aPeso - bPeso;
+      return aNombre.localeCompare(bNombre);
+    });
+
+    const principales = ordenados.filter((metodo) =>
+      prioridad.some((p) => String(metodo.nombre || "").toLowerCase().includes(p))
+    );
+
+    return (principales.length > 0 ? principales : ordenados).slice(0, 2).map((m) => m.id);
+  };
+
+  const abrirModalManualNuevo = async () => {
     if (!validarEdicionUnaEmpresa()) return;
-    setFilas((prev) => [...prev, crearFilaVacia()]);
+
+    const filaNueva = crearFilaVacia(metodos);
+    filaNueva.grupoFacturacion = "";
+
+    await cargarClasificaciones(empresa?.id);
+
+    setManualClasificacionesIds([]);
+    setBusquedaMetodoManual("");
+    setBusquedaClasificacionManual("");
+    setMostrarTodosMetodosManual(false);
+    setModalMetodosManual(false);
+    setMetodosManualIds(obtenerMetodosRapidosDefault());
+    setModalManual({
+      open: true,
+      editando: false,
+      filaOriginalUid: null,
+      fila: filaNueva,
+    });
+  };
+
+  const abrirModalManualEditar = async (filaUid) => {
+    if (!validarEdicionUnaEmpresa()) return;
+    setAccionesAbiertasUid(null);
+
+    const fila = filas.find((f) => f.uid === filaUid);
+    if (!fila) return;
+
+    if (fila.origen === "venta") {
+      return alert("Este registro viene de una venta. Editalo desde ventas.");
+    }
+
+    if (String(fila.empresaId || empresa?.id) !== String(empresa?.id)) {
+      return alert("Este registro pertenece a otra empresa. Cambiá la empresa activa para editarlo.");
+    }
+
+    await cargarClasificaciones(fila.empresaId || empresa?.id);
+
+    setManualClasificacionesIds(
+      obtenerClasificacionesFila(fila)
+        .map((asig) => asig.clasificacion_id)
+        .filter(Boolean)
+    );
+    setBusquedaMetodoManual("");
+    setBusquedaClasificacionManual("");
+    setMostrarTodosMetodosManual(false);
+    setModalMetodosManual(false);
+
+    const metodosConMonto = Object.entries(fila.pagos || {})
+      .filter(([, valor]) => Number(valor || 0) > 0)
+      .map(([metodoId]) => metodoId);
+
+    setMetodosManualIds(
+      Array.from(new Set([...obtenerMetodosRapidosDefault(), ...metodosConMonto]))
+    );
+
+    setModalManual({
+      open: true,
+      editando: true,
+      filaOriginalUid: fila.uid,
+      fila: {
+        ...fila,
+        pagos: { ...(fila.pagos || {}) },
+        referencias: { ...(fila.referencias || {}) },
+        grupoFacturacion: fila.grupoFacturacion || "",
+      },
+    });
+  };
+
+  const cerrarModalManual = () => {
+    if (guardandoManual) return;
+
+    setModalManual({
+      open: false,
+      editando: false,
+      filaOriginalUid: null,
+      fila: null,
+    });
+    setManualClasificacionesIds([]);
+    setBusquedaMetodoManual("");
+    setBusquedaClasificacionManual("");
+    setMostrarTodosMetodosManual(false);
+    setModalMetodosManual(false);
+    setMetodosManualIds([]);
+  };
+
+  const actualizarModalManualCampo = (campo, valor) => {
+    setModalManual((prev) => ({
+      ...prev,
+      fila: {
+        ...(prev.fila || {}),
+        [campo]: valor,
+      },
+    }));
+  };
+
+  const actualizarModalManualMonto = (metodoId, valor) => {
+    setModalManual((prev) => ({
+      ...prev,
+      fila: {
+        ...(prev.fila || {}),
+        pagos: {
+          ...((prev.fila && prev.fila.pagos) || {}),
+          [metodoId]: valor,
+        },
+      },
+    }));
+  };
+
+  const actualizarModalManualReferencia = (metodoId, valor) => {
+    setModalManual((prev) => ({
+      ...prev,
+      fila: {
+        ...(prev.fila || {}),
+        referencias: {
+          ...((prev.fila && prev.fila.referencias) || {}),
+          [metodoId]: valor,
+        },
+      },
+    }));
+  };
+
+  const alternarClasificacionManual = (clasificacionId) => {
+    setManualClasificacionesIds((prev) => {
+      const existe = prev.some((id) => String(id) === String(clasificacionId));
+      return existe
+        ? prev.filter((id) => String(id) !== String(clasificacionId))
+        : [...prev, clasificacionId];
+    });
+  };
+
+  const sincronizarClasificacionesManual = async (filaFinal, filaOriginal = null) => {
+    const empresaFilaId = filaFinal.empresaId || empresa?.id;
+    if (!empresaFilaId || !fechaLocal || !filaFinal.paciente?.trim()) return;
+
+    const asignadasOriginales = filaOriginal ? obtenerClasificacionesFila(filaOriginal) : [];
+
+    if (asignadasOriginales.length > 0) {
+      const idsParaEliminar = asignadasOriginales.map((asig) => asig.id).filter(Boolean);
+
+      if (idsParaEliminar.length > 0) {
+        const { error: errorDelete } = await supabase
+          .from("caja_paciente_clasificaciones")
+          .delete()
+          .in("id", idsParaEliminar);
+
+        if (errorDelete) {
+          console.error(errorDelete);
+          alert("La línea se guardó, pero hubo error al actualizar clasificaciones anteriores.");
+        }
+      }
+    }
+
+    if (manualClasificacionesIds.length === 0) {
+      await cargarClasificacionesAsignadas(fechaLocal, empresaFilaId);
+      return;
+    }
+
+    const payload = manualClasificacionesIds.map((clasificacionId) => ({
+      empresa_id: empresaFilaId,
+      fecha_local: fechaLocal,
+      paciente: filaFinal.paciente.trim(),
+      venta_id: null,
+      grupo_facturacion: filaFinal.grupoFacturacion || null,
+      clasificacion_id: clasificacionId,
+    }));
+
+    const { error } = await supabase
+      .from("caja_paciente_clasificaciones")
+      .insert(payload);
+
+    if (error && error.code !== "23505") {
+      console.error(error);
+      alert("La línea se guardó, pero hubo error al guardar las clasificaciones.");
+    }
+
+    await cargarClasificacionesAsignadas(fechaLocal, empresaFilaId);
+  };
+
+  const metodosManualFiltrados = useMemo(() => {
+    const texto = busquedaMetodoManual.trim().toLowerCase();
+
+    if (!texto) return metodos;
+
+    return metodos.filter((metodo) =>
+      String(metodo.nombre || "").toLowerCase().includes(texto)
+    );
+  }, [metodos, busquedaMetodoManual]);
+
+  const clasificacionesManualFiltradas = useMemo(() => {
+    const texto = busquedaClasificacionManual.trim().toLowerCase();
+
+    if (!texto) return clasificaciones;
+
+    return clasificaciones.filter((clasificacion) =>
+      String(clasificacion.nombre || "").toLowerCase().includes(texto)
+    );
+  }, [clasificaciones, busquedaClasificacionManual]);
+
+  const totalManualModal = useMemo(() => {
+    if (!modalManual.fila?.pagos) return 0;
+
+    return metodos.reduce(
+      (acc, metodo) => acc + Number(modalManual.fila?.pagos?.[metodo.id] || 0),
+      0
+    );
+  }, [modalManual.fila, metodos]);
+
+  const clasificacionesSeleccionadasManual = useMemo(() => {
+    return clasificaciones.filter((clasificacion) =>
+      manualClasificacionesIds.some((id) => String(id) === String(clasificacion.id))
+    );
+  }, [clasificaciones, manualClasificacionesIds]);
+
+  const metodosConMontoManual = useMemo(() => {
+    if (!modalManual.fila?.pagos) return [];
+
+    return metodos
+      .map((metodo) => ({
+        ...metodo,
+        monto: Number(modalManual.fila?.pagos?.[metodo.id] || 0),
+        referencia: modalManual.fila?.referencias?.[metodo.id] || "",
+      }))
+      .filter((metodo) => Number(metodo.monto || 0) > 0);
+  }, [modalManual.fila, metodos]);
+
+  const metodosPrincipalesManual = useMemo(() => {
+    const prioridad = ["efectivo", "reserva", "tarjeta", "credito", "crédito", "transferencia", "cheque"];
+    const texto = busquedaMetodoManual.trim().toLowerCase();
+
+    const ordenados = [...metodos].sort((a, b) => {
+      const aNombre = String(a.nombre || "").toLowerCase();
+      const bNombre = String(b.nombre || "").toLowerCase();
+
+      const aIndex = prioridad.findIndex((p) => aNombre.includes(p));
+      const bIndex = prioridad.findIndex((p) => bNombre.includes(p));
+
+      const aPeso = aIndex === -1 ? 999 : aIndex;
+      const bPeso = bIndex === -1 ? 999 : bIndex;
+
+      if (aPeso !== bPeso) return aPeso - bPeso;
+      return aNombre.localeCompare(bNombre);
+    });
+
+    if (texto) {
+      return ordenados.filter((metodo) =>
+        String(metodo.nombre || "").toLowerCase().includes(texto)
+      );
+    }
+
+    if (mostrarTodosMetodosManual) return ordenados;
+
+    const principales = ordenados.filter((metodo) =>
+      prioridad.some((p) => String(metodo.nombre || "").toLowerCase().includes(p))
+    );
+
+    return principales.length > 0 ? principales.slice(0, 6) : ordenados.slice(0, 6);
+  }, [metodos, busquedaMetodoManual, mostrarTodosMetodosManual]);
+
+  const metodosOcultosManual = Math.max(0, metodos.length - metodosPrincipalesManual.length);
+
+  const metodosVisiblesManual = useMemo(() => {
+    const ids = new Set([
+      ...metodosManualIds.map((id) => String(id)),
+      ...metodos
+        .filter((metodo) => Number(modalManual.fila?.pagos?.[metodo.id] || 0) > 0)
+        .map((metodo) => String(metodo.id)),
+    ]);
+
+    return metodos.filter((metodo) => ids.has(String(metodo.id)));
+  }, [metodos, metodosManualIds, modalManual.fila]);
+
+  const metodosDisponiblesSelector = useMemo(() => {
+    const texto = busquedaMetodoManual.trim().toLowerCase();
+
+    return metodos.filter((metodo) => {
+      if (!texto) return true;
+      return String(metodo.nombre || "").toLowerCase().includes(texto);
+    });
+  }, [metodos, busquedaMetodoManual]);
+
+  const alternarMetodoManual = (metodoId) => {
+    setMetodosManualIds((prev) => {
+      const id = String(metodoId);
+      const existe = prev.some((item) => String(item) === id);
+
+      if (existe) {
+        const tieneMonto = Number(modalManual.fila?.pagos?.[metodoId] || 0) > 0;
+
+        if (tieneMonto) {
+          alert("Este método tiene monto. Primero dejá el monto vacío para quitarlo.");
+          return prev;
+        }
+
+        return prev.filter((item) => String(item) !== id);
+      }
+
+      return [...prev, metodoId];
+    });
+  };
+
+  const guardarModalManual = async () => {
+    const fila = modalManual.fila;
+    if (!fila) return;
+
+    if (!fila.paciente?.trim()) {
+      return alert("Escribí el nombre del paciente.");
+    }
+
+    const tieneMonto = metodos.some((metodo) => Number(fila.pagos?.[metodo.id] || 0) > 0);
+
+    if (!tieneMonto) {
+      return alert("Ingresá al menos un monto de cobro.");
+    }
+
+    if (manualClasificacionesIds.length === 0) {
+      const continuar = window.confirm("¿Quieres guardar sin clasificar?");
+      if (!continuar) return;
+    }
+
+    setGuardandoManual(true);
+
+    const filaFinal = {
+      ...fila,
+      paciente: fila.paciente.trim(),
+      origen: "manual",
+      venta_id: null,
+      empresaId: empresa?.id || fila.empresaId || null,
+      empresaNombre: empresa?.nombre || fila.empresaNombre || "Empresa",
+      grupoFacturacion: fila.grupoFacturacion || "",
+      pagos: { ...(fila.pagos || {}) },
+      referencias: { ...(fila.referencias || {}) },
+    };
+
+    const filaOriginal = modalManual.editando
+      ? filas.find((f) => f.uid === modalManual.filaOriginalUid)
+      : null;
+
+    if (modalManual.editando) {
+      setFilas((prev) =>
+        prev.map((item) =>
+          item.uid === modalManual.filaOriginalUid ? filaFinal : item
+        )
+      );
+    } else {
+      setFilas((prev) => [...prev, filaFinal]);
+    }
+
+    await sincronizarClasificacionesManual(filaFinal, filaOriginal);
+
+    setGuardandoManual(false);
+    cerrarModalManual();
+  };
+
+  const agregarFila = () => {
+    abrirModalManualNuevo();
   };
 
   const eliminarFila = (index) => {
     if (!validarEdicionUnaEmpresa()) return;
+    setAccionesAbiertasUid(null);
 
     const fila = filas[index];
 
@@ -1413,6 +1842,7 @@ export default function CajaDiaria() {
   const abrirModalFacturacion = (filaUid) => {
     if (!validarEdicionUnaEmpresa()) return;
 
+    setAccionesAbiertasUid(null);
     setModalFacturacion({
       open: true,
       filaUid,
@@ -1451,6 +1881,7 @@ export default function CajaDiaria() {
 
   const quitarFacturacionJunta = (filaUid) => {
     if (!validarEdicionUnaEmpresa()) return;
+    setAccionesAbiertasUid(null);
 
     setFilas((prev) =>
       prev.map((fila) =>
@@ -1496,6 +1927,8 @@ export default function CajaDiaria() {
           metodos: metodosIniciales,
           referencias: refsIniciales,
           grupoFacturacion: item.grupoFacturacion || "",
+          empresa_id: item.empresa_id || "",
+          venta_id: item.venta_id || "",
         };
       }
 
@@ -1549,6 +1982,8 @@ export default function CajaDiaria() {
       metodos: g.metodos,
       referencias: g.referencias,
       grupoFacturacion: g.grupoFacturacion,
+      empresa_id: g.empresa_id,
+      venta_id: g.venta_id,
     }));
   };
 
@@ -1803,8 +2238,10 @@ export default function CajaDiaria() {
           mapaPacientes[llave] = {
             fecha: caja.fecha_local,
             empresa: obtenerNombreEmpresa(caja.empresa_id),
+            empresa_id: caja.empresa_id,
             paciente,
             origen,
+            venta_id: d.venta_id || null,
             grupoFacturacion,
             metodos: {},
             referencias: {},
@@ -1854,7 +2291,10 @@ export default function CajaDiaria() {
       detalleBase.push(...Object.values(mapaPacientes));
     });
 
-    const detalleAgrupado = agruparDetallePorGrupo(detalleBase);
+    const detalleAgrupado = agruparDetallePorGrupo(detalleBase).map((item) => ({
+      ...item,
+      clasificaciones: obtenerTextoClasificacionesParaReporte(item),
+    }));
 
     const resumen = {};
     metodos.forEach((m) => {
@@ -2018,6 +2458,7 @@ export default function CajaDiaria() {
     );
 
     const head = [[
+      "Clasificaciones",
       "Fecha",
       "Empresa",
       "Paciente",
@@ -2043,6 +2484,7 @@ export default function CajaDiaria() {
         .join(" | ");
 
       return [
+        item.clasificaciones || "",
         formatearFecha(item.fecha),
         item.empresa || "",
         item.paciente,
@@ -2054,6 +2496,7 @@ export default function CajaDiaria() {
     });
 
     const foot = [[
+      "",
       "",
       "",
       "TOTALES",
@@ -2462,14 +2905,14 @@ export default function CajaDiaria() {
             <table style={styles.table}>
               <thead>
                 <tr style={styles.theadRow}>
-                  <th style={{ ...styles.th, minWidth: 190 }}>Paciente</th>
-                  <th style={{ ...styles.th, minWidth: 120 }}>Origen</th>
+                  <th style={{ ...styles.th, minWidth: 155 }}>Paciente</th>
+                  <th style={{ ...styles.th, minWidth: 230 }}>Origen</th>
                   {metodos.map((metodo) => (
-                    <th key={metodo.id} style={{ ...styles.th, minWidth: 190 }}>
+                    <th key={metodo.id} style={{ ...styles.th, minWidth: 145 }}>
                       {metodo.nombre}
                     </th>
                   ))}
-                  <th style={{ ...styles.th, minWidth: 260 }}>Acción</th>
+                  <th style={{ ...styles.th, minWidth: 130 }}>Acción</th>
                 </tr>
               </thead>
 
@@ -2485,30 +2928,21 @@ export default function CajaDiaria() {
                 {filas.map((fila, index) => (
                   <tr key={fila.uid || index}>
                     <td style={styles.tdTop}>
-                      <input
-                        type="text"
-                        value={fila.paciente}
-                        onChange={(e) => actualizarPaciente(index, e.target.value)}
-                        placeholder="Nombre del paciente"
-                        style={styles.input}
-                        disabled={
-                          modoSoloLecturaMultiempresa ||
-                          fila.origen === "venta" ||
-                          String(fila.empresaId || empresa?.id) !== String(empresa?.id)
-                        }
-                      />
+                      <div style={styles.patientCellCompact}>
+                        <input
+                          type="text"
+                          value={fila.paciente}
+                          onChange={(e) => actualizarPaciente(index, e.target.value)}
+                          placeholder="Nombre del paciente"
+                          style={styles.input}
+                          disabled={
+                            modoSoloLecturaMultiempresa ||
+                            fila.origen === "venta" ||
+                            String(fila.empresaId || empresa?.id) !== String(empresa?.id)
+                          }
+                        />
 
-                      <div style={styles.clasificacionBox}>
-                        <button
-                          type="button"
-                          style={styles.classifyBtn}
-                          onClick={() => abrirModalClasificacion(fila.uid)}
-                          title="Clasificar paciente"
-                        >
-                          Clasificar paciente
-                        </button>
-
-                        <div style={styles.clasificacionChips}>
+                        <div style={styles.clasificacionChipsCompact}>
                           {obtenerClasificacionesFila(fila).length === 0 ? (
                             <span style={styles.clasificacionEmpty}>Sin clasificación</span>
                           ) : (
@@ -2523,28 +2957,20 @@ export default function CajaDiaria() {
                     </td>
 
                     <td style={styles.tdCenter}>
-                      <div style={styles.empresaTagCaja}>
-                        {fila.empresaNombre || obtenerNombreEmpresa(fila.empresaId || empresa?.id)}
-                      </div>
+                      <div style={styles.originInlineWrap}>
+                        <span style={styles.empresaChipCompact}>
+                          {fila.empresaNombre || obtenerNombreEmpresa(fila.empresaId || empresa?.id)}
+                        </span>
 
-                      <span
-                        style={{
-                          ...styles.badge,
-                          background:
-                            fila.origen === "venta" ? "#eefcf3" : "#f4f0f7",
-                          color:
-                            fila.origen === "venta" ? "#0f7a4d" : "#574866",
-                          borderColor:
-                            fila.origen === "venta" ? "#c7eed5" : "#d3c7dd",
-                        }}
-                      >
-                        {fila.origen === "venta" ? "Venta / CxC" : "Manual"}
-                      </span>
+                        <span style={fila.origen === "venta" ? styles.ventaChipCompact : styles.manualChipCompact}>
+                          {fila.origen === "venta" ? "Venta / CxC" : "Manual"}
+                        </span>
+                      </div>
                     </td>
 
                     {metodos.map((metodo) => (
                       <td key={metodo.id} style={styles.tdTop}>
-                        <div style={styles.cellStack}>
+                        <div style={styles.methodCellCompact}>
                           <input
                             type="number"
                             step="0.01"
@@ -2562,83 +2988,85 @@ export default function CajaDiaria() {
                               !(metodo.empresasOrigen || [empresa?.id]).some((empId) => String(empId) === String(empresa?.id))
                             }
                           />
-                          <input
-                            type="text"
-                            value={fila.referencias[metodo.id]}
-                            onChange={(e) =>
-                              actualizarReferencia(index, metodo.id, e.target.value)
-                            }
-                            style={styles.subInput}
-                            placeholder="Voucher / referencia"
-                            disabled={
-                              modoSoloLecturaMultiempresa ||
-                              fila.origen === "venta" ||
-                              String(fila.empresaId || empresa?.id) !== String(empresa?.id) ||
-                              !(metodo.empresasOrigen || [empresa?.id]).some((empId) => String(empId) === String(empresa?.id))
-                            }
-                          />
+
+                          {fila.referencias[metodo.id]?.trim() && (
+                            <span style={styles.referenceTag}>
+                              {metodo.nombre}: {fila.referencias[metodo.id]}
+                            </span>
+                          )}
                         </div>
                       </td>
                     ))}
 
                     <td style={styles.tdTop}>
-                      <div style={styles.actionCell}>
+                      <div style={styles.actionsDropdownWrap}>
                         <button
                           type="button"
-                          onClick={() => abrirModalFacturacion(fila.uid)}
-                          style={styles.linkBtn}
+                          style={styles.actionsMainBtn}
+                          onClick={() =>
+                            setAccionesAbiertasUid((prev) =>
+                              prev === fila.uid ? null : fila.uid
+                            )
+                          }
                         >
-                          {fila.grupoFacturacion ? "Cambiar agrupación" : "Facturar junto"}
+                          Acciones ▾
                         </button>
 
-                        {fila.grupoFacturacion ? (
-                          <div style={styles.linkInfo}>
-                            Con: {obtenerNombreRelacionFacturacion(fila) || "Grupo asignado"}
+                        {accionesAbiertasUid === fila.uid && (
+                          <div style={styles.actionsMenu}>
+                            {fila.origen === "venta" ? (
+                              <button
+                                type="button"
+                                onClick={() => irAEditarVenta(fila)}
+                                style={styles.actionsMenuItem}
+                              >
+                                Ir a editar venta
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => abrirModalManualEditar(fila.uid)}
+                                style={styles.actionsMenuItem}
+                              >
+                                Abrir / Editar
+                              </button>
+                            )}
+
+                            <button
+                              type="button"
+                              onClick={() => abrirModalFacturacion(fila.uid)}
+                              style={styles.actionsMenuItem}
+                              disabled={modoSoloLecturaMultiempresa}
+                            >
+                              {fila.grupoFacturacion ? "Cambiar agrupación" : "Facturar junto"}
+                            </button>
+
+                            {fila.grupoFacturacion && (
+                              <button
+                                type="button"
+                                onClick={() => quitarFacturacionJunta(fila.uid)}
+                                style={styles.actionsMenuItem}
+                                disabled={modoSoloLecturaMultiempresa}
+                              >
+                                Quitar vínculo
+                              </button>
+                            )}
+
+                            {fila.origen !== "venta" && (
+                              <button
+                                type="button"
+                                onClick={() => eliminarFila(index)}
+                                style={{ ...styles.actionsMenuItem, ...styles.actionsMenuItemDanger }}
+                                disabled={modoSoloLecturaMultiempresa}
+                              >
+                                Eliminar
+                              </button>
+                            )}
                           </div>
-                        ) : (
-                          <div style={styles.linkInfoMuted}>Sin agrupación</div>
                         )}
 
                         {fila.grupoFacturacion && (
-                          <button
-                            type="button"
-                            onClick={() => quitarFacturacionJunta(fila.uid)}
-                            style={styles.unlinkBtn}
-                          >
-                            Quitar vínculo
-                          </button>
-                        )}
-
-                        {fila.origen === "venta" ? (
-                          <>
-                            <button
-                              type="button"
-                              onClick={() => irAEditarVenta(fila)}
-                              style={styles.editSourceBtn}
-                            >
-                              Ir a editar
-                            </button>
-
-                            <button
-                              type="button"
-                              onClick={() => eliminarFila(index)}
-                              style={{
-                                ...styles.deleteBtn,
-                                opacity: 0.55,
-                                cursor: "not-allowed",
-                              }}
-                            >
-                              Eliminar
-                            </button>
-                          </>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => eliminarFila(index)}
-                            style={styles.deleteBtn}
-                          >
-                            Eliminar
-                          </button>
+                          <div style={styles.groupMiniText}>Grupo asignado</div>
                         )}
                       </div>
                     </td>
@@ -3005,6 +3433,326 @@ export default function CajaDiaria() {
         </div>
       </div>
 
+      {modalManual.open && modalManual.fila && (
+        <div style={styles.modalOverlay} onClick={cerrarModalManual}>
+          <div style={styles.quickModalBox} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.quickModalHeader}>
+              <div>
+                <h3 style={styles.modalTitle}>
+                  {modalManual.editando ? "Editar cobro manual" : "Cobro manual rápido"}
+                </h3>
+                <p style={styles.modalText}>
+                  {formatearFecha(fechaLocal)} · {empresa?.nombre || "Empresa"}
+                </p>
+              </div>
+
+              <div style={styles.quickTotalHeader}>
+                <span>Total</span>
+                <strong>${formatearMonto(totalManualModal)}</strong>
+              </div>
+
+              <button type="button" onClick={cerrarModalManual} style={styles.modalCloseBtn}>
+                ✕
+              </button>
+            </div>
+
+            <div style={styles.quickModalBody}>
+              <div style={styles.quickMainColumn}>
+                <div style={styles.quickPatientCard}>
+                  <label style={styles.label}>Paciente</label>
+                  <input
+                    type="text"
+                    value={modalManual.fila.paciente || ""}
+                    onChange={(e) => actualizarModalManualCampo("paciente", e.target.value)}
+                    placeholder="Nombre del paciente"
+                    style={styles.input}
+                    autoFocus
+                  />
+                </div>
+
+                <div style={styles.quickMethodsCard}>
+                  <div style={styles.quickSectionHeader}>
+                    <div>
+                      <h4 style={styles.quickSectionTitle}>Métodos de cobro</h4>
+                      <p style={styles.quickSectionText}>
+                        Mostrando los métodos más usados. Usa buscar o “ver todos” si hace falta.
+                      </p>
+                    </div>
+
+                    <button
+                      type="button"
+                      style={styles.quickSmallBtn}
+                      onClick={() => {
+                        setBusquedaMetodoManual("");
+                        setModalMetodosManual(true);
+                      }}
+                    >
+                      + Métodos
+                    </button>
+                  </div>
+
+                  <div style={styles.quickSelectedMethodsInfo}>
+                    Métodos visibles: {metodosVisiblesManual.length}. Usa “+ Métodos” para agregar otros.
+                  </div>
+
+                  <div style={styles.quickMethodListTable}>
+                    {metodosVisiblesManual.length === 0 ? (
+                      <div style={styles.emptyMiniBox}>No hay métodos que coincidan.</div>
+                    ) : (
+                      metodosVisiblesManual.map((metodo) => {
+                        const habilitadoMetodo = (metodo.empresasOrigen || [empresa?.id]).some(
+                          (empId) => String(empId) === String(empresa?.id)
+                        );
+                        const tieneMonto = Number(modalManual.fila.pagos?.[metodo.id] || 0) > 0;
+
+                        return (
+                          <div
+                            key={metodo.id}
+                            style={{
+                              ...styles.quickMethodListRow,
+                              ...(tieneMonto ? styles.quickMethodListRowActive : {}),
+                            }}
+                          >
+                            <button
+                              type="button"
+                              style={styles.methodSelectBtn}
+                              onClick={() => {
+                                if (!habilitadoMetodo) return;
+                                const actual = modalManual.fila.pagos?.[metodo.id] || "";
+                                if (!actual) actualizarModalManualMonto(metodo.id, "");
+                              }}
+                              disabled={!habilitadoMetodo}
+                              title="Seleccionar método"
+                            >
+                              <span style={tieneMonto ? styles.methodDotActive : styles.methodDot} />
+                              <span style={styles.methodNameList}>
+                                <strong>{metodo.nombre}</strong>
+                                {!habilitadoMetodo && <small>No aplica</small>}
+                              </span>
+                            </button>
+
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              value={modalManual.fila.pagos?.[metodo.id] || ""}
+                              onChange={(e) => actualizarModalManualMonto(metodo.id, e.target.value)}
+                              style={styles.quickAmountListInput}
+                              placeholder="0.00"
+                              disabled={!habilitadoMetodo}
+                            />
+
+                            {tieneMonto && (
+                              <input
+                                type="text"
+                                value={modalManual.fila.referencias?.[metodo.id] || ""}
+                                onChange={(e) => actualizarModalManualReferencia(metodo.id, e.target.value)}
+                                style={styles.quickReferenceListInput}
+                                placeholder="Referencia / voucher"
+                                disabled={!habilitadoMetodo}
+                              />
+                            )}
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <aside style={styles.quickSideColumn}>
+                <div style={styles.quickClassificationCard}>
+                  <div style={styles.quickSectionHeader}>
+                    <div>
+                      <h4 style={styles.quickSectionTitle}>Clasificación</h4>
+                      <p style={styles.quickSectionText}>
+                        Siempre visible para que el cobro sea rápido.
+                      </p>
+                    </div>
+
+                    <button
+                      type="button"
+                      style={styles.quickSmallBtnGreen}
+                      onClick={abrirNuevaClasificacionRapida}
+                    >
+                      + Nueva
+                    </button>
+                  </div>
+
+                  <input
+                    type="text"
+                    value={busquedaClasificacionManual}
+                    onChange={(e) => setBusquedaClasificacionManual(e.target.value)}
+                    placeholder="Buscar clasificación..."
+                    style={styles.quickSearch}
+                  />
+
+                  <div style={styles.quickClassificationListCompact}>
+                    {clasificacionesManualFiltradas.length === 0 ? (
+                      <div style={styles.emptyMiniBox}>No hay clasificaciones.</div>
+                    ) : (
+                      clasificacionesManualFiltradas.map((clasificacion) => {
+                        const checked = manualClasificacionesIds.some(
+                          (id) => String(id) === String(clasificacion.id)
+                        );
+
+                        return (
+                          <button
+                            key={clasificacion.id}
+                            type="button"
+                            onClick={() => alternarClasificacionManual(clasificacion.id)}
+                            style={{
+                              ...styles.classificationListRow,
+                              ...(checked ? styles.classificationListRowActive : {}),
+                            }}
+                          >
+                            <span style={styles.fakeCheckbox}>{checked ? "✓" : ""}</span>
+
+                            <span style={styles.classificationListName}>
+                              <strong>{clasificacion.nombre}</strong>
+                              <small>${formatearMonto(clasificacion.monto)}</small>
+                            </span>
+                          </button>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+
+                <div style={styles.quickSummaryCard}>
+                  <h4 style={styles.quickSectionTitle}>Resumen</h4>
+
+                  <div style={styles.quickSummaryLine}>
+                    <span>Paciente</span>
+                    <strong>{modalManual.fila.paciente || "Sin nombre"}</strong>
+                  </div>
+
+                  <div style={styles.quickSummaryLine}>
+                    <span>Total cobrado</span>
+                    <strong>${formatearMonto(totalManualModal)}</strong>
+                  </div>
+
+                  <div style={styles.quickSummaryLine}>
+                    <span>Métodos usados</span>
+                    <strong>{metodosConMontoManual.length}</strong>
+                  </div>
+
+                  <div style={styles.quickSummaryTags}>
+                    {clasificacionesSeleccionadasManual.length === 0 ? (
+                      <span style={styles.emptyChip}>Sin clasificación</span>
+                    ) : (
+                      clasificacionesSeleccionadasManual.map((c) => (
+                        <span key={c.id} style={styles.classificationChip}>
+                          {c.nombre}
+                        </span>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </aside>
+            </div>
+
+            <div style={styles.quickModalFooter}>
+              <button
+                type="button"
+                style={styles.saveBtn}
+                onClick={guardarModalManual}
+                disabled={guardandoManual}
+              >
+                {guardandoManual
+                  ? "Guardando..."
+                  : modalManual.editando
+                  ? "Guardar cambios"
+                  : "Guardar cobro"}
+              </button>
+
+              <button
+                type="button"
+                style={styles.clearBtn}
+                onClick={cerrarModalManual}
+                disabled={guardandoManual}
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {modalMetodosManual && modalManual.open && (
+        <div style={styles.innerModalOverlay} onClick={() => setModalMetodosManual(false)}>
+          <div style={styles.metodosSelectorBox} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.metodosSelectorHeader}>
+              <div>
+                <h3 style={styles.modalTitle}>Seleccionar métodos</h3>
+                <p style={styles.modalText}>
+                  Marcá los métodos que querés usar en este cobro.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setModalMetodosManual(false)}
+                style={styles.modalCloseBtn}
+              >
+                ✕
+              </button>
+            </div>
+
+            <input
+              type="text"
+              value={busquedaMetodoManual}
+              onChange={(e) => setBusquedaMetodoManual(e.target.value)}
+              placeholder="Buscar método de cobro..."
+              style={styles.quickSearch}
+              autoFocus
+            />
+
+            <div style={styles.metodosSelectorList}>
+              {metodosDisponiblesSelector.length === 0 ? (
+                <div style={styles.emptyMiniBox}>No hay métodos que coincidan.</div>
+              ) : (
+                metodosDisponiblesSelector.map((metodo) => {
+                  const checked = metodosManualIds.some(
+                    (id) => String(id) === String(metodo.id)
+                  );
+                  const monto = Number(modalManual.fila?.pagos?.[metodo.id] || 0);
+
+                  return (
+                    <button
+                      key={metodo.id}
+                      type="button"
+                      onClick={() => alternarMetodoManual(metodo.id)}
+                      style={{
+                        ...styles.metodoSelectorItem,
+                        ...(checked ? styles.metodoSelectorItemActive : {}),
+                      }}
+                    >
+                      <span style={styles.fakeCheckbox}>{checked ? "✓" : ""}</span>
+
+                      <span style={styles.metodoSelectorName}>
+                        <strong>{metodo.nombre}</strong>
+                        {monto > 0 && <small>Monto actual: ${formatearMonto(monto)}</small>}
+                      </span>
+                    </button>
+                  );
+                })
+              )}
+            </div>
+
+            <div style={styles.metodosSelectorFooter}>
+              <button
+                type="button"
+                style={styles.saveBtn}
+                onClick={() => setModalMetodosManual(false)}
+              >
+                Listo
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {modalClasificacion.open && filaModalClasificacion && (
         <div style={styles.modalOverlay} onClick={cerrarModalClasificacion}>
           <div style={styles.modalBox} onClick={(e) => e.stopPropagation()}>
@@ -3190,12 +3938,809 @@ const styles = {
   page: {
     width: "100%",
     minHeight: "100%",
+    boxSizing: "border-box",
   },
 
   container: {
-    width: "100%",
+    width: "min(100%, 1380px)",
+    margin: "0 auto",
     display: "grid",
     gap: "18px",
+  },
+
+  modalBoxManualPro: {
+    width: "min(1120px, calc(100vw - 28px))",
+    maxHeight: "92vh",
+    overflow: "hidden",
+    background: "#fff",
+    borderRadius: "24px",
+    border: "1px solid #d7dbe2",
+    boxShadow: "0 24px 90px rgba(15, 23, 42, 0.25)",
+    display: "grid",
+    gridTemplateRows: "auto auto minmax(0, 1fr) auto",
+  },
+
+  modalManualHero: {
+    padding: "20px 22px",
+    borderBottom: "1px solid #e2e8f0",
+    background: "linear-gradient(180deg, #ffffff 0%, #fbf8fd 100%)",
+    display: "flex",
+    alignItems: "start",
+    justifyContent: "space-between",
+    gap: "14px",
+  },
+
+  manualPatientBlock: {
+    padding: "16px 22px",
+    borderBottom: "1px solid #e2e8f0",
+    display: "grid",
+    gap: "7px",
+    background: "#fff",
+  },
+
+  manualTwoPanelGrid: {
+    minHeight: 0,
+    padding: "18px 22px",
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
+    gap: "16px",
+    overflow: "hidden",
+  },
+
+  manualPanel: {
+    minHeight: 0,
+    border: "1px solid #e2e8f0",
+    borderRadius: "20px",
+    background: "#fbfbfc",
+    padding: "14px",
+    display: "grid",
+    gridTemplateRows: "auto auto minmax(0, 1fr)",
+    gap: "12px",
+  },
+
+  manualPanelHeader: {
+    display: "flex",
+    alignItems: "start",
+    justifyContent: "space-between",
+    gap: "12px",
+  },
+
+  manualPanelTitle: {
+    margin: 0,
+    color: "#574866",
+    fontSize: "17px",
+    fontWeight: "900",
+  },
+
+  manualPanelText: {
+    margin: "4px 0 0 0",
+    color: "#64748b",
+    fontSize: "12px",
+    lineHeight: 1.35,
+  },
+
+  manualCounterBadge: {
+    minWidth: "34px",
+    height: "28px",
+    borderRadius: "999px",
+    display: "grid",
+    placeItems: "center",
+    background: "#f4f0f7",
+    color: "#574866",
+    fontWeight: "900",
+    border: "1px solid #d3c7dd",
+  },
+
+  searchInputSoft: {
+    width: "100%",
+    boxSizing: "border-box",
+    padding: "11px 12px",
+    borderRadius: "13px",
+    border: "1px solid #cfd9e5",
+    background: "#fff",
+    outline: "none",
+    fontSize: "13px",
+  },
+
+  manualScrollableList: {
+    minHeight: 0,
+    overflowY: "auto",
+    display: "grid",
+    gap: "9px",
+    paddingRight: "4px",
+  },
+
+  clasificacionScrollableList: {
+    minHeight: 0,
+    overflowY: "auto",
+    display: "grid",
+    gap: "8px",
+    paddingRight: "4px",
+  },
+
+  metodoRowPro: {
+    display: "grid",
+    gridTemplateColumns: "minmax(140px, 1fr) minmax(110px, 140px) minmax(150px, 0.9fr)",
+    gap: "9px",
+    alignItems: "center",
+    padding: "11px",
+    border: "1px solid #e2e8f0",
+    borderRadius: "16px",
+    background: "#fff",
+  },
+
+  metodoNamePro: {
+    display: "grid",
+    gap: "2px",
+    color: "#1f2937",
+    fontSize: "13px",
+  },
+
+  amountInputPro: {
+    width: "100%",
+    boxSizing: "border-box",
+    padding: "11px 12px",
+    borderRadius: "12px",
+    border: "1px solid #cfd9e5",
+    background: "#fff",
+    outline: "none",
+    textAlign: "right",
+    fontSize: "13px",
+  },
+
+  referenceInputPro: {
+    width: "100%",
+    boxSizing: "border-box",
+    padding: "11px 12px",
+    borderRadius: "12px",
+    border: "1px solid #cfd9e5",
+    background: "#fff",
+    outline: "none",
+    fontSize: "13px",
+  },
+
+  clasificacionRowPro: {
+    width: "100%",
+    border: "1px solid #e2e8f0",
+    background: "#fff",
+    borderRadius: "15px",
+    padding: "11px",
+    display: "flex",
+    alignItems: "center",
+    gap: "10px",
+    cursor: "pointer",
+    textAlign: "left",
+  },
+
+  clasificacionRowProActive: {
+    background: "#eef6ff",
+    border: "1px solid #93c5fd",
+  },
+
+  modalActionsSticky: {
+    padding: "14px 22px",
+    borderTop: "1px solid #e2e8f0",
+    background: "#fff",
+    display: "flex",
+    justifyContent: "flex-end",
+    gap: "10px",
+    flexWrap: "wrap",
+  },
+
+  modalBoxManual: {
+    width: "min(940px, calc(100vw - 28px))",
+    maxHeight: "90vh",
+    overflowY: "auto",
+    background: "#fff",
+    borderRadius: "22px",
+    padding: "20px",
+    border: "1px solid #d7dbe2",
+    boxShadow: "0 20px 80px rgba(15, 23, 42, 0.22)",
+  },
+
+  manualModalGrid: {
+    display: "grid",
+    gridTemplateColumns: "minmax(320px, 1fr) minmax(250px, 330px)",
+    gap: "16px",
+    alignItems: "start",
+  },
+
+  manualMainArea: {
+    display: "grid",
+    gap: "14px",
+  },
+
+  manualPaymentGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))",
+    gap: "10px",
+  },
+
+  manualMetodoCard: {
+    display: "grid",
+    gap: "8px",
+    padding: "12px",
+    borderRadius: "16px",
+    border: "1px solid #e2e8f0",
+    background: "#fbfbfc",
+  },
+
+  manualSideArea: {
+    display: "grid",
+    gap: "12px",
+    padding: "12px",
+    borderRadius: "18px",
+    border: "1px solid #e2e8f0",
+    background: "#f8fafc",
+  },
+
+  manualSideHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    gap: "10px",
+    alignItems: "start",
+  },
+
+  manualSideTitle: {
+    margin: 0,
+    color: "#574866",
+    fontSize: "16px",
+    fontWeight: "900",
+  },
+
+  manualSideText: {
+    margin: "4px 0 0 0",
+    color: "#64748b",
+    fontSize: "12px",
+    lineHeight: 1.35,
+  },
+
+  manualClasificacionList: {
+    display: "grid",
+    gap: "8px",
+    maxHeight: "340px",
+    overflowY: "auto",
+    paddingRight: "2px",
+  },
+
+  manualClasificacionOption: {
+    width: "100%",
+    border: "1px solid #e2e8f0",
+    background: "#fff",
+    borderRadius: "14px",
+    padding: "10px",
+    display: "flex",
+    alignItems: "center",
+    gap: "10px",
+    cursor: "pointer",
+    textAlign: "left",
+  },
+
+  manualClasificacionOptionActive: {
+    background: "#eef6ff",
+    border: "1px solid #93c5fd",
+  },
+
+  manualClasificacionText: {
+    display: "grid",
+    gap: "2px",
+    color: "#1f2937",
+  },
+
+  primarySoftBtnSmall: {
+    background: "#eefcf3",
+    color: "#0f7a4d",
+    border: "1px solid #c7eed5",
+    borderRadius: "12px",
+    padding: "8px 10px",
+    cursor: "pointer",
+    fontWeight: "900",
+    whiteSpace: "nowrap",
+  },
+
+  emptyMiniBox: {
+    padding: "12px",
+    borderRadius: "12px",
+    border: "1px solid #e2e8f0",
+    background: "#fff",
+    color: "#64748b",
+    fontSize: "13px",
+  },
+
+  modalBoxManualClean: {
+    width: "min(860px, calc(100vw - 28px))",
+    maxHeight: "92vh",
+    overflow: "hidden",
+    background: "#fff",
+    borderRadius: "24px",
+    border: "1px solid #d7dbe2",
+    boxShadow: "0 24px 90px rgba(15, 23, 42, 0.25)",
+    display: "grid",
+    gridTemplateRows: "auto minmax(0, 1fr) auto",
+  },
+
+  modalManualHeroClean: {
+    padding: "20px 22px",
+    borderBottom: "1px solid #e2e8f0",
+    background: "linear-gradient(180deg, #ffffff 0%, #fbf8fd 100%)",
+    display: "flex",
+    alignItems: "start",
+    justifyContent: "space-between",
+    gap: "14px",
+  },
+
+  cleanModalBody: {
+    overflowY: "auto",
+    padding: "18px 22px",
+    display: "grid",
+    gap: "14px",
+    background: "#f8fafc",
+  },
+
+  cleanSection: {
+    background: "#fff",
+    border: "1px solid #e2e8f0",
+    borderRadius: "20px",
+    padding: "14px",
+    display: "grid",
+    gap: "12px",
+  },
+
+  cleanSectionHeader: {
+    display: "flex",
+    alignItems: "center",
+    gap: "10px",
+  },
+
+  cleanSectionHeaderBetween: {
+    display: "flex",
+    justifyContent: "space-between",
+    gap: "12px",
+    alignItems: "start",
+    flexWrap: "wrap",
+  },
+
+  cleanStep: {
+    width: "30px",
+    height: "30px",
+    borderRadius: "11px",
+    background: "#f4f0f7",
+    color: "#574866",
+    border: "1px solid #d3c7dd",
+    display: "grid",
+    placeItems: "center",
+    fontWeight: "900",
+    flexShrink: 0,
+  },
+
+  cleanSectionTitle: {
+    margin: 0,
+    color: "#574866",
+    fontSize: "16px",
+    fontWeight: "900",
+  },
+
+  cleanSectionText: {
+    margin: "3px 0 0 0",
+    color: "#64748b",
+    fontSize: "12px",
+  },
+
+  cleanMethodsList: {
+    display: "grid",
+    gap: "9px",
+    maxHeight: "280px",
+    overflowY: "auto",
+    paddingRight: "2px",
+  },
+
+  cleanMethodRow: {
+    display: "grid",
+    gridTemplateColumns: "minmax(120px, 1fr) minmax(90px, 120px) minmax(120px, 0.9fr)",
+    gap: "8px",
+    alignItems: "center",
+    padding: "10px",
+    borderRadius: "14px",
+    border: "1px solid #e2e8f0",
+    background: "#fbfbfc",
+  },
+
+  cleanMethodName: {
+    display: "grid",
+    gap: "2px",
+    color: "#1f2937",
+    fontSize: "13px",
+  },
+
+  cleanAmountInput: {
+    width: "100%",
+    boxSizing: "border-box",
+    padding: "10px 11px",
+    borderRadius: "12px",
+    border: "1px solid #cfd9e5",
+    background: "#fff",
+    outline: "none",
+    textAlign: "right",
+    fontSize: "13px",
+  },
+
+  cleanReferenceInput: {
+    width: "100%",
+    boxSizing: "border-box",
+    padding: "10px 11px",
+    borderRadius: "12px",
+    border: "1px solid #cfd9e5",
+    background: "#fff",
+    outline: "none",
+    fontSize: "13px",
+  },
+
+  cleanClassificationGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))",
+    gap: "8px",
+    maxHeight: "230px",
+    overflowY: "auto",
+    paddingRight: "2px",
+  },
+
+  cleanClassificationChip: {
+    width: "100%",
+    border: "1px solid #e2e8f0",
+    background: "#fbfbfc",
+    borderRadius: "14px",
+    padding: "10px",
+    display: "flex",
+    alignItems: "center",
+    gap: "9px",
+    cursor: "pointer",
+    textAlign: "left",
+  },
+
+  cleanClassificationChipActive: {
+    background: "#eef6ff",
+    border: "1px solid #93c5fd",
+  },
+
+  actionsDropdownWrap: {
+    position: "relative",
+    display: "grid",
+    gap: "6px",
+  },
+
+  actionsMainBtn: {
+    width: "100%",
+    background: "#f4f0f7",
+    color: "#574866",
+    border: "1px solid #d3c7dd",
+    borderRadius: "14px",
+    padding: "11px 12px",
+    cursor: "pointer",
+    fontWeight: "900",
+  },
+
+  actionsMenu: {
+    position: "absolute",
+    right: 0,
+    top: "calc(100% + 6px)",
+    zIndex: 20,
+    minWidth: "190px",
+    background: "#fff",
+    border: "1px solid #d7dbe2",
+    borderRadius: "14px",
+    padding: "6px",
+    boxShadow: "0 14px 35px rgba(15, 23, 42, 0.16)",
+    display: "grid",
+    gap: "4px",
+  },
+
+  actionsMenuItem: {
+    width: "100%",
+    textAlign: "left",
+    background: "#fff",
+    color: "#334155",
+    border: "none",
+    borderRadius: "10px",
+    padding: "9px 10px",
+    cursor: "pointer",
+    fontWeight: "800",
+    fontSize: "12px",
+  },
+
+  actionsMenuItemDanger: {
+    color: "#be123c",
+    background: "#fff1f2",
+  },
+
+  groupMiniText: {
+    color: "#b45309",
+    background: "#fff7ed",
+    border: "1px solid #fed7aa",
+    borderRadius: "999px",
+    padding: "4px 8px",
+    fontSize: "11px",
+    textAlign: "center",
+    fontWeight: "800",
+  },
+
+  patientCellCompact: {
+    display: "grid",
+    gap: "7px",
+  },
+
+  originInlineWrap: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "7px",
+    flexWrap: "wrap",
+  },
+
+  empresaChipCompact: {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    maxWidth: "210px",
+    padding: "6px 9px",
+    borderRadius: "999px",
+    background: "#eef6ff",
+    color: "#1d4ed8",
+    border: "1px solid #bfdbfe",
+    fontSize: "11px",
+    fontWeight: "900",
+    lineHeight: 1.1,
+    textAlign: "center",
+  },
+
+  manualChipCompact: {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: "6px 9px",
+    borderRadius: "999px",
+    background: "#f4f0f7",
+    color: "#574866",
+    border: "1px solid #d3c7dd",
+    fontSize: "11px",
+    fontWeight: "900",
+  },
+
+  ventaChipCompact: {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: "6px 9px",
+    borderRadius: "999px",
+    background: "#eefcf3",
+    color: "#0f7a4d",
+    border: "1px solid #c7eed5",
+    fontSize: "11px",
+    fontWeight: "900",
+  },
+
+  methodCellCompact: {
+    display: "grid",
+    gap: "6px",
+  },
+
+  referenceTag: {
+    display: "inline-flex",
+    alignItems: "center",
+    width: "fit-content",
+    maxWidth: "100%",
+    padding: "4px 8px",
+    borderRadius: "999px",
+    background: "#f8fafc",
+    color: "#64748b",
+    border: "1px solid #e2e8f0",
+    fontSize: "11px",
+    fontWeight: "800",
+    whiteSpace: "normal",
+    lineHeight: 1.2,
+  },
+
+  actionsDropdownWrap: {
+    position: "relative",
+    display: "grid",
+    gap: "6px",
+  },
+
+  actionsMainBtn: {
+    width: "100%",
+    background: "#f4f0f7",
+    color: "#574866",
+    border: "1px solid #d3c7dd",
+    borderRadius: "14px",
+    padding: "11px 12px",
+    cursor: "pointer",
+    fontWeight: "900",
+  },
+
+  actionsMenu: {
+    position: "absolute",
+    right: 0,
+    top: "calc(100% + 6px)",
+    zIndex: 80,
+    minWidth: "190px",
+    background: "#fff",
+    border: "1px solid #d7dbe2",
+    borderRadius: "14px",
+    padding: "6px",
+    boxShadow: "0 14px 35px rgba(15, 23, 42, 0.16)",
+    display: "grid",
+    gap: "4px",
+  },
+
+  actionsMenuItem: {
+    width: "100%",
+    textAlign: "left",
+    background: "#fff",
+    color: "#334155",
+    border: "none",
+    borderRadius: "10px",
+    padding: "9px 10px",
+    cursor: "pointer",
+    fontWeight: "800",
+    fontSize: "12px",
+  },
+
+  actionsMenuItemDanger: {
+    color: "#be123c",
+    background: "#fff1f2",
+  },
+
+  groupMiniText: {
+    color: "#b45309",
+    background: "#fff7ed",
+    border: "1px solid #fed7aa",
+    borderRadius: "999px",
+    padding: "4px 8px",
+    fontSize: "11px",
+    textAlign: "center",
+    fontWeight: "800",
+  },
+
+  patientCellCompact: {
+    display: "grid",
+    gap: "7px",
+  },
+
+  clasificacionChipsCompact: {
+    display: "flex",
+    gap: "6px",
+    flexWrap: "wrap",
+  },
+
+  originInlineWrap: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "7px",
+    flexWrap: "wrap",
+  },
+
+  empresaChipCompact: {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    maxWidth: "220px",
+    padding: "6px 9px",
+    borderRadius: "999px",
+    background: "#eef6ff",
+    color: "#1d4ed8",
+    border: "1px solid #bfdbfe",
+    fontSize: "11px",
+    fontWeight: "900",
+    lineHeight: 1.1,
+    textAlign: "center",
+  },
+
+  manualChipCompact: {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: "6px 9px",
+    borderRadius: "999px",
+    background: "#f4f0f7",
+    color: "#574866",
+    border: "1px solid #d3c7dd",
+    fontSize: "11px",
+    fontWeight: "900",
+  },
+
+  ventaChipCompact: {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: "6px 9px",
+    borderRadius: "999px",
+    background: "#eefcf3",
+    color: "#0f7a4d",
+    border: "1px solid #c7eed5",
+    fontSize: "11px",
+    fontWeight: "900",
+  },
+
+  methodCellCompact: {
+    display: "grid",
+    gap: "6px",
+  },
+
+  referenceTag: {
+    display: "inline-flex",
+    alignItems: "center",
+    width: "fit-content",
+    maxWidth: "100%",
+    padding: "4px 8px",
+    borderRadius: "999px",
+    background: "#f8fafc",
+    color: "#64748b",
+    border: "1px solid #e2e8f0",
+    fontSize: "11px",
+    fontWeight: "800",
+    whiteSpace: "normal",
+    lineHeight: 1.2,
+  },
+
+  actionsDropdownWrap: {
+    position: "relative",
+    display: "grid",
+    gap: "6px",
+  },
+
+  actionsMainBtn: {
+    width: "100%",
+    background: "#f4f0f7",
+    color: "#574866",
+    border: "1px solid #d3c7dd",
+    borderRadius: "14px",
+    padding: "11px 12px",
+    cursor: "pointer",
+    fontWeight: "900",
+  },
+
+  actionsMenu: {
+    position: "absolute",
+    right: 0,
+    top: "calc(100% + 6px)",
+    zIndex: 80,
+    minWidth: "190px",
+    background: "#fff",
+    border: "1px solid #d7dbe2",
+    borderRadius: "14px",
+    padding: "6px",
+    boxShadow: "0 14px 35px rgba(15, 23, 42, 0.16)",
+    display: "grid",
+    gap: "4px",
+  },
+
+  actionsMenuItem: {
+    width: "100%",
+    textAlign: "left",
+    background: "#fff",
+    color: "#334155",
+    border: "none",
+    borderRadius: "10px",
+    padding: "9px 10px",
+    cursor: "pointer",
+    fontWeight: "800",
+    fontSize: "12px",
+  },
+
+  actionsMenuItemDanger: {
+    color: "#be123c",
+    background: "#fff1f2",
+  },
+
+  groupMiniText: {
+    color: "#b45309",
+    background: "#fff7ed",
+    border: "1px solid #fed7aa",
+    borderRadius: "999px",
+    padding: "4px 8px",
+    fontSize: "11px",
+    textAlign: "center",
+    fontWeight: "800",
   },
 
   headerCard: {
@@ -4026,6 +5571,804 @@ const styles = {
 
   modalOptionSub: {
     fontSize: "12px",
-    color: "#64748b",
+      color: "#64748b",
+    },
+
+  // ===== MODAL RÁPIDO TIPO RECEPCIÓN =====
+  quickModalBox: {
+    width: "min(1080px, calc(100vw - 28px))",
+    height: "min(720px, calc(100vh - 28px))",
+    background: "#fff",
+    borderRadius: "24px",
+    border: "1px solid #d7dbe2",
+    boxShadow: "0 24px 90px rgba(15, 23, 42, 0.25)",
+    display: "grid",
+    gridTemplateRows: "auto minmax(0, 1fr) auto",
+    overflow: "hidden",
   },
+
+  quickModalHeader: {
+    padding: "16px 18px",
+    borderBottom: "1px solid #e2e8f0",
+    background: "linear-gradient(180deg, #ffffff 0%, #fbf8fd 100%)",
+    display: "grid",
+    gridTemplateColumns: "minmax(0, 1fr) 150px auto",
+    gap: "12px",
+    alignItems: "center",
+  },
+
+  quickTotalHeader: {
+    background: "#f4f0f7",
+    border: "1px solid #d3c7dd",
+    borderRadius: "16px",
+    padding: "9px 12px",
+    display: "grid",
+    gap: "2px",
+    color: "#574866",
+  },
+
+  quickModalBody: {
+    minHeight: 0,
+    display: "grid",
+    gridTemplateColumns: "minmax(420px, 1fr) minmax(300px, 360px)",
+    gap: "14px",
+    padding: "14px",
+    background: "#f8fafc",
+    overflow: "hidden",
+  },
+
+  quickMainColumn: {
+    minHeight: 0,
+    display: "grid",
+    gridTemplateRows: "auto minmax(0, 1fr)",
+    gap: "12px",
+  },
+
+  quickSideColumn: {
+    minHeight: 0,
+    display: "grid",
+    gridTemplateRows: "minmax(0, 1fr) auto",
+    gap: "12px",
+  },
+
+  quickPatientCard: {
+    background: "#fff",
+    border: "1px solid #e2e8f0",
+    borderRadius: "18px",
+    padding: "12px",
+    display: "grid",
+    gap: "7px",
+  },
+
+  quickMethodsCard: {
+    minHeight: 0,
+    background: "#fff",
+    border: "1px solid #e2e8f0",
+    borderRadius: "18px",
+    padding: "12px",
+    display: "grid",
+    gridTemplateRows: "auto auto minmax(0, 1fr) auto",
+    gap: "10px",
+  },
+
+  quickClassificationCard: {
+    minHeight: 0,
+    background: "#fff",
+    border: "1px solid #e2e8f0",
+    borderRadius: "18px",
+    padding: "12px",
+    display: "grid",
+    gridTemplateRows: "auto auto minmax(0, 1fr)",
+    gap: "10px",
+  },
+
+  quickSummaryCard: {
+    background: "#fff",
+    border: "1px solid #e2e8f0",
+    borderRadius: "18px",
+    padding: "12px",
+    display: "grid",
+    gap: "8px",
+  },
+
+  quickSectionHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    gap: "10px",
+    alignItems: "start",
+  },
+
+  quickSectionTitle: {
+    margin: 0,
+    color: "#574866",
+    fontSize: "15px",
+    fontWeight: "950",
+  },
+
+  quickSectionText: {
+    margin: "3px 0 0 0",
+    color: "#64748b",
+    fontSize: "11.5px",
+    lineHeight: 1.3,
+  },
+
+  quickSmallBtn: {
+    background: "#f4f0f7",
+    color: "#574866",
+    border: "1px solid #d3c7dd",
+    borderRadius: "11px",
+    padding: "7px 9px",
+    cursor: "pointer",
+    fontWeight: "900",
+    fontSize: "11px",
+    whiteSpace: "nowrap",
+  },
+
+  quickSmallBtnGreen: {
+    background: "#eefcf3",
+    color: "#0f7a4d",
+    border: "1px solid #c7eed5",
+    borderRadius: "11px",
+    padding: "7px 9px",
+    cursor: "pointer",
+    fontWeight: "900",
+    fontSize: "11px",
+    whiteSpace: "nowrap",
+  },
+
+  quickSearch: {
+    width: "100%",
+    boxSizing: "border-box",
+    padding: "9px 10px",
+    borderRadius: "12px",
+    border: "1px solid #cfd9e5",
+    background: "#fff",
+    outline: "none",
+    fontSize: "12.5px",
+  },
+
+  quickMethodList: {
+    minHeight: 0,
+    overflowY: "auto",
+    display: "grid",
+    gap: "8px",
+    paddingRight: "3px",
+  },
+
+  quickMethodRow: {
+    display: "grid",
+    gridTemplateColumns: "minmax(130px, 1fr) 112px",
+    gap: "8px",
+    alignItems: "center",
+    background: "#fbfbfc",
+    border: "1px solid #e2e8f0",
+    borderRadius: "14px",
+    padding: "9px",
+  },
+
+  quickMethodRowActive: {
+    background: "#f0fdf4",
+    border: "1px solid #bbf7d0",
+  },
+
+  quickMethodName: {
+    display: "grid",
+    gap: "2px",
+    color: "#1f2937",
+    fontSize: "12.5px",
+  },
+
+  quickAmountInput: {
+    width: "100%",
+    boxSizing: "border-box",
+    padding: "9px 10px",
+    borderRadius: "11px",
+    border: "1px solid #cfd9e5",
+    background: "#fff",
+    outline: "none",
+    textAlign: "right",
+    fontSize: "12.5px",
+  },
+
+  quickReferenceInput: {
+    gridColumn: "1 / -1",
+    width: "100%",
+    boxSizing: "border-box",
+    padding: "8px 10px",
+    borderRadius: "11px",
+    border: "1px solid #d7dbe2",
+    background: "#fff",
+    outline: "none",
+    fontSize: "12px",
+  },
+
+  quickHint: {
+    color: "#64748b",
+    background: "#f8fafc",
+    border: "1px solid #e2e8f0",
+    borderRadius: "12px",
+    padding: "8px 10px",
+    fontSize: "11px",
+  },
+
+  quickClassificationList: {
+    minHeight: 0,
+    overflowY: "auto",
+    display: "grid",
+    gap: "8px",
+    paddingRight: "3px",
+  },
+
+  quickClassificationItem: {
+    width: "100%",
+    border: "1px solid #e2e8f0",
+    background: "#fbfbfc",
+    borderRadius: "14px",
+    padding: "9px",
+    display: "flex",
+    alignItems: "center",
+    gap: "9px",
+    cursor: "pointer",
+    textAlign: "left",
+  },
+
+  quickClassificationItemActive: {
+    background: "#eef6ff",
+    border: "1px solid #93c5fd",
+  },
+
+  quickSummaryLine: {
+    display: "flex",
+    justifyContent: "space-between",
+    gap: "10px",
+    alignItems: "center",
+    padding: "7px 0",
+    borderBottom: "1px solid #edf2f7",
+    color: "#64748b",
+    fontSize: "12px",
+  },
+
+  quickSummaryTags: {
+    display: "flex",
+    gap: "6px",
+    flexWrap: "wrap",
+  },
+
+  quickModalFooter: {
+    padding: "12px 14px",
+    borderTop: "1px solid #e2e8f0",
+    background: "#fff",
+    display: "flex",
+    justifyContent: "flex-end",
+    gap: "8px",
+    flexWrap: "wrap",
+  },
+
+  // ===== LISTAS RÁPIDAS PARA COBRO MANUAL =====
+  quickMethodListTable: {
+    minHeight: 0,
+    overflowY: "auto",
+    display: "grid",
+    gap: "6px",
+    paddingRight: "3px",
+  },
+
+  quickMethodListRow: {
+    display: "grid",
+    gridTemplateColumns: "minmax(160px, 1fr) 105px minmax(110px, 0.8fr)",
+    gap: "7px",
+    alignItems: "center",
+    background: "#fbfbfc",
+    border: "1px solid #e2e8f0",
+    borderRadius: "13px",
+    padding: "7px",
+  },
+
+  quickMethodListRowActive: {
+    background: "#f0fdf4",
+    border: "1px solid #bbf7d0",
+  },
+
+  methodSelectBtn: {
+    border: "none",
+    background: "transparent",
+    padding: 0,
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    cursor: "pointer",
+    textAlign: "left",
+    minWidth: 0,
+  },
+
+  methodDot: {
+    width: "13px",
+    height: "13px",
+    borderRadius: "999px",
+    border: "1px solid #cbd5e1",
+    background: "#fff",
+    flexShrink: 0,
+  },
+
+  methodDotActive: {
+    width: "13px",
+    height: "13px",
+    borderRadius: "999px",
+    border: "1px solid #22c55e",
+    background: "#22c55e",
+    flexShrink: 0,
+  },
+
+  methodNameList: {
+    display: "grid",
+    gap: "1px",
+    color: "#1f2937",
+    fontSize: "12.5px",
+    minWidth: 0,
+    lineHeight: 1.15,
+  },
+
+  quickAmountListInput: {
+    width: "100%",
+    boxSizing: "border-box",
+    padding: "8px 9px",
+    borderRadius: "10px",
+    border: "1px solid #cfd9e5",
+    background: "#fff",
+    outline: "none",
+    textAlign: "right",
+    fontSize: "12.5px",
+  },
+
+  quickReferenceListInput: {
+    width: "100%",
+    boxSizing: "border-box",
+    padding: "8px 9px",
+    borderRadius: "10px",
+    border: "1px solid #cfd9e5",
+    background: "#fff",
+    outline: "none",
+    fontSize: "12px",
+  },
+
+  referenceMuted: {
+    color: "#94a3b8",
+    fontSize: "11px",
+    textAlign: "center",
+  },
+
+  quickClassificationListCompact: {
+    minHeight: 0,
+    overflowY: "auto",
+    display: "grid",
+    gap: "6px",
+    paddingRight: "3px",
+  },
+
+  classificationListRow: {
+    width: "100%",
+    border: "1px solid #e2e8f0",
+    background: "#fbfbfc",
+    borderRadius: "13px",
+    padding: "8px 9px",
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    cursor: "pointer",
+    textAlign: "left",
+  },
+
+  classificationListRowActive: {
+    background: "#eef6ff",
+    border: "1px solid #93c5fd",
+  },
+
+  classificationListName: {
+    display: "grid",
+    gap: "1px",
+    color: "#1f2937",
+    fontSize: "12.5px",
+    lineHeight: 1.15,
+  },
+
+  // ===== MODAL RÁPIDO SIN ESPACIOS MUERTOS =====
+  quickModalBox: {
+    width: "min(900px, calc(100vw - 24px))",
+    height: "min(650px, calc(100vh - 24px))",
+    background: "#fff",
+    borderRadius: "22px",
+    border: "1px solid #d7dbe2",
+    boxShadow: "0 24px 90px rgba(15, 23, 42, 0.25)",
+    display: "grid",
+    gridTemplateRows: "auto minmax(0, 1fr) auto",
+    overflow: "hidden",
+  },
+
+  quickModalHeader: {
+    padding: "14px 16px",
+    borderBottom: "1px solid #e2e8f0",
+    background: "linear-gradient(180deg, #ffffff 0%, #fbf8fd 100%)",
+    display: "grid",
+    gridTemplateColumns: "minmax(0, 1fr) 120px auto",
+    gap: "10px",
+    alignItems: "center",
+  },
+
+  quickTotalHeader: {
+    background: "#f4f0f7",
+    border: "1px solid #d3c7dd",
+    borderRadius: "14px",
+    padding: "8px 10px",
+    display: "grid",
+    gap: "1px",
+    color: "#574866",
+  },
+
+  quickModalBody: {
+    minHeight: 0,
+    display: "grid",
+    gridTemplateColumns: "minmax(430px, 1fr) minmax(260px, 300px)",
+    gap: "10px",
+    padding: "10px",
+    background: "#f8fafc",
+    overflow: "hidden",
+  },
+
+  quickMainColumn: {
+    minHeight: 0,
+    display: "grid",
+    gridTemplateRows: "auto minmax(0, 1fr)",
+    gap: "9px",
+  },
+
+  quickSideColumn: {
+    minHeight: 0,
+    display: "grid",
+    gridTemplateRows: "minmax(0, 1fr) auto",
+    gap: "9px",
+  },
+
+  quickPatientCard: {
+    background: "#fff",
+    border: "1px solid #e2e8f0",
+    borderRadius: "16px",
+    padding: "10px",
+    display: "grid",
+    gap: "6px",
+  },
+
+  quickMethodsCard: {
+    minHeight: 0,
+    background: "#fff",
+    border: "1px solid #e2e8f0",
+    borderRadius: "16px",
+    padding: "10px",
+    display: "grid",
+    gridTemplateRows: "auto auto minmax(0, 1fr) auto",
+    gap: "8px",
+  },
+
+  quickClassificationCard: {
+    minHeight: 0,
+    background: "#fff",
+    border: "1px solid #e2e8f0",
+    borderRadius: "16px",
+    padding: "10px",
+    display: "grid",
+    gridTemplateRows: "auto auto minmax(0, 1fr)",
+    gap: "8px",
+  },
+
+  quickSummaryCard: {
+    background: "#fff",
+    border: "1px solid #e2e8f0",
+    borderRadius: "16px",
+    padding: "10px",
+    display: "grid",
+    gap: "6px",
+  },
+
+  quickSectionHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    gap: "8px",
+    alignItems: "start",
+  },
+
+  quickSectionTitle: {
+    margin: 0,
+    color: "#574866",
+    fontSize: "14px",
+    fontWeight: "950",
+  },
+
+  quickSectionText: {
+    margin: "2px 0 0 0",
+    color: "#64748b",
+    fontSize: "10.5px",
+    lineHeight: 1.25,
+  },
+
+  quickSmallBtn: {
+    background: "#f4f0f7",
+    color: "#574866",
+    border: "1px solid #d3c7dd",
+    borderRadius: "10px",
+    padding: "6px 8px",
+    cursor: "pointer",
+    fontWeight: "900",
+    fontSize: "10.5px",
+    whiteSpace: "nowrap",
+  },
+
+  quickSmallBtnGreen: {
+    background: "#eefcf3",
+    color: "#0f7a4d",
+    border: "1px solid #c7eed5",
+    borderRadius: "10px",
+    padding: "6px 8px",
+    cursor: "pointer",
+    fontWeight: "900",
+    fontSize: "10.5px",
+    whiteSpace: "nowrap",
+  },
+
+  quickSearch: {
+    width: "100%",
+    boxSizing: "border-box",
+    padding: "8px 9px",
+    borderRadius: "11px",
+    border: "1px solid #cfd9e5",
+    background: "#fff",
+    outline: "none",
+    fontSize: "12px",
+    minHeight: "34px",
+  },
+
+  quickMethodListTable: {
+    minHeight: 0,
+    overflowY: "auto",
+    display: "grid",
+    gap: "5px",
+    paddingRight: "2px",
+  },
+
+  quickMethodListRow: {
+    display: "grid",
+    gridTemplateColumns: "minmax(160px, 1fr) 96px",
+    gap: "7px",
+    alignItems: "center",
+    background: "#fbfbfc",
+    border: "1px solid #e2e8f0",
+    borderRadius: "12px",
+    padding: "7px",
+  },
+
+  quickMethodListRowActive: {
+    background: "#f0fdf4",
+    border: "1px solid #bbf7d0",
+  },
+
+  methodSelectBtn: {
+    border: "none",
+    background: "transparent",
+    padding: 0,
+    display: "flex",
+    alignItems: "center",
+    gap: "7px",
+    cursor: "pointer",
+    textAlign: "left",
+    minWidth: 0,
+  },
+
+  methodDot: {
+    width: "11px",
+    height: "11px",
+    borderRadius: "999px",
+    border: "1px solid #cbd5e1",
+    background: "#fff",
+    flexShrink: 0,
+  },
+
+  methodDotActive: {
+    width: "11px",
+    height: "11px",
+    borderRadius: "999px",
+    border: "1px solid #22c55e",
+    background: "#22c55e",
+    flexShrink: 0,
+  },
+
+  methodNameList: {
+    display: "block",
+    color: "#1f2937",
+    fontSize: "12px",
+    minWidth: 0,
+    lineHeight: 1.15,
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+  },
+
+  quickAmountListInput: {
+    width: "100%",
+    boxSizing: "border-box",
+    padding: "7px 8px",
+    borderRadius: "10px",
+    border: "1px solid #cfd9e5",
+    background: "#fff",
+    outline: "none",
+    textAlign: "right",
+    fontSize: "12px",
+    minHeight: "32px",
+  },
+
+  quickReferenceListInput: {
+    gridColumn: "1 / -1",
+    width: "100%",
+    boxSizing: "border-box",
+    padding: "7px 8px",
+    borderRadius: "10px",
+    border: "1px solid #cfd9e5",
+    background: "#fff",
+    outline: "none",
+    fontSize: "11.5px",
+    minHeight: "31px",
+  },
+
+  quickHint: {
+    color: "#64748b",
+    background: "#f8fafc",
+    border: "1px solid #e2e8f0",
+    borderRadius: "10px",
+    padding: "6px 8px",
+    fontSize: "10.5px",
+  },
+
+  quickClassificationListCompact: {
+    minHeight: 0,
+    overflowY: "auto",
+    display: "grid",
+    gap: "5px",
+    paddingRight: "2px",
+  },
+
+  classificationListRow: {
+    width: "100%",
+    border: "1px solid #e2e8f0",
+    background: "#fbfbfc",
+    borderRadius: "12px",
+    padding: "7px 8px",
+    display: "grid",
+    gridTemplateColumns: "22px minmax(0, 1fr)",
+    alignItems: "center",
+    gap: "7px",
+    cursor: "pointer",
+    textAlign: "left",
+  },
+
+  classificationListRowActive: {
+    background: "#eef6ff",
+    border: "1px solid #93c5fd",
+  },
+
+  classificationListName: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: "8px",
+    color: "#1f2937",
+    fontSize: "12px",
+    lineHeight: 1.15,
+    minWidth: 0,
+  },
+
+  quickSummaryLine: {
+    display: "flex",
+    justifyContent: "space-between",
+    gap: "8px",
+    alignItems: "center",
+    padding: "5px 0",
+    borderBottom: "1px solid #edf2f7",
+    color: "#64748b",
+    fontSize: "11px",
+  },
+
+  quickSummaryTags: {
+    display: "flex",
+    gap: "5px",
+    flexWrap: "wrap",
+  },
+
+  quickModalFooter: {
+    padding: "10px",
+    borderTop: "1px solid #e2e8f0",
+    background: "#fff",
+    display: "flex",
+    justifyContent: "flex-end",
+    gap: "7px",
+    flexWrap: "wrap",
+  },
+
+  // ===== SELECTOR SECUNDARIO DE MÉTODOS =====
+  quickSelectedMethodsInfo: {
+    color: "#64748b",
+    background: "#f8fafc",
+    border: "1px solid #e2e8f0",
+    borderRadius: "10px",
+    padding: "6px 8px",
+    fontSize: "10.5px",
+  },
+
+  innerModalOverlay: {
+    position: "fixed",
+    inset: 0,
+    background: "rgba(15, 23, 42, 0.35)",
+    zIndex: 9999,
+    display: "grid",
+    placeItems: "center",
+    padding: "16px",
+  },
+
+  metodosSelectorBox: {
+    width: "min(520px, calc(100vw - 28px))",
+    maxHeight: "min(640px, calc(100vh - 28px))",
+    background: "#fff",
+    borderRadius: "20px",
+    border: "1px solid #d7dbe2",
+    boxShadow: "0 24px 80px rgba(15, 23, 42, 0.25)",
+    padding: "14px",
+    display: "grid",
+    gridTemplateRows: "auto auto minmax(0, 1fr) auto",
+    gap: "10px",
+  },
+
+  metodosSelectorHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    gap: "12px",
+    alignItems: "start",
+  },
+
+  metodosSelectorList: {
+    minHeight: 0,
+    overflowY: "auto",
+    display: "grid",
+    gap: "7px",
+    paddingRight: "2px",
+  },
+
+  metodoSelectorItem: {
+    width: "100%",
+    border: "1px solid #e2e8f0",
+    background: "#fbfbfc",
+    borderRadius: "13px",
+    padding: "9px 10px",
+    display: "grid",
+    gridTemplateColumns: "24px minmax(0, 1fr)",
+    alignItems: "center",
+    gap: "8px",
+    cursor: "pointer",
+    textAlign: "left",
+  },
+
+  metodoSelectorItemActive: {
+    background: "#eef6ff",
+    border: "1px solid #93c5fd",
+  },
+
+  metodoSelectorName: {
+    display: "grid",
+    gap: "2px",
+    color: "#1f2937",
+    fontSize: "12.5px",
+    lineHeight: 1.15,
+  },
+
+  metodosSelectorFooter: {
+    display: "flex",
+    justifyContent: "flex-end",
+    paddingTop: "4px",
+  },
+
 };
