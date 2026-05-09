@@ -3439,7 +3439,7 @@ export default function CajaDiaria() {
             <div style={styles.quickModalHeader}>
               <div>
                 <h3 style={styles.modalTitle}>
-                  {modalManual.editando ? "Editar cobro manual" : "Cobro manual rápido"}
+                  {modalManual.editando ? "Editar cobro manual" : "Creación manual"}
                 </h3>
                 <p style={styles.modalText}>
                   {formatearFecha(fechaLocal)} · {empresa?.nombre || "Empresa"}
