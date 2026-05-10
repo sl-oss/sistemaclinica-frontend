@@ -305,6 +305,10 @@ function UsuariosAccesos() {
     usuarios: false,
   }));
 
+  const [moduloPermisosActivo, setModuloPermisosActivo] = useState(null);
+  const [usuarioDetalleActivo, setUsuarioDetalleActivo] = useState(null);
+  const [invitacionDetalleActiva, setInvitacionDetalleActiva] = useState(null);
+
   const [loading, setLoading] = useState(false);
   const [cargando, setCargando] = useState(true);
 
@@ -801,6 +805,95 @@ function UsuariosAccesos() {
       });
   }, [invitaciones, empresas, busquedaUsuarios]);
 
+  const usuariosConsolidados = useMemo(() => {
+    const mapa = new Map();
+
+    usuariosFiltrados.forEach((usuario) => {
+      const llave =
+        usuario.user_id ||
+        usuario.codigo_usuario ||
+        usuario.nombre_mostrar ||
+        usuario.id;
+
+      if (!mapa.has(llave)) {
+        mapa.set(llave, {
+          llave,
+          nombre_mostrar: usuario.nombre_mostrar,
+          codigo_usuario: usuario.codigo_usuario,
+          user_id: usuario.user_id,
+          rol: usuario.rol,
+          activo: usuario.activo,
+          permisos: usuario.permisos || {},
+          registros: [],
+          empresas: [],
+        });
+      }
+
+      const grupo = mapa.get(llave);
+      grupo.registros.push(usuario);
+      grupo.empresas.push(usuario.empresas?.nombre || "Empresa");
+      grupo.activo = grupo.activo || usuario.activo;
+      grupo.rol = grupo.rol || usuario.rol;
+    });
+
+    return Array.from(mapa.values()).sort((a, b) =>
+      String(a.nombre_mostrar || a.codigo_usuario || "").localeCompare(
+        String(b.nombre_mostrar || b.codigo_usuario || "")
+      )
+    );
+  }, [usuariosFiltrados]);
+
+  const invitacionesConsolidadas = useMemo(() => {
+    const mapa = new Map();
+
+    invitacionesFiltradas.forEach((invitacion) => {
+      const llave = invitacion.email || invitacion.codigo_usuario || invitacion.id;
+
+      if (!mapa.has(llave)) {
+        mapa.set(llave, {
+          llave,
+          email: invitacion.email,
+          nombre_mostrar: invitacion.nombre_mostrar,
+          codigo_usuario: invitacion.codigo_usuario,
+          rol: invitacion.rol,
+          estado: invitacion.estado,
+          permisos: invitacion.permisos || {},
+          registros: [],
+          empresas: [],
+        });
+      }
+
+      const grupo = mapa.get(llave);
+      grupo.registros.push(invitacion);
+      grupo.empresas.push(invitacion.empresas?.nombre || "Empresa");
+    });
+
+    return Array.from(mapa.values()).sort((a, b) =>
+      String(a.nombre_mostrar || a.email || "").localeCompare(
+        String(b.nombre_mostrar || b.email || "")
+      )
+    );
+  }, [invitacionesFiltradas]);
+
+  const abrirModalPermisos = (modulo) => {
+    setModuloPermisosActivo(modulo);
+  };
+
+  const cerrarModalPermisos = () => {
+    setModuloPermisosActivo(null);
+  };
+
+  const contarPermisosGrupo = (modulo) => {
+    return modulo.permisos.filter((p) => permisos[p.key]).length;
+  };
+
+  const resumenPermisosTexto = (permisosObj = {}) => {
+    const activos = permisosBase.filter((p) => permisosObj[p.key]);
+    if (activos.length === 0) return "Sin permisos activos";
+    return activos.slice(0, 4).map((p) => p.label).join(", ") + (activos.length > 4 ? "..." : "");
+  };
+
+
   const empresasSeleccionadasTexto = useMemo(() => {
     const seleccionadas = empresas.filter((e) => empresasSeleccionadas.includes(e.id));
     if (seleccionadas.length === 0) return "Seleccionar empresas";
@@ -828,7 +921,7 @@ function UsuariosAccesos() {
           <span style={styles.eyebrow}>Panel de seguridad</span>
           <h1 style={styles.title}>Usuarios / Accesos</h1>
           <p style={styles.subtitle}>
-            Invitá usuarios, asigná empresas y controlá permisos por cada módulo del sistema.
+            Creá accesos arriba, configurá permisos por módulo en tarjetas y revisá usuarios consolidados sin duplicados.
           </p>
         </div>
 
@@ -863,18 +956,26 @@ function UsuariosAccesos() {
         </div>
       )}
 
-      <div style={styles.mainGrid}>
-        <div style={styles.card}>
-          <div style={styles.cardHeader}>
-            <div>
-              <h3 style={styles.sectionTitle}>Preparar acceso</h3>
-              <p style={styles.sectionSubtitle}>
-                Definí correo, rol, empresas y permisos. También podés editar usuarios o invitaciones existentes.
-              </p>
-            </div>
+      <div style={styles.card}>
+        <div style={styles.cardHeaderFlex}>
+          <div>
+            <h3 style={styles.sectionTitle}>
+              {editandoUsuarioId ? "Editar usuario" : editandoInvitacionId ? "Editar invitación" : "Dar acceso a nuevo usuario"}
+            </h3>
+            <p style={styles.sectionSubtitle}>
+              Definí los datos principales. Los permisos se configuran en las tarjetas de módulos de abajo.
+            </p>
           </div>
 
-          <div style={styles.formGrid}>
+          {(editandoUsuarioId || editandoInvitacionId) && (
+            <button type="button" style={styles.secondaryBtn} onClick={limpiarFormulario}>
+              Cancelar edición
+            </button>
+          )}
+        </div>
+
+        <div style={styles.formGridTop}>
+          {!editandoUsuarioId && (
             <div style={styles.formGroup}>
               <label style={styles.label}>Correo</label>
               <input
@@ -884,45 +985,47 @@ function UsuariosAccesos() {
                 placeholder="usuario@correo.com"
               />
             </div>
+          )}
 
-            <div style={styles.formGroup}>
-              <label style={styles.label}>Nombre a mostrar</label>
-              <input
-                style={styles.input}
-                value={nombreMostrar}
-                onChange={(e) => setNombreMostrar(e.target.value)}
-                placeholder="Ej: Dra. Ana / Recepción"
-              />
-            </div>
-
-            <div style={styles.formGroup}>
-              <label style={styles.label}>Código usuario</label>
-              <input
-                style={styles.input}
-                value={codigoUsuario}
-                onChange={(e) => setCodigoUsuario(e.target.value)}
-                placeholder="Ej: USER001"
-              />
-            </div>
-
-            <div style={styles.formGroup}>
-              <label style={styles.label}>Rol</label>
-              <select
-                style={styles.input}
-                value={rol}
-                onChange={(e) => setRol(e.target.value)}
-              >
-                {rolActivo === "owner" && <option value="owner">Owner</option>}
-                {(rolActivo === "owner" || rolActivo === "propietario") && (
-                  <option value="propietario">Propietario</option>
-                )}
-                <option value="admin">Admin</option>
-                <option value="colaborador">Colaborador</option>
-              </select>
-            </div>
+          <div style={styles.formGroup}>
+            <label style={styles.label}>Nombre a mostrar</label>
+            <input
+              style={styles.input}
+              value={nombreMostrar}
+              onChange={(e) => setNombreMostrar(e.target.value)}
+              placeholder="Ej: Dra. Ana / Recepción"
+            />
           </div>
 
-          <div style={styles.subSection}>
+          <div style={styles.formGroup}>
+            <label style={styles.label}>Código usuario</label>
+            <input
+              style={styles.input}
+              value={codigoUsuario}
+              onChange={(e) => setCodigoUsuario(e.target.value)}
+              placeholder="Ej: USER001"
+            />
+          </div>
+
+          <div style={styles.formGroup}>
+            <label style={styles.label}>Rol</label>
+            <select
+              style={styles.input}
+              value={rol}
+              onChange={(e) => setRol(e.target.value)}
+            >
+              {rolActivo === "owner" && <option value="owner">Owner</option>}
+              {(rolActivo === "owner" || rolActivo === "propietario") && (
+                <option value="propietario">Propietario</option>
+              )}
+              <option value="admin">Admin</option>
+              <option value="colaborador">Colaborador</option>
+            </select>
+          </div>
+        </div>
+
+        <div style={styles.accessFooterGrid}>
+          <div style={styles.subSectionClean}>
             <div style={styles.sectionLine}>
               <div>
                 <h4 style={styles.miniTitle}>Empresas con acceso</h4>
@@ -977,7 +1080,7 @@ function UsuariosAccesos() {
             </div>
           </div>
 
-          <div style={styles.actions}>
+          <div style={styles.actionsPanel}>
             <button
               type="button"
               style={{
@@ -996,82 +1099,52 @@ function UsuariosAccesos() {
                 : "Guardar invitación"}
             </button>
 
-            <button
-              type="button"
-              style={styles.secondaryBtn}
-              onClick={limpiarFormulario}
-            >
+            <button type="button" style={styles.secondaryBtn} onClick={limpiarFormulario}>
               Limpiar
             </button>
           </div>
         </div>
+      </div>
 
-        <div style={styles.card}>
-          <div style={styles.cardHeader}>
-            <div>
-              <h3 style={styles.sectionTitle}>Permisos por módulo</h3>
-              <p style={styles.sectionSubtitle}>
-                Abrí cada módulo y marcá exactamente qué podrá usar.
-              </p>
-            </div>
+      <div style={styles.card}>
+        <div style={styles.cardHeaderFlex}>
+          <div>
+            <h3 style={styles.sectionTitle}>Permisos por módulo</h3>
+            <p style={styles.sectionSubtitle}>
+              Tocá una tarjeta para abrir el modal y marcar permisos específicos.
+            </p>
           </div>
+        </div>
 
-          <div style={styles.modulesList}>
-            {modulosPermisos.map((modulo) => {
-              const totalModulo = modulo.permisos.length;
-              const marcados = modulo.permisos.filter((p) => permisos[p.key]).length;
-              const abierto = Boolean(modulosAbiertos[modulo.id]);
+        <div style={styles.moduleGridCards}>
+          {modulosPermisos.map((modulo) => {
+            const totalModulo = modulo.permisos.length;
+            const marcados = contarPermisosGrupo(modulo);
 
-              return (
-                <div key={modulo.id} style={styles.moduleCard}>
-                  <button
-                    type="button"
-                    style={styles.moduleHeader}
-                    onClick={() => toggleModulo(modulo.id)}
-                  >
-                    <div style={styles.moduleHeaderLeft}>
-                      <span style={styles.moduleIcon}>{modulo.icono}</span>
-                      <div>
-                        <div style={styles.moduleTitle}>{modulo.titulo}</div>
-                        <div style={styles.moduleDesc}>{modulo.descripcion}</div>
-                      </div>
-                    </div>
+            return (
+              <button
+                key={modulo.id}
+                type="button"
+                style={{
+                  ...styles.moduleTile,
+                  ...(marcados > 0 ? styles.moduleTileActive : {}),
+                }}
+                onClick={() => abrirModalPermisos(modulo)}
+              >
+                <span style={styles.moduleTileIcon}>{modulo.icono}</span>
 
-                    <div style={styles.moduleHeaderRight}>
-                      <span style={styles.moduleCount}>{marcados}/{totalModulo}</span>
-                      <span>{abierto ? "▴" : "▾"}</span>
-                    </div>
-                  </button>
-
-                  {abierto && (
-                    <div style={styles.moduleBody}>
-                      <div style={styles.moduleActions}>
-                        <button type="button" style={styles.tinyBtn} onClick={() => marcarModulo(modulo, true)}>
-                          Marcar todo
-                        </button>
-                        <button type="button" style={styles.tinyBtn} onClick={() => marcarModulo(modulo, false)}>
-                          Quitar todo
-                        </button>
-                      </div>
-
-                      <div style={styles.permissionsList}>
-                        {modulo.permisos.map((permiso) => (
-                          <label key={permiso.key} style={styles.switchRow}>
-                            <span>{permiso.label}</span>
-                            <input
-                              type="checkbox"
-                              checked={Boolean(permisos[permiso.key])}
-                              onChange={() => togglePermiso(permiso.key)}
-                            />
-                          </label>
-                        ))}
-                      </div>
-                    </div>
-                  )}
+                <div style={styles.moduleTileBody}>
+                  <strong>{modulo.titulo}</strong>
+                  <span>{modulo.descripcion}</span>
                 </div>
-              );
-            })}
-          </div>
+
+                <div style={styles.moduleTileFooter}>
+                  <span style={styles.moduleCount}>{marcados}/{totalModulo}</span>
+                  <span style={styles.configureTag}>Configurar</span>
+                </div>
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -1086,23 +1159,23 @@ function UsuariosAccesos() {
 
       <div style={styles.twoCols}>
         <div style={styles.card}>
-          <div style={styles.cardHeader}>
+          <div style={styles.cardHeaderFlex}>
             <div>
               <h3 style={styles.sectionTitle}>Usuarios asignados</h3>
               <p style={styles.sectionSubtitle}>
-                Accesos creados en empresa_usuarios.
+                Consolidados por persona. Abrí detalle para ver empresas y accesos.
               </p>
             </div>
           </div>
 
           {cargando ? (
             <div style={styles.emptyMini}>Cargando...</div>
-          ) : usuariosFiltrados.length === 0 ? (
+          ) : usuariosConsolidados.length === 0 ? (
             <div style={styles.emptyMini}>No hay usuarios asignados.</div>
           ) : (
             <div style={styles.list}>
-              {usuariosFiltrados.map((u) => (
-                <div key={u.id} style={styles.userCard}>
+              {usuariosConsolidados.map((u) => (
+                <div key={u.llave} style={styles.userCardCompact}>
                   <div style={styles.avatarCircle}>
                     {(u.nombre_mostrar || u.codigo_usuario || "U").slice(0, 1).toUpperCase()}
                   </div>
@@ -1112,10 +1185,10 @@ function UsuariosAccesos() {
                       {u.nombre_mostrar || u.codigo_usuario || u.user_id}
                     </strong>
                     <div style={styles.userText}>
-                      {u.empresas?.nombre || "Empresa"} · Rol: {u.rol}
+                      {u.empresas.length} empresa(s) · Rol: {u.rol || "-"} · {u.activo ? "Activo" : "Inactivo"}
                     </div>
                     <div style={styles.userText}>
-                      Código: {u.codigo_usuario || "-"}
+                      {resumenPermisosTexto(u.permisos)}
                     </div>
                   </div>
 
@@ -1123,30 +1196,18 @@ function UsuariosAccesos() {
                     <button
                       type="button"
                       style={styles.editBtn}
-                      onClick={() => cargarUsuarioEnFormulario(u)}
+                      onClick={() => setUsuarioDetalleActivo(u)}
+                    >
+                      Ver detalle
+                    </button>
+
+                    <button
+                      type="button"
+                      style={styles.primarySmallBtn}
+                      onClick={() => cargarUsuarioEnFormulario(u.registros[0])}
                       disabled={!puedeAdministrar}
                     >
                       Editar
-                    </button>
-
-                    <button
-                      type="button"
-                      style={u.activo ? styles.disableBtn : styles.enableBtn}
-                      onClick={() => cambiarActivoUsuario(u)}
-                      disabled={!puedeAdministrar || u.rol === "owner"}
-                      title={u.rol === "owner" ? "No se puede desactivar al Owner" : ""}
-                    >
-                      {u.activo ? "Desactivar" : "Activar"}
-                    </button>
-
-                    <button
-                      type="button"
-                      style={styles.deleteSmallBtn}
-                      onClick={() => eliminarUsuarioAcceso(u)}
-                      disabled={!puedeAdministrar || u.rol === "owner"}
-                      title={u.rol === "owner" ? "No se puede eliminar al Owner" : ""}
-                    >
-                      Eliminar
                     </button>
                   </div>
                 </div>
@@ -1156,23 +1217,23 @@ function UsuariosAccesos() {
         </div>
 
         <div style={styles.card}>
-          <div style={styles.cardHeader}>
+          <div style={styles.cardHeaderFlex}>
             <div>
               <h3 style={styles.sectionTitle}>Invitaciones pendientes</h3>
               <p style={styles.sectionSubtitle}>
-                Luego de crear el usuario en Supabase Auth, aplicá el acceso con su user_id.
+                Consolidadas por correo. El detalle muestra empresas e invitaciones.
               </p>
             </div>
           </div>
 
           {cargando ? (
             <div style={styles.emptyMini}>Cargando...</div>
-          ) : invitacionesFiltradas.length === 0 ? (
+          ) : invitacionesConsolidadas.length === 0 ? (
             <div style={styles.emptyMini}>No hay invitaciones.</div>
           ) : (
             <div style={styles.list}>
-              {invitacionesFiltradas.map((inv) => (
-                <div key={inv.id} style={styles.userCard}>
+              {invitacionesConsolidadas.map((inv) => (
+                <div key={inv.llave} style={styles.userCardCompact}>
                   <div style={styles.avatarCircle}>
                     {(inv.nombre_mostrar || inv.email || "I").slice(0, 1).toUpperCase()}
                   </div>
@@ -1180,10 +1241,10 @@ function UsuariosAccesos() {
                   <div style={styles.userMain}>
                     <strong style={styles.userName}>{inv.email}</strong>
                     <div style={styles.userText}>
-                      {inv.empresas?.nombre || "Empresa"} · Rol: {inv.rol}
+                      {inv.empresas.length} empresa(s) · Rol: {inv.rol} · Estado: {inv.estado}
                     </div>
                     <div style={styles.userText}>
-                      Estado: {inv.estado}
+                      {resumenPermisosTexto(inv.permisos)}
                     </div>
                   </div>
 
@@ -1191,30 +1252,18 @@ function UsuariosAccesos() {
                     <button
                       type="button"
                       style={styles.editBtn}
-                      onClick={() => cargarInvitacionEnFormulario(inv)}
-                      disabled={!puedeAdministrar}
+                      onClick={() => setInvitacionDetalleActiva(inv)}
                     >
-                      Editar
+                      Ver detalle
                     </button>
-
-                    {inv.estado === "pendiente" && (
-                      <button
-                        type="button"
-                        style={styles.primarySmallBtn}
-                        onClick={() => aplicarAccesoManual(inv)}
-                        disabled={!puedeAdministrar}
-                      >
-                        Aplicar acceso
-                      </button>
-                    )}
 
                     <button
                       type="button"
-                      style={styles.deleteSmallBtn}
-                      onClick={() => eliminarInvitacion(inv)}
+                      style={styles.primarySmallBtn}
+                      onClick={() => cargarInvitacionEnFormulario(inv.registros[0])}
                       disabled={!puedeAdministrar}
                     >
-                      Eliminar
+                      Editar
                     </button>
                   </div>
                 </div>
@@ -1223,6 +1272,189 @@ function UsuariosAccesos() {
           )}
         </div>
       </div>
+
+      {moduloPermisosActivo && (
+        <div style={styles.modalOverlay} onClick={cerrarModalPermisos}>
+          <div style={styles.permissionModal} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.modalHeader}>
+              <div>
+                <h3 style={styles.modalTitle}>
+                  {moduloPermisosActivo.icono} Permisos - {moduloPermisosActivo.titulo}
+                </h3>
+                <p style={styles.modalText}>{moduloPermisosActivo.descripcion}</p>
+              </div>
+
+              <button type="button" style={styles.closeBtn} onClick={cerrarModalPermisos}>
+                ✕
+              </button>
+            </div>
+
+            <div style={styles.moduleActions}>
+              <button type="button" style={styles.tinyBtn} onClick={() => marcarModulo(moduloPermisosActivo, true)}>
+                Marcar todo
+              </button>
+              <button type="button" style={styles.tinyBtn} onClick={() => marcarModulo(moduloPermisosActivo, false)}>
+                Quitar todo
+              </button>
+            </div>
+
+            <div style={styles.permissionsListModal}>
+              {moduloPermisosActivo.permisos.map((permiso) => (
+                <label key={permiso.key} style={styles.switchRowModal}>
+                  <span>{permiso.label}</span>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(permisos[permiso.key])}
+                    onChange={() => togglePermiso(permiso.key)}
+                  />
+                </label>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {usuarioDetalleActivo && (
+        <div style={styles.modalOverlay} onClick={() => setUsuarioDetalleActivo(null)}>
+          <div style={styles.detailModal} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.modalHeader}>
+              <div>
+                <h3 style={styles.modalTitle}>
+                  👤 {usuarioDetalleActivo.nombre_mostrar || usuarioDetalleActivo.codigo_usuario || "Usuario"}
+                </h3>
+                <p style={styles.modalText}>
+                  Rol: {usuarioDetalleActivo.rol || "-"} · Código: {usuarioDetalleActivo.codigo_usuario || "-"}
+                </p>
+              </div>
+
+              <button type="button" style={styles.closeBtn} onClick={() => setUsuarioDetalleActivo(null)}>
+                ✕
+              </button>
+            </div>
+
+            <div style={styles.detailSection}>
+              <h4>Empresas con acceso</h4>
+              <div style={styles.chipList}>
+                {usuarioDetalleActivo.registros.map((reg) => (
+                  <span key={reg.id} style={styles.companyChip}>
+                    {reg.empresas?.nombre || "Empresa"} · {reg.activo ? "Activo" : "Inactivo"}
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            <div style={styles.detailSection}>
+              <h4>Permisos activos</h4>
+              <div style={styles.chipList}>
+                {permisosBase
+                  .filter((p) => usuarioDetalleActivo.permisos?.[p.key])
+                  .map((p) => (
+                    <span key={p.key} style={styles.permissionChip}>{p.label}</span>
+                  ))}
+              </div>
+            </div>
+
+            <div style={styles.modalFooterActions}>
+              <button
+                type="button"
+                style={styles.primarySmallBtn}
+                onClick={() => {
+                  cargarUsuarioEnFormulario(usuarioDetalleActivo.registros[0]);
+                  setUsuarioDetalleActivo(null);
+                }}
+                disabled={!puedeAdministrar}
+              >
+                Editar permisos
+              </button>
+
+              {usuarioDetalleActivo.registros.map((reg) => (
+                <button
+                  key={reg.id}
+                  type="button"
+                  style={reg.activo ? styles.disableBtn : styles.enableBtn}
+                  onClick={async () => {
+                    await cambiarActivoUsuario(reg);
+                    setUsuarioDetalleActivo(null);
+                  }}
+                  disabled={!puedeAdministrar || reg.rol === "owner"}
+                >
+                  {reg.activo ? `Desactivar ${reg.empresas?.nombre || ""}` : `Activar ${reg.empresas?.nombre || ""}`}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {invitacionDetalleActiva && (
+        <div style={styles.modalOverlay} onClick={() => setInvitacionDetalleActiva(null)}>
+          <div style={styles.detailModal} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.modalHeader}>
+              <div>
+                <h3 style={styles.modalTitle}>✉️ {invitacionDetalleActiva.email}</h3>
+                <p style={styles.modalText}>
+                  Rol: {invitacionDetalleActiva.rol || "-"} · Estado: {invitacionDetalleActiva.estado || "-"}
+                </p>
+              </div>
+
+              <button type="button" style={styles.closeBtn} onClick={() => setInvitacionDetalleActiva(null)}>
+                ✕
+              </button>
+            </div>
+
+            <div style={styles.detailSection}>
+              <h4>Empresas invitadas</h4>
+              <div style={styles.chipList}>
+                {invitacionDetalleActiva.registros.map((reg) => (
+                  <span key={reg.id} style={styles.companyChip}>
+                    {reg.empresas?.nombre || "Empresa"} · {reg.estado}
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            <div style={styles.detailSection}>
+              <h4>Permisos configurados</h4>
+              <div style={styles.chipList}>
+                {permisosBase
+                  .filter((p) => invitacionDetalleActiva.permisos?.[p.key])
+                  .map((p) => (
+                    <span key={p.key} style={styles.permissionChip}>{p.label}</span>
+                  ))}
+              </div>
+            </div>
+
+            <div style={styles.modalFooterActions}>
+              <button
+                type="button"
+                style={styles.primarySmallBtn}
+                onClick={() => {
+                  cargarInvitacionEnFormulario(invitacionDetalleActiva.registros[0]);
+                  setInvitacionDetalleActiva(null);
+                }}
+                disabled={!puedeAdministrar}
+              >
+                Editar invitación
+              </button>
+
+              {invitacionDetalleActiva.registros.map((reg) => (
+                <button
+                  key={reg.id}
+                  type="button"
+                  style={styles.deleteSmallBtn}
+                  onClick={async () => {
+                    await eliminarInvitacion(reg);
+                    setInvitacionDetalleActiva(null);
+                  }}
+                  disabled={!puedeAdministrar}
+                >
+                  Eliminar {reg.empresas?.nombre || ""}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1270,7 +1502,7 @@ const styles = {
     margin: "8px 0 0 0",
     color: "#64748b",
     fontSize: "15px",
-    maxWidth: "680px",
+    maxWidth: "760px",
   },
 
   heroInfo: {
@@ -1319,14 +1551,12 @@ const styles = {
     boxShadow: "0 12px 34px rgba(15, 23, 42, 0.06)",
   },
 
-  mainGrid: {
-    display: "grid",
-    gridTemplateColumns: "minmax(320px, 0.9fr) minmax(420px, 1.1fr)",
-    gap: "18px",
-    alignItems: "start",
-  },
-
-  cardHeader: {
+  cardHeaderFlex: {
+    display: "flex",
+    justifyContent: "space-between",
+    gap: "14px",
+    alignItems: "flex-start",
+    flexWrap: "wrap",
     marginBottom: "16px",
   },
 
@@ -1343,9 +1573,9 @@ const styles = {
     fontSize: "14px",
   },
 
-  formGrid: {
+  formGridTop: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))",
+    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
     gap: "12px",
   },
 
@@ -1371,8 +1601,16 @@ const styles = {
     fontSize: "14px",
   },
 
-  subSection: {
-    marginTop: "18px",
+  accessFooterGrid: {
+    marginTop: "16px",
+    display: "grid",
+    gridTemplateColumns: "minmax(280px, 1fr) auto",
+    gap: "14px",
+    alignItems: "end",
+  },
+
+  subSectionClean: {
+    minWidth: 0,
   },
 
   sectionLine: {
@@ -1481,123 +1719,11 @@ const styles = {
     flexShrink: 0,
   },
 
-  modulesList: {
-    display: "grid",
-    gap: "10px",
-  },
-
-  moduleCard: {
-    border: "1px solid #d7dbe2",
-    borderRadius: "18px",
-    background: "#fbfbfc",
-    overflow: "hidden",
-  },
-
-  moduleHeader: {
-    width: "100%",
-    border: "none",
-    background: "#fff",
-    padding: "14px",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: "12px",
-    cursor: "pointer",
-    textAlign: "left",
-  },
-
-  moduleHeaderLeft: {
-    display: "flex",
-    alignItems: "center",
-    gap: "12px",
-    minWidth: 0,
-  },
-
-  moduleIcon: {
-    width: "40px",
-    height: "40px",
-    borderRadius: "14px",
-    background: "#f4f0f7",
-    border: "1px solid #d3c7dd",
-    display: "grid",
-    placeItems: "center",
-    flexShrink: 0,
-  },
-
-  moduleTitle: {
-    color: "#1f2937",
-    fontSize: "15px",
-    fontWeight: "900",
-  },
-
-  moduleDesc: {
-    color: "#64748b",
-    fontSize: "12px",
-    marginTop: "3px",
-  },
-
-  moduleHeaderRight: {
-    display: "flex",
-    alignItems: "center",
-    gap: "10px",
-    color: "#574866",
-    fontWeight: "900",
-  },
-
-  moduleCount: {
-    background: "#eef6ff",
-    color: "#1d4ed8",
-    border: "1px solid #bfdbfe",
-    borderRadius: "999px",
-    padding: "4px 8px",
-    fontSize: "12px",
-  },
-
-  moduleBody: {
-    padding: "12px 14px 14px",
-    borderTop: "1px solid #edf2f7",
-  },
-
-  moduleActions: {
-    display: "flex",
-    justifyContent: "flex-end",
-    gap: "8px",
-    marginBottom: "10px",
-  },
-
-  tinyBtn: {
-    background: "#fff",
-    color: "#574866",
-    border: "1px solid #d3c7dd",
-    borderRadius: "9px",
-    padding: "6px 8px",
-    cursor: "pointer",
-    fontWeight: "800",
-    fontSize: "11px",
-  },
-
-  permissionsList: {
-    display: "grid",
-    gap: "2px",
-  },
-
-  switchRow: {
-    display: "flex",
-    justifyContent: "space-between",
-    gap: "10px",
-    alignItems: "center",
-    padding: "8px 0",
-    borderTop: "1px solid #edf2f7",
-    color: "#334155",
-    fontSize: "14px",
-    fontWeight: "650",
-  },
-
-  actions: {
+  actionsPanel: {
     display: "flex",
     gap: "10px",
     flexWrap: "wrap",
-    marginTop: "18px",
+    justifyContent: "flex-end",
   },
 
   primaryBtn: {
@@ -1634,6 +1760,71 @@ const styles = {
     fontWeight: "800",
   },
 
+  moduleGridCards: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))",
+    gap: "12px",
+  },
+
+  moduleTile: {
+    minHeight: "155px",
+    border: "1px solid #d7dbe2",
+    background: "linear-gradient(180deg, #fff 0%, #fbfbfc 100%)",
+    borderRadius: "20px",
+    padding: "15px",
+    cursor: "pointer",
+    textAlign: "left",
+    display: "grid",
+    gridTemplateRows: "auto 1fr auto",
+    gap: "10px",
+    color: "#334155",
+    boxShadow: "0 8px 22px rgba(15, 23, 42, 0.04)",
+  },
+
+  moduleTileActive: {
+    border: "1px solid #8a79a0",
+    background: "linear-gradient(180deg, #fff 0%, #f7f2fa 100%)",
+  },
+
+  moduleTileIcon: {
+    width: "44px",
+    height: "44px",
+    borderRadius: "15px",
+    background: "#f4f0f7",
+    border: "1px solid #d3c7dd",
+    display: "grid",
+    placeItems: "center",
+    fontSize: "22px",
+  },
+
+  moduleTileBody: {
+    display: "grid",
+    gap: "5px",
+  },
+
+  moduleTileFooter: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: "8px",
+  },
+
+  moduleCount: {
+    background: "#eef6ff",
+    color: "#1d4ed8",
+    border: "1px solid #bfdbfe",
+    borderRadius: "999px",
+    padding: "5px 9px",
+    fontSize: "12px",
+    fontWeight: "900",
+  },
+
+  configureTag: {
+    color: "#574866",
+    fontSize: "12px",
+    fontWeight: "900",
+  },
+
   searchCard: {
     background: "#fff",
     border: "1px solid #d7dbe2",
@@ -1662,9 +1853,9 @@ const styles = {
     gap: "10px",
   },
 
-  userCard: {
+  userCardCompact: {
     display: "grid",
-    gridTemplateColumns: "44px minmax(180px, 1fr) auto",
+    gridTemplateColumns: "44px minmax(0, 1fr) auto",
     gap: "12px",
     alignItems: "center",
     border: "1px solid #e2e8f0",
@@ -1702,7 +1893,6 @@ const styles = {
     wordBreak: "break-word",
   },
 
-
   cardActions: {
     display: "flex",
     gap: "8px",
@@ -1729,7 +1919,6 @@ const styles = {
     cursor: "pointer",
     fontWeight: "800",
   },
-
 
   disableBtn: {
     background: "#fff7ed",
@@ -1775,6 +1964,147 @@ const styles = {
     background: "#f8fafc",
     borderRadius: "14px",
     border: "1px solid #e2e8f0",
+  },
+
+  modalOverlay: {
+    position: "fixed",
+    inset: 0,
+    background: "rgba(15,23,42,0.45)",
+    zIndex: 9900,
+    display: "grid",
+    placeItems: "center",
+    padding: "18px",
+  },
+
+  permissionModal: {
+    width: "min(620px, calc(100vw - 30px))",
+    maxHeight: "calc(100vh - 40px)",
+    overflowY: "auto",
+    background: "#fff",
+    borderRadius: "24px",
+    border: "1px solid #e2e8f0",
+    boxShadow: "0 24px 80px rgba(15,23,42,0.24)",
+    padding: "18px",
+    display: "grid",
+    gap: "14px",
+  },
+
+  detailModal: {
+    width: "min(720px, calc(100vw - 30px))",
+    maxHeight: "calc(100vh - 40px)",
+    overflowY: "auto",
+    background: "#fff",
+    borderRadius: "24px",
+    border: "1px solid #e2e8f0",
+    boxShadow: "0 24px 80px rgba(15,23,42,0.24)",
+    padding: "18px",
+    display: "grid",
+    gap: "14px",
+  },
+
+  modalHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    gap: "12px",
+    alignItems: "flex-start",
+  },
+
+  modalTitle: {
+    margin: 0,
+    color: "#574866",
+    fontSize: "22px",
+    fontWeight: "950",
+  },
+
+  modalText: {
+    margin: "5px 0 0",
+    color: "#64748b",
+    fontSize: "13px",
+  },
+
+  closeBtn: {
+    border: "none",
+    background: "#f1f5f9",
+    color: "#334155",
+    borderRadius: "11px",
+    width: "36px",
+    height: "36px",
+    cursor: "pointer",
+    fontWeight: "950",
+  },
+
+  moduleActions: {
+    display: "flex",
+    justifyContent: "flex-end",
+    gap: "8px",
+  },
+
+  tinyBtn: {
+    background: "#fff",
+    color: "#574866",
+    border: "1px solid #d3c7dd",
+    borderRadius: "9px",
+    padding: "7px 9px",
+    cursor: "pointer",
+    fontWeight: "800",
+    fontSize: "12px",
+  },
+
+  permissionsListModal: {
+    display: "grid",
+    gap: "8px",
+  },
+
+  switchRowModal: {
+    display: "flex",
+    justifyContent: "space-between",
+    gap: "12px",
+    alignItems: "center",
+    padding: "12px",
+    border: "1px solid #edf2f7",
+    borderRadius: "14px",
+    color: "#334155",
+    fontSize: "14px",
+    fontWeight: "750",
+    background: "#fbfbfc",
+  },
+
+  detailSection: {
+    display: "grid",
+    gap: "9px",
+  },
+
+  chipList: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "8px",
+  },
+
+  companyChip: {
+    background: "#eef6ff",
+    color: "#1d4ed8",
+    border: "1px solid #bfdbfe",
+    borderRadius: "999px",
+    padding: "7px 10px",
+    fontSize: "12px",
+    fontWeight: "850",
+  },
+
+  permissionChip: {
+    background: "#f4f0f7",
+    color: "#574866",
+    border: "1px solid #d3c7dd",
+    borderRadius: "999px",
+    padding: "7px 10px",
+    fontSize: "12px",
+    fontWeight: "850",
+  },
+
+  modalFooterActions: {
+    display: "flex",
+    gap: "8px",
+    flexWrap: "wrap",
+    justifyContent: "flex-end",
   },
 };
 

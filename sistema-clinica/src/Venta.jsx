@@ -1082,6 +1082,10 @@ function Venta() {
                 <strong>{reportePrecios.length}</strong>
               </div>
 
+              <div>
+                <span>Diferencia total</span>
+                <strong>${totalDiferenciaReporte.toFixed(2)}</strong>
+              </div>
             </div>
 
             <div style={styles.reporteTableWrap}>
@@ -1102,6 +1106,7 @@ function Venta() {
                       <th style={styles.reporteTh}>Cantidad</th>
                       <th style={styles.reporteTh}>Precio base</th>
                       <th style={styles.reporteTh}>Precio cobrado</th>
+                      <th style={styles.reporteTh}>Diferencia</th>
                       <th style={styles.reporteTh}>Estado</th>
                     </tr>
                   </thead>
@@ -1111,6 +1116,7 @@ function Venta() {
                       const cantidad = Number(row.cantidad || 0);
                       const precioBase = Number(row.precio_base || 0);
                       const precioCobrado = Number(row.precio || 0);
+                      const diferencia = (precioCobrado - precioBase) * cantidad;
 
                       return (
                         <tr key={row.id}>
@@ -1131,7 +1137,15 @@ function Venta() {
                           <td style={styles.reporteTd}>{cantidad}</td>
                           <td style={styles.reporteTd}>${precioBase.toFixed(2)}</td>
                           <td style={styles.reporteTd}>${precioCobrado.toFixed(2)}</td>
-                          
+                          <td
+                            style={{
+                              ...styles.reporteTd,
+                              fontWeight: 900,
+                              color: diferencia < 0 ? "#be123c" : "#0f7a4d",
+                            }}
+                          >
+                            ${diferencia.toFixed(2)}
+                          </td>
                           <td style={styles.reporteTd}>{row.ventas?.estado || ""}</td>
                         </tr>
                       );
@@ -1270,6 +1284,8 @@ const styles = {
 
   right: {
     minWidth: 0,
+    width: "100%",
+    boxSizing: "border-box",
   },
 
   panel: {
@@ -1506,6 +1522,8 @@ const styles = {
     background: "#f8f8fa",
     borderRadius: "16px",
     border: "1px solid #d7dbe2",
+    overflow: "hidden",
+    boxSizing: "border-box",
   },
 
   pagosHeader: {
@@ -1519,14 +1537,18 @@ const styles = {
 
   pagoRow: {
     display: "grid",
-    gridTemplateColumns: "minmax(140px, 1fr) 120px minmax(180px, 1fr) auto",
+    gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))",
     gap: "8px",
     marginBottom: "8px",
     alignItems: "center",
+    width: "100%",
+    boxSizing: "border-box",
   },
 
   pagoSelect: {
     width: "100%",
+    minWidth: 0,
+    boxSizing: "border-box",
     padding: "10px 12px",
     borderRadius: "10px",
     border: "1px solid #d7dbe2",
@@ -1535,6 +1557,8 @@ const styles = {
 
   pagoInput: {
     width: "100%",
+    minWidth: 0,
+    boxSizing: "border-box",
     padding: "10px 12px",
     borderRadius: "10px",
     border: "1px solid #d7dbe2",
@@ -1543,6 +1567,8 @@ const styles = {
 
   referenciaInput: {
     width: "100%",
+    minWidth: 0,
+    boxSizing: "border-box",
     padding: "10px 12px",
     borderRadius: "10px",
     border: "1px solid #d7dbe2",
@@ -1550,11 +1576,16 @@ const styles = {
   },
 
   btnEliminarPago: {
+    width: "42px",
+    minWidth: "42px",
+    height: "42px",
+    display: "grid",
+    placeItems: "center",
     background: "#ef4444",
     color: "white",
     border: "none",
     borderRadius: "10px",
-    padding: "10px 12px",
+    padding: 0,
     cursor: "pointer",
     fontWeight: 700,
   },
@@ -1713,6 +1744,7 @@ const styles = {
     fontSize: 11,
     fontWeight: 800,
   },
+
 
   btnReportePrecios: {
     marginTop: 8,

@@ -47,6 +47,10 @@ function App() {
   const [nuevaEmpresa, setNuevaEmpresa] = useState("");
   const [pantalla, setPantalla] = useState("dashboard");
   const [esMovil, setEsMovil] = useState(window.innerWidth < 900);
+  const [menuAbiertoMovil, setMenuAbiertoMovil] = useState(false);
+  const [menuAnclado, setMenuAnclado] = useState(() => {
+    return localStorage.getItem("menu_anclado") === "true";
+  });
 
   const tokenConfirmacion = window.location.pathname.startsWith("/confirmar-cita/")
     ? window.location.pathname.split("/confirmar-cita/")[1]
@@ -72,7 +76,15 @@ function App() {
   }, []);
 
   useEffect(() => {
-    const onResize = () => setEsMovil(window.innerWidth < 900);
+    const onResize = () => {
+      const movil = window.innerWidth < 900;
+      setEsMovil(movil);
+
+      if (!movil) {
+        setMenuAbiertoMovil(false);
+      }
+    };
+
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, []);
@@ -391,6 +403,16 @@ function App() {
       atencion_clinica_ver: true,
       atencion_clinica_crear: true,
       atencion_clinica_editar: true,
+      atencion_clinica_enviar_cobro: true,
+      reporte_atenciones_cobro_ver: true,
+      reporte_atenciones_cobro_exportar: true,
+      bandeja_notificaciones_ver: true,
+      bandeja_notificaciones_leer: true,
+      notif_cita_confirmada_ver: true,
+      notif_cita_cancelada_ver: true,
+      notif_cita_reagendada_ver: true,
+      notif_cita_lunes_contacto_ver: true,
+      notif_cita_enviada_cobro_ver: true,
     };
 
     const { error: errorRelacion } = await supabase
@@ -422,7 +444,8 @@ function App() {
   };
 
   const tienePermiso = (clave) => {
-    if (rolActivo === "owner" || rolActivo === "admin") return true;
+    const rol = String(rolActivo || "").toLowerCase();
+    if (rol === "owner" || rol === "admin" || rol === "propietario") return true;
     return Boolean(permisosActivos?.[clave]);
   };
 
@@ -443,6 +466,16 @@ function App() {
       { key: "Caja Chica", label: "💵 Caja Chica", permiso: "caja_chica_ver" },
     ].filter((item) => tienePermiso(item.permiso));
   }, [rolActivo, permisosActivos]);
+
+  const toggleMenuAnclado = () => {
+    const nuevo = !menuAnclado;
+    setMenuAnclado(nuevo);
+    localStorage.setItem("menu_anclado", String(nuevo));
+
+    if (nuevo) {
+      setMenuAbiertoMovil(true);
+    }
+  };
 
   const renderContenido = () => {
     if (pantalla === "dashboard") return <Dashboard onNavigate={cambiarPantalla} />;
@@ -677,20 +710,54 @@ function App() {
         </div>
       </div>
 
-      <div style={styles.menuBar}>
-        {menuVisible.map((item) => (
-          <button
-            key={item.key}
-            style={{
-              ...styles.menuButton,
-              ...(pantalla === item.key ? styles.menuButtonActive : {}),
-            }}
-            onClick={() => cambiarPantalla(item.key)}
-          >
-            {item.label}
-          </button>
-        ))}
-      </div>
+      {(!esMovil || menuAbiertoMovil || menuAnclado) && (
+        <div style={esMovil ? styles.menuBarMovil : styles.menuBar}>
+          {menuVisible.map((item) => (
+            <button
+              key={item.key}
+              style={{
+                ...styles.menuButton,
+                ...(pantalla === item.key ? styles.menuButtonActive : {}),
+              }}
+              onClick={() => {
+                cambiarPantalla(item.key);
+                if (esMovil && !menuAnclado) {
+                  setMenuAbiertoMovil(false);
+                }
+              }}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {esMovil && (
+        <button
+          type="button"
+          style={styles.menuFloatingBtn}
+          onClick={() => {
+            if (menuAnclado) {
+              toggleMenuAnclado();
+            } else {
+              setMenuAbiertoMovil((prev) => !prev);
+            }
+          }}
+          title={menuAnclado ? "Desanclar menú" : "Abrir menú"}
+        >
+          {menuAnclado ? "📌" : menuAbiertoMovil ? "✕" : "☰"}
+        </button>
+      )}
+
+      {esMovil && menuAbiertoMovil && (
+        <button
+          type="button"
+          style={styles.pinMenuBtn}
+          onClick={toggleMenuAnclado}
+        >
+          {menuAnclado ? "Desanclar menú" : "📌 Anclar menú"}
+        </button>
+      )}
 
       <div
         style={{
@@ -1382,7 +1449,11 @@ const styles = {
 
   appShell: {
     minHeight: "100vh",
+    width: "100%",
+    maxWidth: "100vw",
+    overflowX: "hidden",
     background: "#ece8ef",
+    boxSizing: "border-box",
   },
 
   topbar: {
@@ -1395,8 +1466,11 @@ const styles = {
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
-    gap: "16px",
+    gap: "12px",
     flexWrap: "wrap",
+    width: "100%",
+    maxWidth: "100vw",
+    boxSizing: "border-box",
     boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
   },
 
@@ -1471,6 +1545,10 @@ const styles = {
     padding: "12px 16px",
     background: "#6b5a7a",
     borderTop: "1px solid rgba(255,255,255,0.08)",
+    width: "100%",
+    maxWidth: "100vw",
+    boxSizing: "border-box",
+    overflowX: "hidden",
   },
 
   menuButton: {
@@ -1478,10 +1556,13 @@ const styles = {
     color: "#fff",
     border: "1px solid rgba(255,255,255,0.12)",
     borderRadius: "14px",
-    padding: "11px 16px",
+    padding: "11px 14px",
     cursor: "pointer",
     fontWeight: "700",
-    whiteSpace: "nowrap",
+    whiteSpace: "normal",
+    minWidth: 0,
+    textAlign: "center",
+    lineHeight: 1.2,
   },
 
   menuButtonActive: {
@@ -1491,13 +1572,17 @@ const styles = {
 
   contentWrap: {
     width: "100%",
+    maxWidth: "100vw",
     boxSizing: "border-box",
+    overflowX: "hidden",
   },
 
   contentCard: {
     width: "100%",
+    maxWidth: "100%",
     boxSizing: "border-box",
     background: "transparent",
+    overflowX: "hidden",
   },
 
   welcomeBox: {
@@ -1751,6 +1836,57 @@ const styles = {
     background: "#f8fafc",
     border: "1px solid #e2e8f0",
     borderRadius: "20px",
+  },
+
+  menuBarMovil: {
+    position: "sticky",
+    top: "74px",
+    zIndex: 90,
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(135px, 1fr))",
+    gap: "8px",
+    padding: "10px",
+    background: "#6b5a7a",
+    borderTop: "1px solid rgba(255,255,255,0.08)",
+    width: "100%",
+    maxWidth: "100vw",
+    boxSizing: "border-box",
+    overflowX: "hidden",
+  },
+
+  menuFloatingBtn: {
+    position: "fixed",
+    right: "18px",
+    bottom: "86px",
+    zIndex: 9998,
+    width: "56px",
+    height: "56px",
+    borderRadius: "999px",
+    border: "none",
+    background: "#6b5a7a",
+    color: "#fff",
+    fontSize: "22px",
+    fontWeight: "900",
+    boxShadow: "0 14px 34px rgba(15,23,42,0.28)",
+    cursor: "pointer",
+    display: "grid",
+    placeItems: "center",
+  },
+
+  pinMenuBtn: {
+    position: "fixed",
+    right: "84px",
+    bottom: "92px",
+    zIndex: 9998,
+    border: "1px solid #d3c7dd",
+    background: "#fff",
+    color: "#574866",
+    borderRadius: "999px",
+    padding: "10px 13px",
+    fontWeight: "900",
+    boxShadow: "0 14px 34px rgba(15,23,42,0.18)",
+    cursor: "pointer",
+    whiteSpace: "nowrap",
   },
 
 };
