@@ -14,6 +14,8 @@ import UsuariosAccesos from "./UsuariosAccesos";
 import EmpleadosComision from "./EmpleadosComision";
 import ClasificacionesPacientes from "./ClasificacionesPacientes";
 import ConfirmarCitaPublica from "./ConfirmarCitaPublica";
+import BandejaNotificaciones from "./BandejaNotificaciones";
+import AtencionClinica from "./AtencionClinica";
 
 function App() {
   const [user, setUser] = useState(null);
@@ -95,13 +97,22 @@ function App() {
   useEffect(() => {
     const irVenta = () => setPantalla("venta");
     const irReporte = () => setPantalla("reporte");
+    const irCitas = () => setPantalla("citas");
+    const irDeudas = () => setPantalla("deudas");
+    const irAtencionClinica = () => setPantalla("atencionClinica");
 
     window.addEventListener("irAVenta", irVenta);
     window.addEventListener("irAReporte", irReporte);
+    window.addEventListener("irACitas", irCitas);
+    window.addEventListener("irADeudas", irDeudas);
+    window.addEventListener("irAAtencionClinica", irAtencionClinica);
 
     return () => {
       window.removeEventListener("irAVenta", irVenta);
       window.removeEventListener("irAReporte", irReporte);
+      window.removeEventListener("irACitas", irCitas);
+      window.removeEventListener("irADeudas", irDeudas);
+      window.removeEventListener("irAAtencionClinica", irAtencionClinica);
     };
   }, []);
 
@@ -376,6 +387,10 @@ function App() {
       empleados_comision_crear: true,
       empleados_comision_editar: true,
       empleados_comision_eliminar: true,
+
+      atencion_clinica_ver: true,
+      atencion_clinica_crear: true,
+      atencion_clinica_editar: true,
     };
 
     const { error: errorRelacion } = await supabase
@@ -417,6 +432,7 @@ function App() {
       { key: "venta", label: "🛒 Venta", permiso: "ventas_ver" },
       { key: "deudas", label: "📋 Deudas", permiso: "deudas_ver" },
       { key: "citas", label: "📅 Citas", permiso: "citas_ver" },
+      { key: "atencionClinica", label: "🦷 Atención Clínica", permiso: "atencion_clinica_ver" },
       { key: "items", label: "📦 Productos", permiso: "inventario_ver" },
       { key: "reporte", label: "📊 Reporte", permiso: "reportes_ver" },
       { key: "clientes", label: "👤 Pacientes", permiso: "citas_ver" },
@@ -434,7 +450,8 @@ function App() {
     if (pantalla === "venta" && tienePermiso("ventas_ver")) return <Venta />;
     if (pantalla === "items" && tienePermiso("inventario_ver")) return <Items />;
     if (pantalla === "deudas" && tienePermiso("deudas_ver")) return <Deudas />;
-    if (pantalla === "citas" && tienePermiso("citas_ver")) return <Citas />;
+    if (pantalla === "citas" && tienePermiso("citas_ver")) return <Citas onNavigate={cambiarPantalla} />;
+    if (pantalla === "atencionClinica" && tienePermiso("atencion_clinica_ver")) return <AtencionClinica onNavigate={cambiarPantalla} />;
     if (pantalla === "reporte" && tienePermiso("reportes_ver")) return <Reporte />;
     if (pantalla === "clientes" && tienePermiso("citas_ver")) return <Clientes />;
     if (pantalla === "Caja Diaria" && tienePermiso("caja_ver")) return <CajaDiaria />;
@@ -682,6 +699,11 @@ function App() {
         }}
       >
         <div style={styles.contentCard}>{renderContenido()}</div>
+
+        <BandejaNotificaciones
+          empresaActiva={empresaActiva}
+          empresasUsuario={membresias.map((m) => m.empresa).filter(Boolean)}
+        />
       </div>
     </div>
   );

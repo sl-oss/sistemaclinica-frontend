@@ -1,12 +1,28 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "./supabaseClient";
 
+// Cambiá este número por el WhatsApp real de recepción/clínica.
+// Formato requerido: código de país + número, sin +, espacios ni guiones.
+// Ejemplo El Salvador: 50377777777
+const NUMERO_WHATSAPP_CLINICA = "50377497483";
+
+// Si los lunes son selectivos, dejamos bloqueada la reagenda automática en lunes.
+// Si después querés permitir lunes, cambiá false por true.
+const PERMITIR_REAGENDAR_LUNES = false;
+
+const HORARIOS_REAGENDA = [
+  { desde: "09:00", hasta: "11:45" },
+  { desde: "14:00", hasta: "17:45" },
+];
+
+
 function ConfirmarCitaPublica({ token }) {
 
   const [cargando, setCargando] = useState(true);
   const [guardando, setGuardando] = useState(false);
   const [mensaje, setMensaje] = useState("");
   const [error, setError] = useState("");
+  const [ultimaAccion, setUltimaAccion] = useState(null);
 
   const [tokenData, setTokenData] = useState(null);
   const [cita, setCita] = useState(null);
@@ -14,28 +30,40 @@ function ConfirmarCitaPublica({ token }) {
 
   const [accion, setAccion] = useState("");
   const [motivoCancelacion, setMotivoCancelacion] = useState("");
+  const [cancelarDeseaReagendar, setCancelarDeseaReagendar] = useState(null);
 
   const [fechaReagendar, setFechaReagendar] = useState(obtenerFechaSV());
-  const [horaReagendar, setHoraReagendar] = useState("08:00");
+  const [horaReagendar, setHoraReagendar] = useState("09:00");
 
   const horasDisponibles = useMemo(() => {
-    const lista = [];
-
-    for (let h = 6; h <= 20; h += 1) {
-      ["00", "15", "30", "45"].forEach((m) => {
-        lista.push(`${String(h).padStart(2, "0")}:${m}`);
-      });
-    }
-
-    return lista;
+    return construirHorariosReagenda();
   }, []);
+
+  const esLunesSeleccionado = useMemo(() => {
+    return esLunes(fechaReagendar);
+  }, [fechaReagendar]);
+
+  const esDomingoSeleccionado = useMemo(() => {
+    return esDomingo(fechaReagendar);
+  }, [fechaReagendar]);
+
+  const fechaReagendarBloqueada = useMemo(() => {
+    if (!fechaReagendar) return true;
+    if (esDomingoSeleccionado) return true;
+    if (esLunesSeleccionado && !PERMITIR_REAGENDAR_LUNES) return true;
+    return false;
+  }, [fechaReagendar, esDomingoSeleccionado, esLunesSeleccionado]);
+
+  const puedeReagendarFecha = useMemo(() => {
+    return !fechaReagendarBloqueada;
+  }, [fechaReagendarBloqueada]);
 
   useEffect(() => {
     cargarCitaPublica();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
-  const cargarCitaPublica = async () => {
+  const cargarCitaPublica = async (mantenerMensaje = false) => {
     if (!token) {
       setError("Enlace inválido.");
       setCargando(false);
@@ -44,7 +72,10 @@ function ConfirmarCitaPublica({ token }) {
 
     setCargando(true);
     setError("");
-    setMensaje("");
+    if (!mantenerMensaje) {
+      setMensaje("");
+      setUltimaAccion(null);
+    }
 
     const { data: tokenEncontrado, error: errorToken } = await supabase
       .from("citas_tokens_publicos")
@@ -97,7 +128,7 @@ function ConfirmarCitaPublica({ token }) {
     setTokenData(tokenEncontrado);
     setCita(citaEncontrada);
     setFechaReagendar(citaEncontrada.fecha || obtenerFechaSV());
-    setHoraReagendar(normalizarHora(citaEncontrada.hora) || "08:00");
+    setHoraReagendar(normalizarHora(citaEncontrada.hora) || "09:00");
 
     await cargarCitasPorFecha(citaEncontrada.fecha, citaEncontrada.empresa_id, citaEncontrada.id);
 
@@ -136,6 +167,107 @@ function ConfirmarCitaPublica({ token }) {
     return citasFecha.filter((item) => normalizarHora(item.hora) === horaTexto).length;
   };
 
+  const abrirWhatsAppClinica = (accionRealizada, detalleExtra = "") => {
+    if (!NUMERO_WHATSAPP_CLINICA || NUMERO_WHATSAPP_CLINICA === "50300000000") {
+      console.warn("Configura NUMERO_WHATSAPP_CLINICA en ConfirmarCitaPublica.jsx");
+      return;
+    }
+
+    const empresaNombre = cita?.empresas?.nombre || "Clínica";
+    const paciente = cita?.clientes?.nombre || "Paciente";
+    const telefonoPaciente = cita?.clientes?.telefono || "Sin teléfono";
+
+    const mensaje = `Notificación de cita - ${empresaNombre}
+
+Paciente: ${paciente}
+Teléfono: ${telefonoPaciente}
+Acción: ${accionRealizada}
+
+Cita actual:
+Fecha: ${formatearFechaPantalla(cita?.fecha)}
+Hora: ${normalizarHora(cita?.hora)}
+${detalleExtra ? `\nDetalle:\n${detalleExtra}` : ""}`;
+
+    const texto = encodeURIComponent(mensaje);
+    const esApple = /iPad|iPhone|iPod|Macintosh/i.test(navigator.userAgent);
+    const url = esApple
+      ? `https://api.whatsapp.com/send?phone=${NUMERO_WHATSAPP_CLINICA}&text=${texto}`
+      : `https://wa.me/${NUMERO_WHATSAPP_CLINICA}?text=${texto}`;
+
+    window.location.href = url;
+  };
+
+  const guardarNotificacionInterna = async (tipo, titulo, mensajeDetalle = "", datosExtra = {}) => {
+    if (!cita?.empresa_id) return;
+
+    const payload = {
+      empresa_id: cita.empresa_id,
+      cita_id: cita.id,
+      cliente_id: cita.cliente_id,
+      tipo,
+      titulo,
+      mensaje: mensajeDetalle,
+      estado: "pendiente",
+      leida: false,
+      datos: {
+        paciente: cita?.clientes?.nombre || "Paciente",
+        telefono: cita?.clientes?.telefono || "",
+        fecha_original: cita?.fecha || null,
+        hora_original: cita?.hora || null,
+        ...datosExtra,
+      },
+    };
+
+    const { error } = await supabase.from("bandeja_mensajes").insert([payload]);
+
+    if (error) {
+      console.error("Error guardando notificación interna:", error);
+    }
+  };
+
+  const contactarClinicaPorLunes = async () => {
+    await guardarNotificacionInterna(
+      "cita_lunes_contacto",
+      "Solicitud para reagendar lunes",
+      `${cita?.clientes?.nombre || "Paciente"} quiere consultar disponibilidad para reagendar lunes.`,
+      {
+        motivo: "lunes_selectivo",
+        fecha_solicitada: fechaReagendar,
+      }
+    );
+
+    const mensaje = `Hola, quiero reagendar mi cita para un día lunes.
+
+Paciente: ${cita?.clientes?.nombre || "Paciente"}
+Teléfono: ${cita?.clientes?.telefono || "Sin teléfono"}
+Fecha actual: ${formatearFechaPantalla(cita?.fecha)}
+Hora actual: ${normalizarHora(cita?.hora)}
+
+Me gustaría consultar disponibilidad para poder agendar.`;
+
+    const texto = encodeURIComponent(mensaje);
+    const esApple = /iPad|iPhone|iPod|Macintosh/i.test(navigator.userAgent);
+    const url = esApple
+      ? `https://api.whatsapp.com/send?phone=${NUMERO_WHATSAPP_CLINICA}&text=${texto}`
+      : `https://wa.me/${NUMERO_WHATSAPP_CLINICA}?text=${texto}`;
+
+    window.location.href = url;
+  };
+
+  const notificarDomingoCerrado = async () => {
+    await guardarNotificacionInterna(
+      "cita_domingo_cerrado",
+      "Intento de reagendar domingo",
+      `${cita?.clientes?.nombre || "Paciente"} intentó seleccionar domingo para reagendar, pero ese día está cerrado.`,
+      {
+        motivo: "domingo_cerrado",
+        fecha_solicitada: fechaReagendar,
+      }
+    );
+
+    setMensaje("Los domingos no se brindan consultas. Por favor seleccione otro día disponible.");
+  };
+
   const confirmarCita = async () => {
     if (!cita || !tokenData) return;
 
@@ -164,8 +296,19 @@ function ConfirmarCitaPublica({ token }) {
       return;
     }
 
-    setMensaje("¡Gracias! Su cita ha sido confirmada.");
-    await cargarCitaPublica();
+    await guardarNotificacionInterna(
+      "cita_confirmada",
+      "Cita confirmada",
+      `${cita?.clientes?.nombre || "Paciente"} confirmó su cita para el ${formatearFechaPantalla(cita.fecha)} a las ${normalizarHora(cita.hora)}.`
+    );
+
+    setUltimaAccion({
+      tipo: "confirmada",
+      titulo: "Cita confirmada",
+      detalle: "",
+    });
+    setMensaje("¡Gracias! Su cita ha sido confirmada. La clínica recibirá su respuesta.");
+    await cargarCitaPublica(true);
   };
 
   const cancelarCita = async () => {
@@ -173,6 +316,11 @@ function ConfirmarCitaPublica({ token }) {
 
     if (!motivoCancelacion.trim()) {
       alert("Por favor escriba el motivo de cancelación.");
+      return;
+    }
+
+    if (cancelarDeseaReagendar === null) {
+      alert("Por favor indique si desea reagendar su cita.");
       return;
     }
 
@@ -186,7 +334,7 @@ function ConfirmarCitaPublica({ token }) {
         estado: "cancelada",
         confirmada: false,
         motivo_cancelacion: motivoCancelacion.trim(),
-        desea_reprogramar: false,
+        desea_reprogramar: Boolean(cancelarDeseaReagendar),
       })
       .eq("id", cita.id)
       .eq("empresa_id", cita.empresa_id);
@@ -199,12 +347,47 @@ function ConfirmarCitaPublica({ token }) {
       return;
     }
 
-    setMensaje("Su cita fue cancelada. Gracias por avisarnos.");
-    await cargarCitaPublica();
+    await guardarNotificacionInterna(
+      "cita_cancelada",
+      cancelarDeseaReagendar ? "Cita cancelada - desea reagendar" : "Cita cancelada",
+      `${cita?.clientes?.nombre || "Paciente"} canceló su cita. Motivo: ${motivoCancelacion.trim()}. ${cancelarDeseaReagendar ? "El paciente indicó que desea reagendar." : "El paciente indicó que no desea reagendar."}`,
+      {
+        motivo_cancelacion: motivoCancelacion.trim(),
+        desea_reagendar: Boolean(cancelarDeseaReagendar),
+      }
+    );
+
+    setUltimaAccion({
+      tipo: "cancelada",
+      titulo: cancelarDeseaReagendar ? "Cita cancelada - desea reagendar" : "Cita cancelada",
+      detalle: `Motivo: ${motivoCancelacion.trim()}\nDesea reagendar: ${cancelarDeseaReagendar ? "Sí" : "No"}`,
+    });
+    setMensaje(
+      cancelarDeseaReagendar
+        ? "Su cita fue cancelada. La clínica recibirá su solicitud para reagendar."
+        : "Su cita fue cancelada. La clínica recibirá su respuesta."
+    );
+    await cargarCitaPublica(true);
   };
 
   const reagendarCita = async () => {
     if (!cita || !tokenData) return;
+
+    if (!puedeReagendarFecha) {
+      if (esDomingoSeleccionado) {
+        await notificarDomingoCerrado();
+        alert("Los domingos no se brindan consultas. Por favor seleccione otro día disponible.");
+        return;
+      }
+
+      alert("Los lunes se atiende de forma selectiva. Por favor contacte directamente a la clínica para reagendar.");
+      return;
+    }
+
+    if (!horasDisponibles.includes(horaReagendar)) {
+      alert("Seleccione un horario disponible dentro del horario de atención.");
+      return;
+    }
 
     const cupos = contarCitasEnBloque(horaReagendar);
 
@@ -240,8 +423,23 @@ function ConfirmarCitaPublica({ token }) {
       return;
     }
 
-    setMensaje("Su cita fue reagendada correctamente.");
-    await cargarCitaPublica();
+    await guardarNotificacionInterna(
+      "cita_reagendada",
+      "Cita reagendada",
+      `${cita?.clientes?.nombre || "Paciente"} reagendó su cita para el ${formatearFechaPantalla(fechaReagendar)} a las ${normalizarHora(horaReagendar)}.`,
+      {
+        fecha_nueva: fechaReagendar,
+        hora_nueva: horaReagendar,
+      }
+    );
+
+    setUltimaAccion({
+      tipo: "reagendada",
+      titulo: "Cita reagendada",
+      detalle: `Nueva fecha: ${formatearFechaPantalla(fechaReagendar)}\nNueva hora: ${normalizarHora(horaReagendar)}`,
+    });
+    setMensaje("Su cita fue reagendada correctamente. La clínica recibirá su respuesta.");
+    await cargarCitaPublica(true);
   };
 
   const info = leerServicio(cita?.servicio);
@@ -279,7 +477,11 @@ function ConfirmarCitaPublica({ token }) {
           </div>
         </div>
 
-        {mensaje && <div style={styles.successBox}>{mensaje}</div>}
+        {mensaje && (
+          <div style={styles.successBox}>
+            <div>{mensaje}</div>
+          </div>
+        )}
         {error && <div style={styles.errorBox}>{error}</div>}
 
         <div style={styles.appointmentBox}>
@@ -331,7 +533,10 @@ function ConfirmarCitaPublica({ token }) {
             <button
               type="button"
               style={styles.cancelBtn}
-              onClick={() => setAccion((prev) => (prev === "cancelar" ? "" : "cancelar"))}
+              onClick={() => {
+                setAccion((prev) => (prev === "cancelar" ? "" : "cancelar"));
+                setCancelarDeseaReagendar(null);
+              }}
               disabled={guardando}
             >
               Cancelar
@@ -365,6 +570,33 @@ function ConfirmarCitaPublica({ token }) {
               placeholder="Escriba el motivo de cancelación..."
             />
 
+            <div style={styles.cancelQuestionBox}>
+              <strong>¿Desea reagendar su cita?</strong>
+              <div style={styles.cancelOptions}>
+                <button
+                  type="button"
+                  style={{
+                    ...styles.cancelOptionBtn,
+                    ...(cancelarDeseaReagendar === true ? styles.cancelOptionBtnActive : {}),
+                  }}
+                  onClick={() => setCancelarDeseaReagendar(true)}
+                >
+                  Sí, deseo reagendar
+                </button>
+
+                <button
+                  type="button"
+                  style={{
+                    ...styles.cancelOptionBtn,
+                    ...(cancelarDeseaReagendar === false ? styles.cancelOptionBtnActiveRed : {}),
+                  }}
+                  onClick={() => setCancelarDeseaReagendar(false)}
+                >
+                  No
+                </button>
+              </div>
+            </div>
+
             <button
               type="button"
               style={styles.cancelBtnFull}
@@ -382,7 +614,8 @@ function ConfirmarCitaPublica({ token }) {
               <div>
                 <h3 style={styles.panelTitle}>Reagendar cita</h3>
                 <p style={styles.panelText}>
-                  Seleccione fecha y bloque de 15 minutos. Máximo 4 pacientes por bloque.
+                  Horarios disponibles: 09:00 a.m. a 11:45 a.m. y 02:00 p.m. a 05:45 p.m.
+                  Máximo 4 pacientes por bloque de 15 minutos.
                 </p>
               </div>
             </div>
@@ -398,10 +631,40 @@ function ConfirmarCitaPublica({ token }) {
               }}
             />
 
-            <div style={styles.slotsGrid}>
-              {horasDisponibles.map((horaItem) => {
+            {esDomingoSeleccionado ? (
+              <div style={styles.closedDayWarning}>
+                <strong>Domingo cerrado</strong>
+                <span>
+                  Los domingos no se brindan consultas ni se habilitan reagendas.
+                </span>
+                <span>
+                  Por favor seleccione un día de atención disponible.
+                </span>
+              </div>
+            ) : esLunesSeleccionado && !PERMITIR_REAGENDAR_LUNES ? (
+              <div style={styles.mondayWarning}>
+                <strong>Para reagendar días lunes, contáctenos.</strong>
+                <span>
+                  Los lunes se atiende de forma selectiva.
+                </span>
+                <span>
+                  WhatsApp: {formatearTelefonoClinica(NUMERO_WHATSAPP_CLINICA)}
+                </span>
+                <button
+                  type="button"
+                  style={styles.mondayWhatsBtn}
+                  onClick={contactarClinicaPorLunes}
+                >
+                  Abrir WhatsApp
+                </button>
+              </div>
+            ) : (
+              <>
+                <div style={styles.slotsGrid}>
+                  {horasDisponibles.map((horaItem) => {
                 const cantidad = contarCitasEnBloque(horaItem);
                 const lleno = cantidad >= 4;
+                const bloqueadoPorLunes = esLunesSeleccionado && !PERMITIR_REAGENDAR_LUNES;
                 const activo = horaReagendar === horaItem;
 
                 return (
@@ -411,26 +674,28 @@ function ConfirmarCitaPublica({ token }) {
                     style={{
                       ...styles.slotBtn,
                       ...(activo ? styles.slotBtnActive : {}),
-                      ...(lleno ? styles.slotBtnFull : {}),
+                      ...(lleno || bloqueadoPorLunes ? styles.slotBtnFull : {}),
                     }}
-                    disabled={lleno}
+                    disabled={lleno || bloqueadoPorLunes}
                     onClick={() => setHoraReagendar(horaItem)}
                   >
                     <strong>{horaItem}</strong>
                     <span>{cantidad}/4</span>
                   </button>
                 );
-              })}
-            </div>
+                  })}
+                </div>
 
-            <button
-              type="button"
-              style={styles.reagendarBtnFull}
-              onClick={reagendarCita}
-              disabled={guardando}
-            >
-              Guardar nueva fecha y hora
-            </button>
+                <button
+                  type="button"
+                  style={styles.reagendarBtnFull}
+                  onClick={reagendarCita}
+                  disabled={guardando}
+                >
+                  Guardar nueva fecha y hora
+                </button>
+              </>
+            )}
           </div>
         )}
 
@@ -453,6 +718,55 @@ function obtenerFechaSV() {
   const dd = String(fechaSV.getDate()).padStart(2, "0");
 
   return `${yyyy}-${mm}-${dd}`;
+}
+
+function construirHorariosReagenda() {
+  const bloques = [];
+
+  HORARIOS_REAGENDA.forEach((rango) => {
+    let actual = convertirHoraAMinutos(rango.desde);
+    const fin = convertirHoraAMinutos(rango.hasta);
+
+    while (actual <= fin) {
+      bloques.push(convertirMinutosAHora(actual));
+      actual += 15;
+    }
+  });
+
+  return bloques;
+}
+
+function convertirHoraAMinutos(hora) {
+  const [hh, mm] = String(hora).split(":").map(Number);
+  return hh * 60 + mm;
+}
+
+function convertirMinutosAHora(total) {
+  const hh = Math.floor(total / 60);
+  const mm = total % 60;
+  return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
+}
+
+function esLunes(fecha) {
+  if (!fecha) return false;
+  const [y, m, d] = String(fecha).slice(0, 10).split("-").map(Number);
+  const date = new Date(y, m - 1, d);
+  return date.getDay() === 1;
+}
+
+function esDomingo(fecha) {
+  if (!fecha) return false;
+  const [y, m, d] = String(fecha).slice(0, 10).split("-").map(Number);
+  const date = new Date(y, m - 1, d);
+  return date.getDay() === 0;
+}
+
+function formatearTelefonoClinica(numero) {
+  const limpio = String(numero || "").replace(/\D/g, "");
+  if (limpio.startsWith("503") && limpio.length === 11) {
+    return `+503 ${limpio.slice(3, 7)}-${limpio.slice(7)}`;
+  }
+  return limpio ? `+${limpio}` : "";
 }
 
 function normalizarHora(hora) {
@@ -836,6 +1150,98 @@ const styles = {
     textAlign: "center",
     lineHeight: 1.35,
   },
+
+  notifyBtn: {
+    marginTop: "10px",
+    width: "100%",
+    background: "#0f7a4d",
+    color: "#fff",
+    border: "none",
+    borderRadius: "14px",
+    padding: "12px",
+    cursor: "pointer",
+    fontWeight: "950",
+    fontSize: "14px",
+  },
+
+  mondayWarning: {
+    background: "#fff7ed",
+    border: "1px solid #fed7aa",
+    color: "#b45309",
+    borderRadius: "14px",
+    padding: "12px",
+    fontWeight: "850",
+    fontSize: "13px",
+    lineHeight: 1.35,
+    display: "grid",
+    gap: "7px",
+  },
+
+  mondayWhatsBtn: {
+    marginTop: "4px",
+    width: "100%",
+    background: "#0f7a4d",
+    color: "#fff",
+    border: "none",
+    borderRadius: "13px",
+    padding: "11px",
+    cursor: "pointer",
+    fontWeight: "950",
+    fontSize: "13px",
+  },
+
+  closedDayWarning: {
+    background: "#f1f5f9",
+    border: "1px solid #cbd5e1",
+    color: "#334155",
+    borderRadius: "14px",
+    padding: "12px",
+    fontWeight: "850",
+    fontSize: "13px",
+    lineHeight: 1.35,
+    display: "grid",
+    gap: "7px",
+  },
+
+  cancelQuestionBox: {
+    background: "#f8fafc",
+    border: "1px solid #e2e8f0",
+    borderRadius: "14px",
+    padding: "12px",
+    display: "grid",
+    gap: "10px",
+    color: "#334155",
+  },
+
+  cancelOptions: {
+    display: "grid",
+    gridTemplateColumns: "1fr 1fr",
+    gap: "8px",
+  },
+
+  cancelOptionBtn: {
+    border: "1px solid #cfd9e5",
+    background: "#fff",
+    color: "#334155",
+    borderRadius: "13px",
+    padding: "11px",
+    cursor: "pointer",
+    fontWeight: "900",
+    fontSize: "13px",
+  },
+
+  cancelOptionBtnActive: {
+    background: "#eefcf3",
+    color: "#0f7a4d",
+    border: "1px solid #86efac",
+  },
+
+  cancelOptionBtnActiveRed: {
+    background: "#fff1f2",
+    color: "#be123c",
+    border: "1px solid #fecdd3",
+  },
+
 };
 
 export default ConfirmarCitaPublica;

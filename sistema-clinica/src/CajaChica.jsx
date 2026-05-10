@@ -1,11 +1,13 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "./supabaseClient";
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
 function CajaChica() {
-  const empresaInicial = JSON.parse(localStorage.getItem("empresa") || "null");
+  const empresaGlobal = JSON.parse(localStorage.getItem("empresa") || "null");
+  const empresaCajaChicaGuardada = JSON.parse(localStorage.getItem("caja_chica_empresa") || "null");
+  const empresaInicial = empresaCajaChicaGuardada || empresaGlobal;
   const [empresa, setEmpresa] = useState(empresaInicial);
   const [empresasDisponibles, setEmpresasDisponibles] = useState(
     empresaInicial?.id ? [empresaInicial] : []
@@ -60,6 +62,27 @@ function CajaChica() {
   const [cargandoHistorial, setCargandoHistorial] = useState(false);
   const [mostrarHistorial, setMostrarHistorial] = useState(false);
   const [idActual, setIdActual] = useState(null);
+  const [autosaveStatus, setAutosaveStatus] = useState("");
+  const autosaveTimerRef = useRef(null);
+  const primeraCargaRef = useRef(true);
+
+  const gastoVacio = () => ({
+    id: crypto.randomUUID(),
+    tipoDoc: "",
+    fecha: hoyTexto(),
+    concepto: "",
+    proveedor: "",
+    comprobante: "",
+    ingreso: "",
+    egreso: "",
+  });
+
+  const [modalGasto, setModalGasto] = useState({
+    open: false,
+    editando: false,
+    gastoId: null,
+    gasto: gastoVacio(),
+  });
 
 
 
@@ -105,7 +128,7 @@ function CajaChica() {
 
       if (lista.length > 0 && !lista.some((emp) => emp.id === empresa?.id)) {
         setEmpresa(lista[0]);
-        localStorage.setItem("empresa", JSON.stringify(lista[0]));
+        localStorage.setItem("caja_chica_empresa", JSON.stringify(lista[0]));
       }
     } catch (error) {
       console.error("Error cargando empresas disponibles:", error);
@@ -117,7 +140,8 @@ function CajaChica() {
     if (!seleccionada) return;
 
     setEmpresa(seleccionada);
-    localStorage.setItem("empresa", JSON.stringify(seleccionada));
+    localStorage.setItem("caja_chica_empresa", JSON.stringify(seleccionada));
+    window.dispatchEvent(new Event("cajaChicaEmpresaActualizada"));
   };
 
 
@@ -141,6 +165,30 @@ function CajaChica() {
 
     setCorrelativo(correlativoTexto);
   }, [prefijoEmpresa, fechaHasta, correlativoNum]);
+
+  useEffect(() => {
+    programarAutosave();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    fechaDesde,
+    fechaHasta,
+    correlativoNum,
+    saldoInicial,
+    fondoCajaChica,
+    observaciones,
+    elaboradoPor,
+    revisadoPor,
+    autorizadoPor,
+    billetes,
+    monedas,
+    gastos,
+  ]);
+
+  useEffect(() => {
+    return () => {
+      if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
+    };
+  }, []);
 
   function hoyTexto() {
     const d = new Date();
@@ -220,6 +268,24 @@ function CajaChica() {
       maximumFractionDigits: 2,
     });
 
+  const calcularGastosConBalance = (listaGastos, saldoBase) => {
+    let balance = numero(saldoBase);
+
+    return (listaGastos || []).map((g, index) => {
+      const ingresoNum = numero(g.ingreso);
+      const egresoNum = numero(g.egreso);
+      balance = balance + ingresoNum - egresoNum;
+
+      return {
+        ...g,
+        index: index + 1,
+        ingresoNum,
+        egresoNum,
+        balance,
+      };
+    });
+  };
+
   const inicializarModulo = async () => {
     const prefijo = obtenerPrefijoEmpresa(empresa);
     setPrefijoEmpresa(prefijo);
@@ -254,9 +320,13 @@ function CajaChica() {
 
   const cerrarHistorial = () => {
     setMostrarHistorial(false);
+    setTimeout(() => {
+      primeraCargaRef.current = false;
+    }, 0);
   };
 
   const prepararNuevaLiquidacion = async (prefijoManual = null) => {
+    primeraCargaRef.current = true;
     const prefijo = prefijoManual || obtenerPrefijoEmpresa(empresa);
     setPrefijoEmpresa(prefijo);
 
@@ -314,21 +384,13 @@ function CajaChica() {
       { denom: 0.01, cantidad: "0" },
     ]);
 
-    setGastos([
-      {
-        id: crypto.randomUUID(),
-        tipoDoc: "",
-        fecha: "",
-        concepto: "",
-        proveedor: "",
-        comprobante: "",
-        ingreso: "",
-        egreso: "",
-      },
-    ]);
+    setGastos([gastoVacio()]);
+
+    primeraCargaRef.current = false;
   };
 
   const cargarLiquidacionEnPantalla = (liq) => {
+    primeraCargaRef.current = true;
     setIdActual(liq.id || null);
     setPrefijoEmpresa(liq.prefijo_empresa || obtenerPrefijoEmpresa(empresa));
     setCorrelativoNum(String(liq.correlativo_num || ""));
@@ -435,18 +497,7 @@ function CajaChica() {
         }))
       );
     } else {
-      setGastos([
-        {
-          id: crypto.randomUUID(),
-          tipoDoc: "",
-          fecha: "",
-          concepto: "",
-          proveedor: "",
-          comprobante: "",
-          ingreso: "",
-          egreso: "",
-        },
-      ]);
+      setGastos([gastoVacio()]);
     }
 
     setMostrarHistorial(false);
@@ -485,21 +536,7 @@ function CajaChica() {
   }, [totalBilletes, totalMonedas]);
 
   const gastosConBalance = useMemo(() => {
-    let balance = numero(saldoInicial);
-
-    return gastos.map((g, index) => {
-      const ingresoNum = numero(g.ingreso);
-      const egresoNum = numero(g.egreso);
-      balance = balance + ingresoNum - egresoNum;
-
-      return {
-        ...g,
-        index: index + 1,
-        ingresoNum,
-        egresoNum,
-        balance,
-      };
-    });
+    return calcularGastosConBalance(gastos, saldoInicial);
   }, [gastos, saldoInicial]);
 
   const totalIngresos = useMemo(() => {
@@ -523,47 +560,122 @@ function CajaChica() {
   }, [totalEfectivoDisponible]);
 
   const diferencia = useMemo(() => {
-    return montoDeberiaQuedar - efectivoContadoCierre;
-  }, [montoDeberiaQuedar, efectivoContadoCierre]);
+  const valor = montoDeberiaQuedar - efectivoContadoCierre;
+
+  // Si falta efectivo = negativo
+  // Si sobra efectivo = positivo
+  return Number(valor.toFixed(2));
+}, [montoDeberiaQuedar, efectivoContadoCierre]);
 
   const fechaRegistro = useMemo(() => {
     return fechaHasta || fechaDesde || hoyTexto();
   }, [fechaDesde, fechaHasta]);
 
-  const agregarFila = () => {
-    setGastos((prev) => [
-      ...prev,
-      {
-        id: crypto.randomUUID(),
-        tipoDoc: "",
-        fecha: "",
-        concepto: "",
-        proveedor: "",
-        comprobante: "",
-        ingreso: "",
-        egreso: "",
-      },
-    ]);
+  const abrirModalGastoNuevo = () => {
+    setModalGasto({
+      open: true,
+      editando: false,
+      gastoId: null,
+      gasto: gastoVacio(),
+    });
   };
 
-  const eliminarFila = (id) => {
-    setGastos((prev) => {
-      if (prev.length === 1) {
-        return [
-          {
-            id: crypto.randomUUID(),
-            tipoDoc: "",
-            fecha: "",
-            concepto: "",
-            proveedor: "",
-            comprobante: "",
-            ingreso: "",
-            egreso: "",
-          },
-        ];
-      }
-      return prev.filter((g) => g.id !== id);
+  const abrirModalGastoEditar = (gasto) => {
+    setModalGasto({
+      open: true,
+      editando: true,
+      gastoId: gasto.id,
+      gasto: {
+        id: gasto.id,
+        tipoDoc: gasto.tipoDoc || "",
+        fecha: gasto.fecha || hoyTexto(),
+        concepto: gasto.concepto || "",
+        proveedor: gasto.proveedor || "",
+        comprobante: gasto.comprobante || "",
+        ingreso: gasto.ingreso || "",
+        egreso: gasto.egreso || "",
+      },
     });
+  };
+
+  const cerrarModalGasto = () => {
+    setModalGasto({
+      open: false,
+      editando: false,
+      gastoId: null,
+      gasto: gastoVacio(),
+    });
+  };
+
+  const actualizarModalGasto = (campo, valor) => {
+    setModalGasto((prev) => ({
+      ...prev,
+      gasto: {
+        ...(prev.gasto || {}),
+        [campo]:
+          campo === "ingreso" || campo === "egreso"
+            ? limpiarDecimalInput(valor)
+            : valor,
+      },
+    }));
+  };
+
+  const guardarGastoModal = async () => {
+    const g = modalGasto.gasto || {};
+
+    if (!g.fecha) return alert("Ingresá la fecha del documento.");
+    if (!String(g.concepto || "").trim()) return alert("Ingresá el concepto.");
+    if (!String(g.proveedor || "").trim()) return alert("Ingresá el proveedor.");
+    if (numero(g.ingreso) <= 0 && numero(g.egreso) <= 0) {
+      return alert("Ingresá un ingreso o un egreso.");
+    }
+
+    const gastoFinal = {
+      ...g,
+      id: modalGasto.editando ? modalGasto.gastoId : crypto.randomUUID(),
+      tipoDoc: String(g.tipoDoc || "").trim(),
+      fecha: g.fecha || hoyTexto(),
+      concepto: String(g.concepto || "").trim(),
+      proveedor: String(g.proveedor || "").trim(),
+      comprobante: String(g.comprobante || "").trim(),
+      ingreso: g.ingreso || "",
+      egreso: g.egreso || "",
+    };
+
+    const nuevosGastos = modalGasto.editando
+      ? gastos.map((item) => (item.id === modalGasto.gastoId ? gastoFinal : item))
+      : [...gastos.filter((item) => tieneContenidoGasto(item)), gastoFinal];
+
+    setGastos(nuevosGastos);
+    cerrarModalGasto();
+
+    await guardarLiquidacion({
+      silencioso: true,
+      gastosOverride: nuevosGastos,
+    });
+
+    setAutosaveStatus("Guardado automático");
+    setTimeout(() => setAutosaveStatus(""), 2200);
+  };
+
+  const agregarFila = () => {
+    abrirModalGastoNuevo();
+  };
+
+  const eliminarFila = async (id) => {
+    const nuevosGastos = gastos.filter((g) => g.id !== id);
+
+    const listaFinal = nuevosGastos.length > 0 ? nuevosGastos : [gastoVacio()];
+
+    setGastos(listaFinal);
+
+    await guardarLiquidacion({
+      silencioso: true,
+      gastosOverride: listaFinal,
+    });
+
+    setAutosaveStatus("Guardado automático");
+    setTimeout(() => setAutosaveStatus(""), 2200);
   };
 
   const actualizarGasto = (id, campo, valor) => {
@@ -582,26 +694,68 @@ function CajaChica() {
     );
   };
 
-  const validar = () => {
+  const tieneContenidoGasto = (g) => {
+    return Boolean(
+      String(g?.tipoDoc || "").trim() ||
+      String(g?.fecha || "").trim() ||
+      String(g?.concepto || "").trim() ||
+      String(g?.proveedor || "").trim() ||
+      String(g?.comprobante || "").trim() ||
+      numero(g?.ingreso) > 0 ||
+      numero(g?.egreso) > 0
+    );
+  };
+
+  const programarAutosave = () => {
+    if (!empresa?.id || primeraCargaRef.current || modalGasto.open) return;
+
+    if (autosaveTimerRef.current) {
+      clearTimeout(autosaveTimerRef.current);
+    }
+
+    setAutosaveStatus("Guardando cambios...");
+
+    autosaveTimerRef.current = setTimeout(async () => {
+      const ok = await guardarLiquidacion({ silencioso: true });
+      if (ok !== false) {
+        setAutosaveStatus("Guardado automático");
+        setTimeout(() => setAutosaveStatus(""), 2200);
+      } else {
+        setAutosaveStatus("Cambios pendientes");
+      }
+    }, 1000);
+  };
+
+  const validar = (silencioso = false) => {
     if (!empresa?.id) {
-      alert("No hay empresa seleccionada");
+      if (!silencioso) alert("No hay empresa seleccionada");
       return false;
     }
     if (!fechaDesde || !fechaHasta) {
-      alert("Debes ingresar el rango del período");
+      if (!silencioso) alert("Debes ingresar el rango del período");
       return false;
     }
     if (correlativoNum === "" || Number(correlativoNum) <= 0) {
-      alert("Debes ingresar un correlativo válido");
+      if (!silencioso) alert("Debes ingresar un correlativo válido");
       return false;
     }
     return true;
   };
 
-  const guardarLiquidacion = async () => {
-    if (!validar()) return;
+  const guardarLiquidacion = async (opciones = {}) => {
+    const silencioso = Boolean(opciones?.silencioso);
+    const gastosTrabajo = Array.isArray(opciones?.gastosOverride) ? opciones.gastosOverride : gastos;
+
+    if (!validar(silencioso)) return false;
 
     const correlativoNumeroFinal = Number(correlativoNum);
+
+    const gastosBalanceTrabajo = calcularGastosConBalance(gastosTrabajo, saldoInicial);
+    const totalIngresosTrabajo = gastosTrabajo.reduce((acc, g) => acc + numero(g.ingreso), 0);
+    const totalEgresosTrabajo = gastosTrabajo.reduce((acc, g) => acc + numero(g.egreso), 0);
+    const montoTotalDisponibleTrabajo = numero(saldoInicial) + totalIngresosTrabajo;
+    const montoDeberiaQuedarTrabajo = montoTotalDisponibleTrabajo - totalEgresosTrabajo;
+    const diferenciaTrabajo = montoDeberiaQuedarTrabajo - efectivoContadoCierre;
 
     if (!idActual) {
       const { data: repetidos, error: errorRepetidos } = await supabase
@@ -613,11 +767,11 @@ function CajaChica() {
 
       if (errorRepetidos) {
         console.error(errorRepetidos);
-        return alert("Error al validar correlativo");
+        return silencioso ? false : alert("Error al validar correlativo");
       }
 
       if (repetidos && repetidos.length > 0) {
-        return alert("Ese correlativo ya existe para esta empresa");
+        return silencioso ? false : alert("Ese correlativo ya existe para esta empresa");
       }
     }
 
@@ -643,7 +797,7 @@ function CajaChica() {
           total: numero(m.denom) * numero(m.cantidad),
         })),
       },
-      gastos: gastosConBalance.map((g) => ({
+      gastos: gastosBalanceTrabajo.map((g) => ({
         tipoDoc: g.tipoDoc || "",
         fecha: g.fecha || null,
         concepto: g.concepto || "",
@@ -656,12 +810,12 @@ function CajaChica() {
       total_billetes: totalBilletes,
       total_monedas: totalMonedas,
       total_efectivo_disponible: totalEfectivoDisponible,
-      total_ingresos: totalIngresos,
-      total_egresos: totalEgresos,
-      monto_total_disponible: montoTotalDisponible,
-      monto_deberia_quedar: montoDeberiaQuedar,
+      total_ingresos: totalIngresosTrabajo,
+      total_egresos: totalEgresosTrabajo,
+      monto_total_disponible: montoTotalDisponibleTrabajo,
+      monto_deberia_quedar: montoDeberiaQuedarTrabajo,
       efectivo_contado_cierre: efectivoContadoCierre,
-      diferencia,
+      diferencia: diferenciaTrabajo,
       observaciones,
       elaborado_por: elaboradoPor,
       revisado_por: revisadoPor,
@@ -679,25 +833,35 @@ function CajaChica() {
     } else {
       const res = await supabase
         .from("liquidaciones_caja_chica")
-        .insert([payload]);
+        .insert([payload])
+        .select()
+        .single();
+
       error = res.error;
+
+      if (!error && res.data?.id) {
+        setIdActual(res.data.id);
+      }
     }
 
     if (error) {
       console.error(error);
       if (error.code === "23505") {
-        return alert("Ya existe ese correlativo para esta empresa");
+        return silencioso ? false : alert("Ya existe ese correlativo para esta empresa");
       }
-      return alert("Error al guardar la liquidación");
+      return silencioso ? false : alert("Error al guardar la liquidación");
     }
 
-    alert(
-      idActual
-        ? "Liquidación actualizada correctamente"
-        : "Liquidación guardada correctamente"
-    );
+    if (!silencioso) {
+      alert(
+        idActual
+          ? "Liquidación actualizada correctamente"
+          : "Liquidación guardada correctamente"
+      );
+    }
+
     await cargarHistorial();
-    await prepararNuevaLiquidacion();
+    return true;
   };
 
   const exportarExcel = () => {
@@ -1076,18 +1240,18 @@ function CajaChica() {
   }
 
   const colorDiferencia =
-    Math.abs(diferencia) < 0.009
-      ? "#ecfdf5"
-      : diferencia > 0
-      ? "#fef2f2"
-      : "#fef9c3";
+  Math.abs(diferencia) < 0.009
+    ? "#ecfdf5"
+    : diferencia < 0
+    ? "#fef2f2"
+    : "#fcf7dc";
 
-  const borderDiferencia =
-    Math.abs(diferencia) < 0.009
-      ? "#bbf7d0"
-      : diferencia > 0
-      ? "#fecaca"
-      : "#fde68a";
+const borderDiferencia =
+  Math.abs(diferencia) < 0.009
+    ? "#bbf7d0"
+    : diferencia < 0
+    ? "#fecaca"
+    : "#e4ef86";
 
   return (
     <>
@@ -1285,72 +1449,25 @@ function CajaChica() {
                       <td></td>
                     </tr>
 
-                    {gastosConBalance.map((g) => (
+                    {gastosConBalance.filter(tieneContenidoGasto).map((g) => (
                       <tr key={g.id}>
                         <td className="invoice-text-center">{g.index}</td>
-                        <td>
-                          <input
-                            value={g.tipoDoc}
-                            onChange={(e) =>
-                              actualizarGasto(g.id, "tipoDoc", e.target.value)
-                            }
-                          />
-                        </td>
-                        <td>
-                          <input
-                            type="date"
-                            value={g.fecha}
-                            onChange={(e) =>
-                              actualizarGasto(g.id, "fecha", e.target.value)
-                            }
-                          />
-                        </td>
-                        <td>
-                          <input
-                            value={g.concepto}
-                            onChange={(e) =>
-                              actualizarGasto(g.id, "concepto", e.target.value)
-                            }
-                          />
-                        </td>
-                        <td>
-                          <input
-                            value={g.proveedor}
-                            onChange={(e) =>
-                              actualizarGasto(g.id, "proveedor", e.target.value)
-                            }
-                          />
-                        </td>
-                        <td>
-                          <input
-                            value={g.comprobante}
-                            onChange={(e) =>
-                              actualizarGasto(g.id, "comprobante", e.target.value)
-                            }
-                          />
-                        </td>
-                        <td>
-                          <input
-                            type="text"
-                            inputMode="decimal"
-                            value={g.ingreso}
-                            onChange={(e) =>
-                              actualizarGasto(g.id, "ingreso", e.target.value)
-                            }
-                          />
-                        </td>
-                        <td>
-                          <input
-                            type="text"
-                            inputMode="decimal"
-                            value={g.egreso}
-                            onChange={(e) =>
-                              actualizarGasto(g.id, "egreso", e.target.value)
-                            }
-                          />
-                        </td>
+                        <td>{g.tipoDoc || "-"}</td>
+                        <td>{g.fecha || "-"}</td>
+                        <td>{g.concepto || "-"}</td>
+                        <td>{g.proveedor || "-"}</td>
+                        <td>{g.comprobante || "-"}</td>
+                        <td className="invoice-text-right">$ {money(g.ingresoNum)}</td>
+                        <td className="invoice-text-right">$ {money(g.egresoNum)}</td>
                         <td className="invoice-text-right">$ {money(g.balance)}</td>
                         <td className="invoice-text-center">
+                          <button
+                            onClick={() => abrirModalGastoEditar(g)}
+                            style={ui.btnMiniEdit}
+                            title="Editar documento"
+                          >
+                            Editar
+                          </button>
                           <button
                             onClick={() => eliminarFila(g.id)}
                             style={ui.btnDelete}
@@ -1430,7 +1547,8 @@ function CajaChica() {
                           color: "#1f2937",
                         }}
                       >
-                        $ {money(diferencia)}
+                        {diferencia < 0 ? "- " : ""}
+$ {money(Math.abs(diferencia))}
                       </td>
                     </tr>
                   </tbody>
@@ -1478,6 +1596,12 @@ function CajaChica() {
               </div>
             </div>
 
+            {autosaveStatus && (
+              <div style={ui.autosaveBadge} className="no-print">
+                {autosaveStatus}
+              </div>
+            )}
+
             <div style={ui.actions} className="no-print">
               <button style={ui.btnPrimary} onClick={guardarLiquidacion}>
                 {idActual ? "Actualizar" : "Guardar"}
@@ -1514,6 +1638,100 @@ function CajaChica() {
           </div>
         </div>
       </div>
+
+
+      {modalGasto.open && (
+        <div style={ui.modalOverlay} onClick={cerrarModalGasto}>
+          <div style={ui.modalDocumento} onClick={(e) => e.stopPropagation()}>
+            <div style={ui.modalHeader}>
+              <h3 style={{ margin: 0, color: "#574866" }}>
+                {modalGasto.editando ? "Editar documento" : "Agregar documento"}
+              </h3>
+              <button style={ui.btnClose} onClick={cerrarModalGasto}>
+                ✖
+              </button>
+            </div>
+
+            <div style={ui.modalDocGrid}>
+              <div>
+                <label style={ui.label}>Tipo de documento</label>
+                <input
+                  value={modalGasto.gasto.tipoDoc}
+                  onChange={(e) => actualizarModalGasto("tipoDoc", e.target.value)}
+                  placeholder="Factura, ticket, CCF..."
+                />
+              </div>
+
+              <div>
+                <label style={ui.label}>Fecha</label>
+                <input
+                  type="date"
+                  value={modalGasto.gasto.fecha}
+                  onChange={(e) => actualizarModalGasto("fecha", e.target.value)}
+                />
+              </div>
+
+              <div>
+                <label style={ui.label}>No. comprobante</label>
+                <input
+                  value={modalGasto.gasto.comprobante}
+                  onChange={(e) => actualizarModalGasto("comprobante", e.target.value)}
+                  placeholder="Número de comprobante"
+                />
+              </div>
+
+              <div>
+                <label style={ui.label}>Proveedor</label>
+                <input
+                  value={modalGasto.gasto.proveedor}
+                  onChange={(e) => actualizarModalGasto("proveedor", e.target.value)}
+                  placeholder="Nombre del proveedor"
+                />
+              </div>
+
+              <div style={{ gridColumn: "1 / -1" }}>
+                <label style={ui.label}>Concepto</label>
+                <input
+                  value={modalGasto.gasto.concepto}
+                  onChange={(e) => actualizarModalGasto("concepto", e.target.value)}
+                  placeholder="Descripción del gasto o ingreso"
+                />
+              </div>
+
+              <div>
+                <label style={ui.label}>Ingreso</label>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={modalGasto.gasto.ingreso}
+                  onChange={(e) => actualizarModalGasto("ingreso", e.target.value)}
+                  placeholder="0.00"
+                />
+              </div>
+
+              <div>
+                <label style={ui.label}>Egreso</label>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={modalGasto.gasto.egreso}
+                  onChange={(e) => actualizarModalGasto("egreso", e.target.value)}
+                  placeholder="0.00"
+                />
+              </div>
+            </div>
+
+            <div style={ui.modalActions}>
+              <button style={ui.btnPrimary} onClick={guardarGastoModal}>
+                Guardar documento
+              </button>
+              <button style={ui.btnSecondary} onClick={cerrarModalGasto}>
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {mostrarHistorial && (
         <div style={ui.modalOverlay} onClick={cerrarHistorial}>
@@ -1736,6 +1954,51 @@ const ui = {
     display: "flex",
     gap: 8,
   },
+  autosaveBadge: {
+    display: "inline-flex",
+    alignItems: "center",
+    background: "#eefcf3",
+    color: "#0f7a4d",
+    border: "1px solid #c7eed5",
+    borderRadius: 999,
+    padding: "8px 12px",
+    fontSize: 13,
+    fontWeight: 800,
+    marginTop: 6,
+  },
+  btnMiniEdit: {
+    border: "none",
+    padding: "7px 10px",
+    background: "#f4f0f7",
+    color: "#574866",
+    borderRadius: 8,
+    cursor: "pointer",
+    fontWeight: 700,
+    marginRight: 6,
+  },
+  modalDocumento: {
+    width: "100%",
+    maxWidth: 720,
+    maxHeight: "86vh",
+    overflowY: "auto",
+    background: "#fff",
+    borderRadius: 18,
+    padding: 20,
+    boxShadow: "0 20px 50px rgba(0,0,0,0.25)",
+  },
+  modalDocGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+    gap: 14,
+  },
+  modalActions: {
+    display: "flex",
+    justifyContent: "flex-end",
+    gap: 10,
+    marginTop: 18,
+    flexWrap: "wrap",
+  },
+
 };
 
 export default CajaChica;

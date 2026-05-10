@@ -37,6 +37,35 @@ const modulosPermisos = [
     ],
   },
   {
+    id: "atencion_clinica",
+    icono: "🦷",
+    titulo: "Atención Clínica",
+    descripcion: "Atender pacientes, registrar procedimientos y enviar a CXC.",
+    permisos: [
+      { key: "atencion_clinica_ver", label: "Ver atención clínica" },
+      { key: "atencion_clinica_crear", label: "Crear atención desde citas" },
+      { key: "atencion_clinica_editar", label: "Editar detalle de atención" },
+      { key: "atencion_clinica_enviar_cobro", label: "Enviar atención a CXC" },
+      { key: "reporte_atenciones_cobro_ver", label: "Ver reporte de pacientes enviados a cobro" },
+      { key: "reporte_atenciones_cobro_exportar", label: "Exportar / descargar reporte de cobros" },
+    ],
+  },
+  {
+    id: "bandeja_notificaciones",
+    icono: "🔔",
+    titulo: "Bandeja de Notificaciones",
+    descripcion: "Controla qué mensajes puede ver cada usuario en la campanita.",
+    permisos: [
+      { key: "bandeja_notificaciones_ver", label: "Ver campanita / bandeja" },
+      { key: "bandeja_notificaciones_leer", label: "Marcar mensajes como leídos" },
+      { key: "notif_cita_confirmada_ver", label: "Ver citas confirmadas" },
+      { key: "notif_cita_cancelada_ver", label: "Ver citas canceladas" },
+      { key: "notif_cita_reagendada_ver", label: "Ver citas reagendadas" },
+      { key: "notif_cita_lunes_contacto_ver", label: "Ver solicitudes de lunes" },
+      { key: "notif_cita_enviada_cobro_ver", label: "Ver citas enviadas a cobro" },
+    ],
+  },
+  {
     id: "pacientes",
     icono: "👤",
     titulo: "Pacientes",
@@ -177,6 +206,21 @@ const permisosColaborador = {
   deudas_ver: true,
   deudas_cobrar: true,
 
+  atencion_clinica_ver: true,
+  atencion_clinica_crear: true,
+  atencion_clinica_editar: true,
+  atencion_clinica_enviar_cobro: true,
+  reporte_atenciones_cobro_ver: false,
+  reporte_atenciones_cobro_exportar: false,
+
+  bandeja_notificaciones_ver: true,
+  bandeja_notificaciones_leer: true,
+  notif_cita_confirmada_ver: true,
+  notif_cita_cancelada_ver: true,
+  notif_cita_reagendada_ver: true,
+  notif_cita_lunes_contacto_ver: true,
+  notif_cita_enviada_cobro_ver: false,
+
   pacientes_ver: true,
   pacientes_crear: true,
   pacientes_editar: false,
@@ -248,6 +292,8 @@ function UsuariosAccesos() {
     citas: true,
     ventas: false,
     deudas: false,
+    atencion_clinica: true,
+    bandeja_notificaciones: true,
     pacientes: false,
     productos: false,
     caja_diaria: true,
@@ -264,6 +310,7 @@ function UsuariosAccesos() {
 
   const puedeAdministrar =
     rolActivo === "owner" ||
+    rolActivo === "propietario" ||
     rolActivo === "admin" ||
     permisosActivos?.usuarios_invitar ||
     permisosActivos?.usuarios_editar;
@@ -866,6 +913,9 @@ function UsuariosAccesos() {
                 onChange={(e) => setRol(e.target.value)}
               >
                 {rolActivo === "owner" && <option value="owner">Owner</option>}
+                {(rolActivo === "owner" || rolActivo === "propietario") && (
+                  <option value="propietario">Propietario</option>
+                )}
                 <option value="admin">Admin</option>
                 <option value="colaborador">Colaborador</option>
               </select>

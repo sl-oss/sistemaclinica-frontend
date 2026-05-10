@@ -1,9 +1,22 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "./supabaseClient";
 import ExcelJS from "exceljs";
 import { saveAs } from "file-saver";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
+
+const CLAVE_PRECIO_EDITABLE = "EdAdmon26";
+
+function normalizarBooleano(valor) {
+  const texto = String(valor ?? "").trim().toLowerCase();
+  return ["si", "sí", "s", "true", "verdadero", "1", "editable", "precio editable"].includes(texto);
+}
+
+function normalizarTipo(valor) {
+  const texto = String(valor || "").trim().toLowerCase();
+  if (texto.includes("serv")) return "servicio";
+  return "producto";
+}
 
 function Items() {
   const [items, setItems] = useState([]);
@@ -11,6 +24,9 @@ function Items() {
   const [precio, setPrecio] = useState("");
   const [stock, setStock] = useState("");
   const [tipo, setTipo] = useState("producto");
+  const [precioEditable, setPrecioEditable] = useState(false);
+  const [importandoExcel, setImportandoExcel] = useState(false);
+  const excelInputRef = useRef(null);
 
   const [busqueda, setBusqueda] = useState("");
   const [filtroTipo, setFiltroTipo] = useState("todos");
@@ -134,6 +150,7 @@ function Items() {
           stock: tipo === "producto" ? Number(stock || 0) : null,
           tipo,
           empresa_id: empresa.id,
+          precio_editable: Boolean(precioEditable),
         },
       ])
       .select()
@@ -166,8 +183,236 @@ function Items() {
     setPrecio("");
     setStock("");
     setTipo("producto");
+    setPrecioEditable(false);
 
     obtenerItems();
+  };
+
+
+  const solicitarClavePrecioEditable = () => {
+    const clave = window.prompt("Ingrese clave administrativa para modificar precio editable");
+
+    if (clave !== CLAVE_PRECIO_EDITABLE) {
+      alert("Clave incorrecta");
+      return false;
+    }
+
+    return true;
+  };
+
+  const cambiarPrecioEditableNuevo = (checked) => {
+    if (checked) {
+      if (!solicitarClavePrecioEditable()) return;
+      setPrecioEditable(true);
+      return;
+    }
+
+    setPrecioEditable(false);
+  };
+
+  const cambiarPrecioEditableItem = async (item) => {
+    if (!empresa?.id) return;
+
+    if (!solicitarClavePrecioEditable()) return;
+
+    const nuevoValor = !Boolean(item.precio_editable);
+
+    const { error } = await supabase
+      .from("items")
+      .update({ precio_editable: nuevoValor })
+      .eq("id", item.id)
+      .eq("empresa_id", empresa.id);
+
+    if (error) {
+      console.error(error);
+      return alert("No se pudo actualizar la configuración de precio");
+    }
+
+    await obtenerItems();
+  };
+
+  const editarPrecioItem = async (item) => {
+    if (!empresa?.id) return;
+
+    if (!solicitarClavePrecioEditable()) return;
+
+    const nuevoPrecio = window.prompt(
+      `Nuevo precio para ${item.nombre}:`,
+      String(Number(item.precio || 0).toFixed(2))
+    );
+
+    if (nuevoPrecio === null) return;
+
+    const precioNumber = Number(nuevoPrecio);
+
+    if (!Number.isFinite(precioNumber) || precioNumber < 0) {
+      return alert("Ingrese un precio válido");
+    }
+
+    const { error } = await supabase
+      .from("items")
+      .update({ precio: precioNumber })
+      .eq("id", item.id)
+      .eq("empresa_id", empresa.id);
+
+    if (error) {
+      console.error(error);
+      return alert("No se pudo actualizar el precio");
+    }
+
+    await obtenerItems();
+  };
+
+  const descargarPlantillaExcel = async () => {
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet("Items");
+
+    sheet.columns = [
+      { header: "nombre", key: "nombre", width: 34 },
+      { header: "precio", key: "precio", width: 14 },
+      { header: "tipo", key: "tipo", width: 14 },
+      { header: "stock", key: "stock", width: 14 },
+      { header: "precio_editable", key: "precio_editable", width: 18 },
+    ];
+
+    sheet.addRow({
+      nombre: "Limpieza dental",
+      precio: 25,
+      tipo: "servicio",
+      stock: "",
+      precio_editable: "NO",
+    });
+
+    sheet.addRow({
+      nombre: "Tratamiento especial",
+      precio: 0,
+      tipo: "servicio",
+      stock: "",
+      precio_editable: "SI",
+    });
+
+    sheet.addRow({
+      nombre: "Cepillo dental",
+      precio: 3.5,
+      tipo: "producto",
+      stock: 100,
+      precio_editable: "NO",
+    });
+
+    sheet.getRow(1).font = { bold: true };
+    sheet.getRow(1).fill = {
+      type: "pattern",
+      pattern: "solid",
+      fgColor: { argb: "FFF4F0F7" },
+    };
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    saveAs(new Blob([buffer]), "Plantilla_Items.xlsx");
+  };
+
+  const importarItemsExcel = async (event) => {
+    if (!empresa?.id) return alert("No hay empresa seleccionada");
+
+    const file = event.target.files?.[0];
+    event.target.value = "";
+
+    if (!file) return;
+
+    if (!solicitarClavePrecioEditable()) return;
+
+    setImportandoExcel(true);
+
+    try {
+      const workbook = new ExcelJS.Workbook();
+      const buffer = await file.arrayBuffer();
+      await workbook.xlsx.load(buffer);
+
+      const sheet = workbook.worksheets[0];
+      if (!sheet) throw new Error("El archivo no tiene hojas");
+
+      const encabezados = {};
+      sheet.getRow(1).eachCell((cell, colNumber) => {
+        const key = String(cell.value || "").trim().toLowerCase();
+        if (key) encabezados[key] = colNumber;
+      });
+
+      const colNombre = encabezados.nombre;
+      const colPrecio = encabezados.precio;
+      const colTipo = encabezados.tipo;
+      const colStock = encabezados.stock;
+      const colPrecioEditable = encabezados.precio_editable || encabezados["precio editable"];
+
+      if (!colNombre || !colPrecio) {
+        throw new Error("El Excel debe tener al menos las columnas: nombre y precio");
+      }
+
+      const filas = [];
+
+      sheet.eachRow((row, rowNumber) => {
+        if (rowNumber === 1) return;
+
+        const nombreExcel = String(row.getCell(colNombre).value || "").trim();
+        const precioExcel = Number(row.getCell(colPrecio).value || 0);
+        const tipoExcel = normalizarTipo(row.getCell(colTipo).value || "producto");
+        const stockExcel = colStock ? Number(row.getCell(colStock).value || 0) : 0;
+        const precioEditableExcel = colPrecioEditable
+          ? normalizarBooleano(row.getCell(colPrecioEditable).value)
+          : false;
+
+        if (!nombreExcel) return;
+        if (!Number.isFinite(precioExcel) || precioExcel < 0) return;
+
+        filas.push({
+          nombre: nombreExcel,
+          precio: precioExcel,
+          tipo: tipoExcel,
+          stock: tipoExcel === "producto" ? Number(stockExcel || 0) : null,
+          empresa_id: empresa.id,
+          precio_editable: Boolean(precioEditableExcel),
+        });
+      });
+
+      if (filas.length === 0) {
+        throw new Error("No se encontraron filas válidas para importar");
+      }
+
+      const { data, error } = await supabase
+        .from("items")
+        .insert(filas)
+        .select();
+
+      if (error) throw error;
+
+      const movimientosKardex = (data || [])
+        .filter((item) => item.tipo === "producto" && Number(item.stock || 0) > 0)
+        .map((item) => ({
+          empresa_id: empresa.id,
+          item_id: item.id,
+          tipo: "entrada",
+          cantidad: Number(item.stock || 0),
+          motivo: "Stock inicial por importación Excel",
+          fecha_local: getFechaLocal(),
+        }));
+
+      if (movimientosKardex.length > 0) {
+        const { error: errorKardex } = await supabase
+          .from("kardex")
+          .insert(movimientosKardex);
+
+        if (errorKardex) {
+          console.error(errorKardex);
+          alert("Items importados, pero algunos movimientos de kardex no se registraron");
+        }
+      }
+
+      await obtenerItems();
+      alert(`Importación completada: ${filas.length} item(s)`);
+    } catch (error) {
+      console.error(error);
+      alert(error.message || "Error al importar Excel");
+    } finally {
+      setImportandoExcel(false);
+    }
   };
 
   const eliminarItem = async (id) => {
@@ -483,6 +728,17 @@ function Items() {
               />
             )}
 
+            <div style={styles.precioEditableBox}>
+              <label style={styles.checkboxLabel}>
+                <input
+                  type="checkbox"
+                  checked={precioEditable}
+                  onChange={(e) => cambiarPrecioEditableNuevo(e.target.checked)}
+                />
+                Precio editable
+              </label>
+            </div>
+
             <button style={styles.saveBtn} onClick={guardarItem}>
               Guardar
             </button>
@@ -517,6 +773,38 @@ function Items() {
               <option value="servicio">Servicios</option>
             </select>
           </div>
+
+          <div style={styles.importBox}>
+            <div>
+              <strong>Importar desde Excel</strong>
+              <p style={styles.importText}>
+                Columnas: nombre, precio, tipo, stock, precio_editable. Para importar se solicitará la clave administrativa.
+              </p>
+            </div>
+
+            <div style={styles.importActions}>
+              <button type="button" style={styles.actionBtnBlue} onClick={descargarPlantillaExcel}>
+                📄 Plantilla
+              </button>
+
+              <button
+                type="button"
+                style={styles.excelBtn}
+                onClick={() => excelInputRef.current?.click()}
+                disabled={importandoExcel}
+              >
+                {importandoExcel ? "Importando..." : "📥 Importar Excel"}
+              </button>
+
+              <input
+                ref={excelInputRef}
+                type="file"
+                accept=".xlsx,.xls"
+                style={{ display: "none" }}
+                onChange={importarItemsExcel}
+              />
+            </div>
+          </div>
         </div>
 
         <div style={styles.itemsGrid}>
@@ -542,6 +830,10 @@ function Items() {
               <div>
                 <strong style={styles.itemName}>{item.nombre}</strong>
                 <div style={styles.itemPrice}>${Number(item.precio || 0).toFixed(2)}</div>
+
+                <div style={item.precio_editable ? styles.editableTag : styles.fixedTag}>
+                  {item.precio_editable ? "✏️ Precio editable" : "🔒 Precio fijo"}
+                </div>
               </div>
 
               {item.tipo === "producto" && (
@@ -566,6 +858,14 @@ function Items() {
                     </button>
                   </>
                 )}
+
+                <button style={styles.actionBtnBlue} onClick={() => editarPrecioItem(item)}>
+                  💲 Editar precio
+                </button>
+
+                <button style={styles.actionBtn} onClick={() => cambiarPrecioEditableItem(item)}>
+                  {item.precio_editable ? "🔒 Fijar precio" : "✏️ Hacer editable"}
+                </button>
 
                 <button style={styles.deleteBtn} onClick={() => eliminarItem(item.id)}>
                   ❌ Eliminar
@@ -765,6 +1065,83 @@ const styles = {
     padding: "11px 16px",
     cursor: "pointer",
     fontWeight: "700",
+  },
+
+  precioEditableBox: {
+    display: "flex",
+    alignItems: "center",
+    minHeight: "42px",
+  },
+
+  checkboxLabel: {
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    fontWeight: "700",
+    color: "#334155",
+    fontSize: "14px",
+    background: "#f8fafc",
+    border: "1px solid #e2e8f0",
+    borderRadius: "12px",
+    padding: "10px 12px",
+    width: "100%",
+    boxSizing: "border-box",
+  },
+
+  importBox: {
+    marginTop: "14px",
+    background: "#f8fafc",
+    border: "1px solid #e2e8f0",
+    borderRadius: "16px",
+    padding: "14px",
+    display: "flex",
+    justifyContent: "space-between",
+    gap: "12px",
+    alignItems: "center",
+    flexWrap: "wrap",
+  },
+
+  importText: {
+    margin: "4px 0 0 0",
+    color: "#64748b",
+    fontSize: "13px",
+    lineHeight: 1.4,
+  },
+
+  importActions: {
+    display: "flex",
+    gap: "8px",
+    flexWrap: "wrap",
+  },
+
+  editableTag: {
+    marginTop: "8px",
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "6px",
+    background: "#eefcf3",
+    color: "#0f7a4d",
+    border: "1px solid #c7eed5",
+    borderRadius: "999px",
+    padding: "5px 10px",
+    fontSize: "12px",
+    fontWeight: "700",
+    width: "fit-content",
+  },
+
+  fixedTag: {
+    marginTop: "8px",
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "6px",
+    background: "#fff7ed",
+    color: "#b45309",
+    border: "1px solid #fed7aa",
+    borderRadius: "999px",
+    padding: "5px 10px",
+    fontSize: "12px",
+    fontWeight: "700",
+    width: "fit-content",
   },
 
   itemsGrid: {

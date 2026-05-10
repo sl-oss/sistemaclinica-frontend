@@ -18,7 +18,7 @@ function obtenerBaseUrlPublica() {
 }
 
 
-function Citas() {
+function Citas({ onNavigate }) {
   const empresaInicial = JSON.parse(localStorage.getItem("empresa") || "null");
 
   const [empresa, setEmpresa] = useState(empresaInicial);
@@ -42,6 +42,8 @@ function Citas() {
   const [filtroHasta, setFiltroHasta] = useState("");
 
   const [clienteSeleccionado, setClienteSeleccionado] = useState("");
+  const [busquedaPacienteCita, setBusquedaPacienteCita] = useState("");
+  const [mostrarDropdownPacientes, setMostrarDropdownPacientes] = useState(false);
   const [fecha, setFecha] = useState(obtenerFechaSV());
   const [hora, setHora] = useState("08:00");
   const [minuto, setMinuto] = useState("00");
@@ -120,6 +122,19 @@ function Citas() {
   }, []);
 
   const minutosDisponibles = useMemo(() => ["00", "15", "30", "45"], []);
+
+  const clientesFiltradosCita = useMemo(() => {
+    const texto = busquedaPacienteCita.trim().toLowerCase();
+
+    if (!texto) return clientes;
+
+    return clientes.filter((cliente) => {
+      const nombre = String(cliente.nombre || "").toLowerCase();
+      const telefono = String(cliente.telefono || "").toLowerCase();
+      return nombre.includes(texto) || telefono.includes(texto);
+    });
+  }, [clientes, busquedaPacienteCita]);
+
 
   const rangoMes = useMemo(() => {
     if (filtroDesde && filtroHasta) return { desde: filtroDesde, hasta: filtroHasta };
@@ -886,6 +901,8 @@ autoTable(doc, {
     setHora(obtenerHoraBase(horaTexto));
     setMinuto(obtenerMinuto(horaTexto));
     setClienteSeleccionado("");
+    setBusquedaPacienteCita("");
+    setMostrarDropdownPacientes(false);
     setTipoCita("normal");
     setComentario("");
     setCitaEditando(null);
@@ -946,6 +963,7 @@ autoTable(doc, {
 
     await obtenerClientes();
     setClienteSeleccionado(data.id);
+    setBusquedaPacienteCita(data.nombre || nuevoClienteNombre.trim());
     cerrarModalCliente();
   };
 
@@ -1012,6 +1030,7 @@ autoTable(doc, {
     const info = leerServicio(cita.servicio);
     setCitaEditando(cita);
     setClienteSeleccionado(cita.cliente_id || "");
+    setBusquedaPacienteCita(cita.clientes?.nombre || "");
     setFecha(cita.fecha || obtenerFechaSV());
     setHora(obtenerHoraBase(cita.hora) || "08:00");
     setMinuto(obtenerMinuto(cita.hora) || "00");
@@ -1144,7 +1163,49 @@ autoTable(doc, {
   };
 
   const atender = async (cita) => {
+    if (!cita?.id || !cita?.empresa_id) return;
+
     localStorage.setItem("citaActiva", JSON.stringify(cita));
+
+    const { data: atencionExistente, error: errorBuscar } = await supabase
+      .from("atenciones_clinicas")
+      .select("*")
+      .eq("cita_id", cita.id)
+      .eq("empresa_id", cita.empresa_id)
+      .maybeSingle();
+
+    if (errorBuscar) {
+      console.error(errorBuscar);
+      return alert("Error al revisar la atención clínica");
+    }
+
+    let atencion = atencionExistente;
+
+    if (!atencionExistente) {
+      const { data: nuevaAtencion, error: errorCrear } = await supabase
+        .from("atenciones_clinicas")
+        .insert([
+          {
+            empresa_id: cita.empresa_id,
+            cita_id: cita.id,
+            cliente_id: cita.cliente_id,
+            fecha_atencion: obtenerFechaSV(),
+            hora_inicio: normalizarHora(cita.hora),
+            estado: "en_proceso",
+            origen: "cita",
+            observacion: "",
+          },
+        ])
+        .select()
+        .single();
+
+      if (errorCrear) {
+        console.error(errorCrear);
+        return alert("Error al crear la atención clínica");
+      }
+
+      atencion = nuevaAtencion;
+    }
 
     const { error } = await supabase
       .from("citas")
@@ -1156,12 +1217,29 @@ autoTable(doc, {
       return alert("Error al marcar como atendida");
     }
 
+    localStorage.setItem(
+      "atencionActiva",
+      JSON.stringify({
+        ...atencion,
+        clientes: cita.clientes,
+        empresas: cita.empresas,
+        cita,
+      })
+    );
+
     await obtenerCitas();
-    window.dispatchEvent(new Event("irAVenta"));
+
+    if (typeof onNavigate === "function") {
+      onNavigate("atencionClinica");
+    } else {
+      window.dispatchEvent(new Event("irAAtencionClinica"));
+    }
   };
 
   const limpiarFormulario = () => {
     setClienteSeleccionado("");
+    setBusquedaPacienteCita("");
+    setMostrarDropdownPacientes(false);
     setFecha(fechaSeleccionada || obtenerFechaSV());
     setHora("08:00");
     setMinuto("00");
@@ -1356,7 +1434,7 @@ autoTable(doc, {
               value={filtroEstado}
               onChange={(e) => setFiltroEstado(e.target.value)}
             >
-              <option value="pendientes">Pendientes</option>
+              <option value="pendientes">Por Atender</option>
               <option value="atendidas">Atendidas</option>
               <option value="canceladas">Canceladas</option>
               <option value="todas">Todas</option>
@@ -1563,7 +1641,7 @@ autoTable(doc, {
                 onChange={(e) => setReporteEstado(e.target.value)}
               >
                 <option value="todos">Todos los estados</option>
-                <option value="pendiente">Pendientes</option>
+                <option value="pendiente">Por Atender</option>
                 <option value="atendida">Atendidas</option>
                 <option value="cancelada">Canceladas</option>
                 <option value="confirmadas">Confirmadas</option>
@@ -1667,7 +1745,7 @@ autoTable(doc, {
                 value={confirmacionEstado}
                 onChange={(e) => setConfirmacionEstado(e.target.value)}
               >
-                <option value="pendientes">Pendientes</option>
+                <option value="pendientes">Por Atender</option>
                 <option value="sin_confirmar">Sin confirmar</option>
                 <option value="confirmadas">Confirmadas</option>
                 <option value="todos">Todas</option>
@@ -1696,7 +1774,7 @@ autoTable(doc, {
             {cargandoConfirmacion ? (
               <div style={styles.emptyState}>Cargando citas...</div>
             ) : citasConfirmacionFiltradas.length === 0 ? (
-              <div style={styles.emptyState}>No hay citas pendientes para esa fecha.</div>
+              <div style={styles.emptyState}>No hay citas por atender para esa fecha.</div>
             ) : (
               <div style={styles.confirmList}>
                 {citasConfirmacionFiltradas.map((cita) => {
@@ -1823,23 +1901,78 @@ autoTable(doc, {
             </div>
 
             <div style={styles.grid}>
-              <div style={styles.clienteRow}>
-                <select
-                  style={{ ...styles.input, marginBottom: 0 }}
-                  value={clienteSeleccionado}
-                  onChange={(e) => setClienteSeleccionado(e.target.value)}
-                >
-                  <option value="">Paciente</option>
-                  {clientes.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.nombre} {c.telefono ? `- ${c.telefono}` : ""}
-                    </option>
-                  ))}
-                </select>
+              <div style={styles.patientPickerBox}>
+                <div style={styles.patientSearchRow}>
+                  <div style={styles.patientDropdownWrap}>
+                    <input
+                      style={{ ...styles.input, marginBottom: 0 }}
+                      value={busquedaPacienteCita}
+                      onFocus={() => setMostrarDropdownPacientes(true)}
+                      onChange={(e) => {
+                        setBusquedaPacienteCita(e.target.value);
+                        setClienteSeleccionado("");
+                        setMostrarDropdownPacientes(true);
+                      }}
+                      placeholder="Buscar paciente por nombre o teléfono..."
+                    />
 
-                <button type="button" style={styles.btnNuevoCliente} onClick={abrirModalCliente}>
-                  + Paciente
-                </button>
+                    {mostrarDropdownPacientes && (
+                      <div style={styles.patientDropdown}>
+                        <div style={styles.patientDropdownHeader}>
+                          <span>
+                            {clientesFiltradosCita.length} resultado(s)
+                          </span>
+                          <button
+                            type="button"
+                            style={styles.patientDropdownClose}
+                            onClick={() => setMostrarDropdownPacientes(false)}
+                          >
+                            Cerrar
+                          </button>
+                        </div>
+
+                        {clientesFiltradosCita.length === 0 ? (
+                          <div style={styles.patientEmpty}>
+                            No aparece el paciente. Podés crearlo con “+ Paciente”.
+                          </div>
+                        ) : (
+                          clientesFiltradosCita.map((c) => {
+                            const activo = String(clienteSeleccionado) === String(c.id);
+
+                            return (
+                              <button
+                                key={c.id}
+                                type="button"
+                                style={{
+                                  ...styles.patientOption,
+                                  ...(activo ? styles.patientOptionActive : {}),
+                                }}
+                                onClick={() => {
+                                  setClienteSeleccionado(c.id);
+                                  setBusquedaPacienteCita(c.nombre || "");
+                                  setMostrarDropdownPacientes(false);
+                                }}
+                              >
+                                <strong>{c.nombre}</strong>
+                                {c.telefono && <span>{c.telefono}</span>}
+                              </button>
+                            );
+                          })
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  <button type="button" style={styles.btnNuevoCliente} onClick={abrirModalCliente}>
+                    + Paciente
+                  </button>
+                </div>
+
+                {clienteSeleccionado && (
+                  <div style={styles.patientSelectedBadge}>
+                    Paciente seleccionado: <strong>{busquedaPacienteCita}</strong>
+                  </div>
+                )}
               </div>
 
               <input
@@ -3756,6 +3889,116 @@ const styles = {
     cursor: "pointer",
     fontWeight: "950",
     fontSize: "13px",
+  },
+
+  patientPickerBox: {
+    gridColumn: "1 / -1",
+    display: "grid",
+    gap: "10px",
+  },
+
+  patientSearchRow: {
+    display: "grid",
+    gridTemplateColumns: "minmax(0, 1fr) auto",
+    gap: "10px",
+    alignItems: "start",
+  },
+
+  patientList: {
+    maxHeight: "230px",
+    overflowY: "auto",
+    display: "grid",
+    gap: "8px",
+    background: "#f8fafc",
+    border: "1px solid #e2e8f0",
+    borderRadius: "16px",
+    padding: "10px",
+  },
+
+  patientOption: {
+    border: "1px solid #e2e8f0",
+    background: "#fff",
+    color: "#334155",
+    borderRadius: "14px",
+    padding: "11px 12px",
+    cursor: "pointer",
+    textAlign: "left",
+    display: "flex",
+    justifyContent: "space-between",
+    gap: "10px",
+    alignItems: "center",
+    fontSize: "13px",
+  },
+
+  patientOptionActive: {
+    background: "#f4f0f7",
+    border: "1px solid #8a79a0",
+    color: "#574866",
+  },
+
+  patientEmpty: {
+    padding: "12px",
+    borderRadius: "13px",
+    background: "#fff",
+    border: "1px dashed #cbd5e1",
+    color: "#64748b",
+    fontSize: "13px",
+    fontWeight: "850",
+    textAlign: "center",
+  },
+
+  patientDropdownWrap: {
+    position: "relative",
+    minWidth: 0,
+  },
+
+  patientDropdown: {
+    position: "absolute",
+    top: "calc(100% + 6px)",
+    left: 0,
+    right: 0,
+    zIndex: 30,
+    maxHeight: "320px",
+    overflowY: "auto",
+    display: "grid",
+    gap: "7px",
+    background: "#fff",
+    border: "1px solid #d7dbe2",
+    borderRadius: "16px",
+    padding: "10px",
+    boxShadow: "0 18px 45px rgba(15, 23, 42, 0.18)",
+  },
+
+  patientDropdownHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: "8px",
+    color: "#64748b",
+    fontSize: "12px",
+    fontWeight: "850",
+    padding: "0 2px 4px",
+  },
+
+  patientDropdownClose: {
+    border: "none",
+    background: "#f1f5f9",
+    color: "#475569",
+    borderRadius: "9px",
+    padding: "5px 8px",
+    cursor: "pointer",
+    fontSize: "11px",
+    fontWeight: "900",
+  },
+
+  patientSelectedBadge: {
+    background: "#eefcf3",
+    color: "#0f7a4d",
+    border: "1px solid #c7eed5",
+    borderRadius: "12px",
+    padding: "8px 10px",
+    fontSize: "12px",
+    fontWeight: "850",
   },
 
 };

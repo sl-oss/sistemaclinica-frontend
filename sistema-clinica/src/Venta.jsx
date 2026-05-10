@@ -18,6 +18,14 @@ function obtenerFechaHoraSVISO() {
   return `${yyyy}-${mm}-${dd}T${hh}:${mi}:${ss}`;
 }
 
+function formatearFechaVenta(fecha) {
+  if (!fecha) return "";
+  const soloFecha = String(fecha).slice(0, 10);
+  const [yyyy, mm, dd] = soloFecha.split("-");
+  if (!yyyy || !mm || !dd) return soloFecha;
+  return `${dd}/${mm}/${yyyy}`;
+}
+
 async function registrarPagosEnCajaDiaria({
   empresaId,
   ventaId,
@@ -106,6 +114,13 @@ function Venta() {
   const [nuevoClienteTelefono, setNuevoClienteTelefono] = useState("");
   const [guardandoCliente, setGuardandoCliente] = useState(false);
   const [guardandoVenta, setGuardandoVenta] = useState(false);
+
+  const [mostrarReportePrecios, setMostrarReportePrecios] = useState(false);
+  const [reportePrecios, setReportePrecios] = useState([]);
+  const [cargandoReportePrecios, setCargandoReportePrecios] = useState(false);
+  const [filtroReporteDesde, setFiltroReporteDesde] = useState("");
+  const [filtroReporteHasta, setFiltroReporteHasta] = useState("");
+  const [filtroReporteOrigen, setFiltroReporteOrigen] = useState("todos");
 
   // Multiusuario: el usuario puede tener acceso a una o varias empresas.
   // Este módulo de venta siempre opera con UNA empresa activa para no mezclar caja, stock ni kardex.
@@ -343,7 +358,14 @@ function Venta() {
     if (existe) {
       cambiarCantidad(item.id, existe.cantidad + 1);
     } else {
-      setSeleccionados([...seleccionados, { ...item, cantidad: 1 }]);
+      setSeleccionados([
+        ...seleccionados,
+        {
+          ...item,
+          precio_base: Number(item.precio || 0),
+          cantidad: 1,
+        },
+      ]);
     }
   };
 
@@ -372,6 +394,13 @@ function Venta() {
   };
 
   const cambiarPrecio = (id, precio) => {
+    const item = seleccionados.find((i) => String(i.id) === String(id));
+
+    if (!item?.precio_editable) {
+      alert("Este producto tiene precio fijo y no se puede modificar.");
+      return;
+    }
+
     setSeleccionados(
       seleccionados.map((i) => (i.id === id ? { ...i, precio } : i))
     );
@@ -474,6 +503,9 @@ function Venta() {
       item_id: i.id,
       cantidad: i.cantidad,
       precio: i.precio,
+      precio_base: Number(i.precio_base ?? i.precio_original ?? i.precio_catalogo ?? i.precio ?? 0),
+      precio_editable: Boolean(i.precio_editable),
+      origen_precio: "venta",
     }));
 
     const { error: errorDetalle } = await supabase
@@ -587,6 +619,92 @@ function Venta() {
     obtenerItems();
   };
 
+
+  const cargarReportePreciosEspeciales = async () => {
+    const empresaId = empresa?.id;
+    if (!empresaId) return alert("No hay empresa seleccionada");
+
+    setCargandoReportePrecios(true);
+
+    let query = supabase
+      .from("detalle_venta")
+      .select(`
+        id,
+        venta_id,
+        item_id,
+        cantidad,
+        precio,
+        precio_base,
+        precio_editable,
+        origen_precio,
+        ventas (
+          id,
+          empresa_id,
+          cliente_id,
+          fecha_local,
+          fecha,
+          estado,
+          total,
+          clientes (
+            id,
+            nombre
+          )
+        ),
+        items (
+          id,
+          nombre,
+          tipo
+        )
+      `)
+      .eq("precio_editable", true)
+      .eq("ventas.empresa_id", empresaId)
+      .order("id", { ascending: false });
+
+    if (filtroReporteDesde) {
+      query = query.gte("ventas.fecha_local", `${filtroReporteDesde}T00:00:00`);
+    }
+
+    if (filtroReporteHasta) {
+      query = query.lte("ventas.fecha_local", `${filtroReporteHasta}T23:59:59`);
+    }
+
+    const { data, error } = await query;
+
+    setCargandoReportePrecios(false);
+
+    if (error) {
+      console.error(error);
+      return alert("Error al cargar reporte de precios especiales");
+    }
+
+    const filtrado = (data || []).filter((row) => {
+      if (!row.ventas || String(row.ventas.empresa_id) !== String(empresaId)) return false;
+      if (filtroReporteOrigen === "todos") return true;
+      return String(row.origen_precio || "venta") === filtroReporteOrigen;
+    });
+
+    setReportePrecios(filtrado);
+  };
+
+  const abrirReportePreciosEspeciales = async () => {
+    setMostrarReportePrecios(true);
+    await cargarReportePreciosEspeciales();
+  };
+
+  const cerrarReportePreciosEspeciales = () => {
+    setMostrarReportePrecios(false);
+    setReportePrecios([]);
+  };
+
+  const totalDiferenciaReporte = useMemo(() => {
+    return reportePrecios.reduce((acc, row) => {
+      const cantidad = Number(row.cantidad || 0);
+      const base = Number(row.precio_base || 0);
+      const cobrado = Number(row.precio || 0);
+      return acc + (cobrado - base) * cantidad;
+    }, 0);
+  }, [reportePrecios]);
+
   return (
     <>
       <div style={styles.page}>
@@ -616,6 +734,13 @@ function Venta() {
             )}
             <div>Módulo de ventas</div>
             <div>Total actual: <strong>${total.toFixed(2)}</strong></div>
+            <button
+              type="button"
+              style={styles.btnReportePrecios}
+              onClick={abrirReportePreciosEspeciales}
+            >
+              📊 Reporte precios especiales
+            </button>
           </div>
         </div>
 
@@ -673,6 +798,10 @@ function Venta() {
 
                     <div style={styles.itemPrecio}>
                       ${Number(item.precio || 0).toFixed(2)}
+                    </div>
+
+                    <div style={item.precio_editable ? styles.precioEditableBadge : styles.precioFijoBadge}>
+                      {item.precio_editable ? "✏️ Editable" : "🔒 Fijo"}
                     </div>
 
                     {item.tipo === "producto" && (
@@ -753,14 +882,25 @@ function Venta() {
                       <div style={styles.rowMain}>
                         <strong style={{ color: "#1f2937" }}>{item.nombre}</strong>
 
-                        <input
-                          type="number"
-                          value={item.precio}
-                          onChange={(e) =>
-                            cambiarPrecio(item.id, Number(e.target.value))
-                          }
-                          style={styles.precio}
-                        />
+                        <div style={styles.precioWrap}>
+                          <input
+                            type="number"
+                            value={item.precio}
+                            onChange={(e) =>
+                              cambiarPrecio(item.id, Number(e.target.value))
+                            }
+                            style={{
+                              ...styles.precio,
+                              ...(!item.precio_editable ? styles.precioBloqueado : {}),
+                            }}
+                            disabled={!item.precio_editable}
+                            title={item.precio_editable ? "Precio editable" : "Precio fijo"}
+                          />
+
+                          <span style={item.precio_editable ? styles.precioEditableMini : styles.precioFijoMini}>
+                            {item.precio_editable ? "Editable" : "Fijo"}
+                          </span>
+                        </div>
                       </div>
 
                       <div style={styles.controls}>
@@ -879,6 +1019,130 @@ function Venta() {
           </aside>
         </div>
       </div>
+
+      {mostrarReportePrecios && (
+        <div style={styles.modalOverlay} onClick={cerrarReportePreciosEspeciales}>
+          <div style={styles.modalReportePrecios} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.modalHeader}>
+              <div>
+                <h3 style={{ margin: 0, color: "#574866" }}>
+                  📊 Reporte de precios especiales
+                </h3>
+                <p style={styles.modalSubtitle}>
+                  Muestra únicamente ventas con productos/servicios de precio editable.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                style={styles.btnCerrarModal}
+                onClick={cerrarReportePreciosEspeciales}
+              >
+                ✖
+              </button>
+            </div>
+
+            <div style={styles.reporteFiltros}>
+              <input
+                type="date"
+                style={styles.input}
+                value={filtroReporteDesde}
+                onChange={(e) => setFiltroReporteDesde(e.target.value)}
+              />
+
+              <input
+                type="date"
+                style={styles.input}
+                value={filtroReporteHasta}
+                onChange={(e) => setFiltroReporteHasta(e.target.value)}
+              />
+
+              <select
+                style={styles.input}
+                value={filtroReporteOrigen}
+                onChange={(e) => setFiltroReporteOrigen(e.target.value)}
+              >
+                <option value="todos">Todos los orígenes</option>
+                <option value="venta">Venta directa</option>
+                <option value="atencion_clinica">Atención clínica</option>
+              </select>
+
+              <button
+                type="button"
+                style={styles.btnSoftPrimary}
+                onClick={cargarReportePreciosEspeciales}
+              >
+                Filtrar
+              </button>
+            </div>
+
+            <div style={styles.reporteResumen}>
+              <div>
+                <span>Registros</span>
+                <strong>{reportePrecios.length}</strong>
+              </div>
+
+            </div>
+
+            <div style={styles.reporteTableWrap}>
+              {cargandoReportePrecios ? (
+                <div style={styles.emptyBox}>Cargando reporte...</div>
+              ) : reportePrecios.length === 0 ? (
+                <div style={styles.emptyBox}>
+                  No hay precios especiales con los filtros seleccionados.
+                </div>
+              ) : (
+                <table style={styles.reporteTable}>
+                  <thead>
+                    <tr>
+                      <th style={styles.reporteTh}>Fecha</th>
+                      <th style={styles.reporteTh}>Cliente</th>
+                      <th style={styles.reporteTh}>Producto / servicio</th>
+                      <th style={styles.reporteTh}>Origen</th>
+                      <th style={styles.reporteTh}>Cantidad</th>
+                      <th style={styles.reporteTh}>Precio base</th>
+                      <th style={styles.reporteTh}>Precio cobrado</th>
+                      <th style={styles.reporteTh}>Estado</th>
+                    </tr>
+                  </thead>
+
+                  <tbody>
+                    {reportePrecios.map((row) => {
+                      const cantidad = Number(row.cantidad || 0);
+                      const precioBase = Number(row.precio_base || 0);
+                      const precioCobrado = Number(row.precio || 0);
+
+                      return (
+                        <tr key={row.id}>
+                          <td style={styles.reporteTd}>
+                            {formatearFechaVenta(row.ventas?.fecha_local || row.ventas?.fecha)}
+                          </td>
+                          <td style={styles.reporteTd}>
+                            {row.ventas?.clientes?.nombre || "Cliente de contado"}
+                          </td>
+                          <td style={styles.reporteTd}>
+                            {row.items?.nombre || "Producto / servicio"}
+                          </td>
+                          <td style={styles.reporteTd}>
+                            {row.origen_precio === "atencion_clinica"
+                              ? "Atención clínica"
+                              : "Venta directa"}
+                          </td>
+                          <td style={styles.reporteTd}>{cantidad}</td>
+                          <td style={styles.reporteTd}>${precioBase.toFixed(2)}</td>
+                          <td style={styles.reporteTd}>${precioCobrado.toFixed(2)}</td>
+                          
+                          <td style={styles.reporteTd}>{row.ventas?.estado || ""}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {mostrarModalCliente && (
         <div style={styles.modalOverlay} onClick={cerrarModalCliente}>
@@ -1389,6 +1653,140 @@ const styles = {
     cursor: "pointer",
     fontWeight: "700",
   },
+  precioWrap: {
+    display: "grid",
+    gap: 5,
+  },
+
+  precioBloqueado: {
+    background: "#f8fafc",
+    color: "#64748b",
+    cursor: "not-allowed",
+  },
+
+  precioEditableMini: {
+    display: "inline-flex",
+    width: "fit-content",
+    background: "#eefcf3",
+    color: "#0f7a4d",
+    border: "1px solid #c7eed5",
+    borderRadius: 999,
+    padding: "3px 7px",
+    fontSize: 10,
+    fontWeight: 800,
+  },
+
+  precioFijoMini: {
+    display: "inline-flex",
+    width: "fit-content",
+    background: "#fff7ed",
+    color: "#b45309",
+    border: "1px solid #fed7aa",
+    borderRadius: 999,
+    padding: "3px 7px",
+    fontSize: 10,
+    fontWeight: 800,
+  },
+
+  precioEditableBadge: {
+    marginTop: 8,
+    display: "inline-flex",
+    width: "fit-content",
+    background: "#eefcf3",
+    color: "#0f7a4d",
+    border: "1px solid #c7eed5",
+    borderRadius: 999,
+    padding: "4px 8px",
+    fontSize: 11,
+    fontWeight: 800,
+  },
+
+  precioFijoBadge: {
+    marginTop: 8,
+    display: "inline-flex",
+    width: "fit-content",
+    background: "#fff7ed",
+    color: "#b45309",
+    border: "1px solid #fed7aa",
+    borderRadius: 999,
+    padding: "4px 8px",
+    fontSize: 11,
+    fontWeight: 800,
+  },
+
+  btnReportePrecios: {
+    marginTop: 8,
+    width: "100%",
+    background: "#f4f0f7",
+    color: "#574866",
+    border: "1px solid #d3c7dd",
+    borderRadius: 12,
+    padding: "9px 12px",
+    cursor: "pointer",
+    fontWeight: 800,
+  },
+
+  modalReportePrecios: {
+    width: "100%",
+    maxWidth: "1180px",
+    maxHeight: "88vh",
+    overflow: "hidden",
+    background: "#fff",
+    borderRadius: "20px",
+    padding: "18px",
+    boxShadow: "0 20px 45px rgba(0,0,0,0.22)",
+    display: "grid",
+    gap: "14px",
+    border: "1px solid #d7dbe2",
+  },
+
+  reporteFiltros: {
+    display: "grid",
+    gridTemplateColumns: "180px 180px 220px auto",
+    gap: 10,
+    alignItems: "center",
+  },
+
+  reporteResumen: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+    gap: 10,
+  },
+
+  reporteTableWrap: {
+    overflow: "auto",
+    border: "1px solid #d7dbe2",
+    borderRadius: 14,
+    maxHeight: "55vh",
+  },
+
+  reporteTable: {
+    width: "100%",
+    minWidth: "980px",
+    borderCollapse: "collapse",
+    background: "#fff",
+  },
+
+  reporteTh: {
+    position: "sticky",
+    top: 0,
+    background: "#f4f0f7",
+    color: "#574866",
+    padding: "11px 10px",
+    textAlign: "left",
+    borderBottom: "1px solid #d7dbe2",
+    fontSize: 13,
+    zIndex: 1,
+  },
+
+  reporteTd: {
+    padding: "10px",
+    borderBottom: "1px solid #edf2f7",
+    color: "#334155",
+    fontSize: 13,
+    verticalAlign: "top",
+  },
+
 };
 
 export default Venta;

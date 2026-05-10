@@ -123,6 +123,40 @@ async function registrarPagosEnCajaDiaria({
   }
 }
 
+
+function obtenerOrigenVenta(venta) {
+  const texto = [
+    venta.origen,
+    venta.tipo_origen,
+    venta.modulo_origen,
+    venta.referencia,
+    venta.observacion,
+    venta.descripcion,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  try {
+    const atencionPendiente = JSON.parse(localStorage.getItem("atencionPendienteCobro") || "null");
+    if (atencionPendiente?.venta_id && String(atencionPendiente.venta_id) === String(venta.id)) {
+      return "atencion";
+    }
+  } catch {}
+
+  if (
+    texto.includes("atencion") ||
+    texto.includes("atención") ||
+    texto.includes("clinica") ||
+    texto.includes("clínica") ||
+    texto.includes("cita")
+  ) {
+    return "atencion";
+  }
+
+  return "venta";
+}
+
 function Deudas() {
   const empresaGuardada = JSON.parse(localStorage.getItem("empresa") || "null");
 
@@ -136,6 +170,12 @@ function Deudas() {
   const [mostrarSelectorEmpresas, setMostrarSelectorEmpresas] = useState(false);
   const [ventas, setVentas] = useState([]);
   const [metodosPago, setMetodosPago] = useState([]);
+  const [clasificaciones, setClasificaciones] = useState([]);
+  const [detalleVentaAbierta, setDetalleVentaAbierta] = useState([]);
+  const [clasificacionPacienteId, setClasificacionPacienteId] = useState("");
+  const [filtroDesdeCxC, setFiltroDesdeCxC] = useState("");
+  const [filtroHastaCxC, setFiltroHastaCxC] = useState("");
+  const [filtroOrigenCxC, setFiltroOrigenCxC] = useState("todos");
   const [ventaAbierta, setVentaAbierta] = useState(null);
   const [pagos, setPagos] = useState([
     { metodo_pago_id: "", monto: "", referencia: "" },
@@ -149,8 +189,10 @@ function Deudas() {
   useEffect(() => {
     if (empresa?.id) {
       obtenerMetodosPago(empresa.id);
+      obtenerClasificaciones(empresa.id);
     } else {
       setMetodosPago([]);
+      setClasificaciones([]);
     }
   }, [empresa?.id]);
 
@@ -161,7 +203,7 @@ function Deudas() {
     } else {
       setVentas([]);
     }
-  }, [empresa?.id, empresasReporteIds.join("|")]);
+  }, [empresa?.id, empresasReporteIds.join("|"), filtroDesdeCxC, filtroHastaCxC, filtroOrigenCxC]);
 
   const cargarEmpresasUsuario = async () => {
     try {
@@ -287,6 +329,24 @@ function Deudas() {
     setMetodosPago(data || []);
   };
 
+  const obtenerClasificaciones = async (empresaId = empresa?.id) => {
+    if (!empresaId) return;
+
+    const { data, error } = await supabase
+      .from("clasificaciones_pacientes")
+      .select("*")
+      .eq("empresa_id", empresaId)
+      .order("nombre", { ascending: true });
+
+    if (error) {
+      console.warn("No se pudieron cargar clasificaciones_pacientes:", error);
+      setClasificaciones([]);
+      return;
+    }
+
+    setClasificaciones(data || []);
+  };
+
   const obtenerCuentasPorCobrar = async () => {
     const idsConsulta = empresasReporteIds.length > 0
       ? empresasReporteIds
@@ -296,12 +356,16 @@ function Deudas() {
 
     if (idsConsulta.length === 0) return;
 
-    const { data, error } = await supabase
+    let query = supabase
       .from("ventas")
-      .select("*, clientes(nombre), venta_pagos(monto)")
+      .select("*, clientes(id, nombre), venta_pagos(monto)")
       .in("empresa_id", idsConsulta)
-      .neq("estado", "pagado")
-      .order("fecha_local", { ascending: false });
+      .neq("estado", "pagado");
+
+    if (filtroDesdeCxC) query = query.gte("fecha_local", `${filtroDesdeCxC}T00:00:00`);
+    if (filtroHastaCxC) query = query.lte("fecha_local", `${filtroHastaCxC}T23:59:59`);
+
+    const { data, error } = await query.order("fecha_local", { ascending: false });
 
     if (error) {
       console.error(error);
@@ -318,8 +382,11 @@ function Deudas() {
       const diasMora = calcularDiasMora(venta.fecha_local);
       const antiguedad = obtenerRangoAntiguedad(diasMora);
 
+      const origen = obtenerOrigenVenta(venta);
+
       return {
         ...venta,
+        origen_cxc: origen,
         empresa_nombre: obtenerNombreEmpresa(venta.empresa_id),
         abonado,
         saldo,
@@ -329,17 +396,50 @@ function Deudas() {
       };
     });
 
-    setVentas(ventasConSaldo.filter((v) => v.saldo > 0));
+    const filtradasPorOrigen = ventasConSaldo.filter((v) => {
+      if (filtroOrigenCxC === "todos") return true;
+      return v.origen_cxc === filtroOrigenCxC;
+    });
+
+    setVentas(filtradasPorOrigen.filter((v) => v.saldo > 0));
+  };
+
+  const cargarDetalleVenta = async (venta) => {
+    if (!venta?.id) {
+      setDetalleVentaAbierta([]);
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("detalle_venta")
+      .select(`
+        *,
+        items(nombre, tipo)
+      `)
+      .eq("venta_id", venta.id);
+
+    if (error) {
+      console.warn("No se pudo cargar detalle_venta:", error);
+      setDetalleVentaAbierta([]);
+      return;
+    }
+
+    setDetalleVentaAbierta(data || []);
   };
 
   const abrirCobro = async (venta) => {
     await obtenerMetodosPago(venta.empresa_id || empresa?.id);
+    await obtenerClasificaciones(venta.empresa_id || empresa?.id);
+    await cargarDetalleVenta(venta);
     setVentaAbierta(venta);
+    setClasificacionPacienteId(venta.clasificacion_paciente_id || venta.cliente_clasificacion_id || "");
     setPagos([{ metodo_pago_id: "", monto: "", referencia: "" }]);
   };
 
   const cerrarCobro = () => {
     setVentaAbierta(null);
+    setDetalleVentaAbierta([]);
+    setClasificacionPacienteId("");
     setPagos([{ metodo_pago_id: "", monto: "", referencia: "" }]);
   };
 
@@ -372,6 +472,19 @@ function Deudas() {
       Number(ventaAbierta.saldo || 0) - Number(totalPagoActual || 0);
     return saldo > 0 ? saldo : 0;
   }, [ventaAbierta, totalPagoActual]);
+
+  const totalCxC = useMemo(() => {
+    return ventas.reduce((acc, venta) => acc + Number(venta.saldo || 0), 0);
+  }, [ventas]);
+
+  const totalCxCOriginal = useMemo(() => {
+    return ventas.reduce((acc, venta) => acc + Number(venta.total || 0), 0);
+  }, [ventas]);
+
+  const totalCxCAbonado = useMemo(() => {
+    return ventas.reduce((acc, venta) => acc + Number(venta.abonado || 0), 0);
+  }, [ventas]);
+
 
   const exportarCxcExcel = () => {
     if (ventas.length === 0) {
@@ -568,6 +681,54 @@ function Deudas() {
     doc.save(`Reporte_CxC_${obtenerFechaLocalSV()}.pdf`);
   };
 
+  const guardarClasificacionPaciente = async ({
+    empresaId,
+    clienteId,
+    clasificacionId,
+    fechaLocal,
+    paciente,
+    ventaId,
+  }) => {
+    if (!empresaId || !clasificacionId || !fechaLocal || !paciente) return;
+
+    const fechaSolo = String(fechaLocal).slice(0, 10);
+
+    const payload = {
+      empresa_id: empresaId,
+      fecha_local: fechaSolo,
+      paciente: String(paciente || "").trim(),
+      venta_id: ventaId ? String(ventaId) : null,
+      grupo_facturacion: null,
+      clasificacion_id: clasificacionId,
+    };
+
+    const { data: existente, error: errorBuscar } = await supabase
+      .from("caja_paciente_clasificaciones")
+      .select("id")
+      .eq("empresa_id", empresaId)
+      .eq("fecha_local", fechaSolo)
+      .eq("paciente", payload.paciente)
+      .eq("venta_id", payload.venta_id)
+      .eq("clasificacion_id", clasificacionId)
+      .maybeSingle();
+
+    if (errorBuscar) {
+      console.warn("No se pudo verificar clasificación existente:", errorBuscar);
+    }
+
+    if (existente?.id) return;
+
+    const { error } = await supabase
+      .from("caja_paciente_clasificaciones")
+      .insert([payload]);
+
+    if (error) {
+      console.error("Error guardando clasificación para Caja Diaria:", error);
+      throw new Error("El pago se registró, pero no se pudo guardar la clasificación para Caja Diaria");
+    }
+  };
+
+
   const registrarPago = async () => {
     if (!ventaAbierta || !empresa?.id) return;
 
@@ -605,6 +766,17 @@ function Deudas() {
     const fechaLocal = obtenerFechaHoraSVISO();
 
     const empresaPagoId = ventaAbierta.empresa_id || empresa?.id;
+
+    if (clasificacionPacienteId) {
+      await guardarClasificacionPaciente({
+        empresaId: empresaPagoId,
+        clienteId: ventaAbierta.cliente_id,
+        clasificacionId: clasificacionPacienteId,
+        fechaLocal,
+        paciente: ventaAbierta.clientes?.nombre || "Cliente",
+        ventaId: ventaAbierta.id,
+      });
+    }
 
     const pagosParaGuardar = pagosValidos.map((p) => ({
       venta_id: ventaAbierta.id,
@@ -777,6 +949,75 @@ function Deudas() {
           </div>
         </div>
 
+        <div style={styles.kpiGrid}>
+          <div style={styles.kpiCard}>
+            <span>Total pendiente</span>
+            <strong>${Number(totalCxC || 0).toFixed(2)}</strong>
+          </div>
+
+          <div style={styles.kpiCard}>
+            <span>Total original</span>
+            <strong>${Number(totalCxCOriginal || 0).toFixed(2)}</strong>
+          </div>
+
+          <div style={styles.kpiCard}>
+            <span>Total abonado</span>
+            <strong>${Number(totalCxCAbonado || 0).toFixed(2)}</strong>
+          </div>
+
+          <div style={styles.kpiCard}>
+            <span>Registros</span>
+            <strong>{ventas.length}</strong>
+          </div>
+        </div>
+
+        <div style={styles.filtrosCard}>
+          <div>
+            <label style={styles.label}>Desde</label>
+            <input
+              type="date"
+              style={styles.input}
+              value={filtroDesdeCxC}
+              onChange={(e) => setFiltroDesdeCxC(e.target.value)}
+            />
+          </div>
+
+          <div>
+            <label style={styles.label}>Hasta</label>
+            <input
+              type="date"
+              style={styles.input}
+              value={filtroHastaCxC}
+              onChange={(e) => setFiltroHastaCxC(e.target.value)}
+            />
+          </div>
+
+          <div>
+            <label style={styles.label}>Origen</label>
+            <select
+              style={styles.select}
+              value={filtroOrigenCxC}
+              onChange={(e) => setFiltroOrigenCxC(e.target.value)}
+            >
+              <option value="todos">Todos</option>
+              <option value="venta">Ventas</option>
+              <option value="atencion">Atención de cita</option>
+            </select>
+          </div>
+
+          <button
+            type="button"
+            style={styles.btnAgregar}
+            onClick={() => {
+              setFiltroDesdeCxC("");
+              setFiltroHastaCxC("");
+              setFiltroOrigenCxC("todos");
+            }}
+          >
+            Limpiar filtros
+          </button>
+        </div>
+
         {ventas.length === 0 && (
           <div style={styles.emptyBox}>No hay cuentas pendientes</div>
         )}
@@ -794,6 +1035,9 @@ function Deudas() {
                   </div>
                   <div style={styles.empresaTag}>
                     {v.empresa_nombre || obtenerNombreEmpresa(v.empresa_id)}
+                  </div>
+                  <div style={v.origen_cxc === "atencion" ? styles.origenAtencionTag : styles.origenVentaTag}>
+                    {v.origen_cxc === "atencion" ? "Atención de cita" : "Venta"}
                   </div>
                 </div>
 
@@ -856,6 +1100,9 @@ function Deudas() {
                   <div style={styles.empresaTag}>
                     {ventaAbierta.empresa_nombre || obtenerNombreEmpresa(ventaAbierta.empresa_id)}
                   </div>
+                  <div style={ventaAbierta.origen_cxc === "atencion" ? styles.origenAtencionTag : styles.origenVentaTag}>
+                    {ventaAbierta.origen_cxc === "atencion" ? "Atención de cita" : "Venta"}
+                  </div>
                 </div>
 
                 <button type="button" style={styles.btnCerrar} onClick={cerrarCobro}>
@@ -880,6 +1127,68 @@ function Deudas() {
                     ${Number(ventaAbierta.saldo || 0).toFixed(2)}
                   </strong>
                 </div>
+              </div>
+
+              <div style={styles.detalleCobroBox}>
+                <div style={styles.detalleCobroHeader}>
+                  <h4 style={styles.sectionTitle}>Productos / servicios cobrados</h4>
+                  <strong>${Number(ventaAbierta.total || 0).toFixed(2)}</strong>
+                </div>
+
+                {detalleVentaAbierta.length === 0 ? (
+                  <div style={styles.detalleEmpty}>
+                    No se encontró detalle de productos para esta cuenta.
+                  </div>
+                ) : (
+                  <div style={styles.detalleLista}>
+                    {detalleVentaAbierta.map((detalle) => (
+                      <div key={detalle.id} style={styles.detalleItem}>
+                        <div>
+                          <strong>
+                            {detalle.items?.nombre ||
+                              detalle.nombre ||
+                              detalle.descripcion ||
+                              "Producto / servicio"}
+                          </strong>
+                          <span>
+                            Cant. {Number(detalle.cantidad || 0)} × $
+                            {Number(detalle.precio || detalle.precio_unitario || 0).toFixed(2)}
+                          </span>
+                        </div>
+
+                        <strong>
+                          $
+                          {(
+                            Number(detalle.cantidad || 0) *
+                            Number(detalle.precio || detalle.precio_unitario || 0)
+                          ).toFixed(2)}
+                        </strong>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div style={styles.clasificacionBox}>
+                <div>
+                  <h4 style={styles.sectionTitle}>Clasificación del paciente</h4>
+                  <p style={styles.modalSubtitle}>
+                    Podés clasificarlo antes de registrar el pago.
+                  </p>
+                </div>
+
+                <select
+                  style={styles.select}
+                  value={clasificacionPacienteId}
+                  onChange={(e) => setClasificacionPacienteId(e.target.value)}
+                >
+                  <option value="">Sin clasificación</option>
+                  {clasificaciones.map((clasificacion) => (
+                    <option key={clasificacion.id} value={clasificacion.id}>
+                      {clasificacion.nombre}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               <div style={styles.pagosHeader}>
@@ -1584,6 +1893,119 @@ const styles = {
     cursor: "pointer",
     fontWeight: "700",
   },
+
+  kpiGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))",
+    gap: "12px",
+  },
+
+  kpiCard: {
+    background: "#ffffff",
+    border: "1px solid #d7dbe2",
+    borderRadius: "18px",
+    padding: "16px",
+    display: "grid",
+    gap: "6px",
+    boxShadow: "0 8px 24px rgba(15, 23, 42, 0.05)",
+  },
+
+  filtrosCard: {
+    background: "#ffffff",
+    border: "1px solid #d7dbe2",
+    borderRadius: "20px",
+    padding: "14px",
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+    gap: "12px",
+    alignItems: "end",
+    boxShadow: "0 8px 24px rgba(15, 23, 42, 0.05)",
+  },
+
+  origenAtencionTag: {
+    display: "inline-flex",
+    alignItems: "center",
+    marginTop: "6px",
+    marginLeft: "6px",
+    padding: "4px 8px",
+    borderRadius: "999px",
+    background: "#eefcf3",
+    color: "#0f7a4d",
+    border: "1px solid #c7eed5",
+    fontWeight: "800",
+    fontSize: "11px",
+  },
+
+  origenVentaTag: {
+    display: "inline-flex",
+    alignItems: "center",
+    marginTop: "6px",
+    marginLeft: "6px",
+    padding: "4px 8px",
+    borderRadius: "999px",
+    background: "#f4f0f7",
+    color: "#574866",
+    border: "1px solid #d3c7dd",
+    fontWeight: "800",
+    fontSize: "11px",
+  },
+
+  detalleCobroBox: {
+    background: "#f8fafc",
+    border: "1px solid #e2e8f0",
+    borderRadius: "16px",
+    padding: "14px",
+    marginBottom: "14px",
+    display: "grid",
+    gap: "10px",
+  },
+
+  detalleCobroHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    gap: "12px",
+    alignItems: "center",
+    flexWrap: "wrap",
+  },
+
+  detalleLista: {
+    display: "grid",
+    gap: "8px",
+  },
+
+  detalleItem: {
+    background: "#ffffff",
+    border: "1px solid #e2e8f0",
+    borderRadius: "13px",
+    padding: "10px 12px",
+    display: "flex",
+    justifyContent: "space-between",
+    gap: "12px",
+    alignItems: "center",
+  },
+
+  detalleEmpty: {
+    background: "#ffffff",
+    border: "1px dashed #cbd5e1",
+    color: "#64748b",
+    borderRadius: "13px",
+    padding: "12px",
+    textAlign: "center",
+    fontWeight: "700",
+  },
+
+  clasificacionBox: {
+    background: "#fff",
+    border: "1px solid #d7dbe2",
+    borderRadius: "16px",
+    padding: "14px",
+    marginBottom: "14px",
+    display: "grid",
+    gridTemplateColumns: "minmax(0, 1fr) minmax(220px, 320px)",
+    gap: "12px",
+    alignItems: "center",
+  },
+
 };
 
 export default Deudas;

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "./supabaseClient";
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
@@ -40,7 +40,9 @@ function formatearMonto(valor) {
 }
 
 export default function CajaDiaria() {
-  const empresaInicial = JSON.parse(localStorage.getItem("empresa") || "null");
+  const empresaGlobal = JSON.parse(localStorage.getItem("empresa") || "null");
+  const empresaCajaGuardada = JSON.parse(localStorage.getItem("caja_diaria_empresa") || "null");
+  const empresaInicial = empresaCajaGuardada || empresaGlobal;
   const [empresa, setEmpresa] = useState(empresaInicial);
   const [empresasDisponibles, setEmpresasDisponibles] = useState(
     empresaInicial?.id ? [empresaInicial] : []
@@ -52,6 +54,8 @@ export default function CajaDiaria() {
   });
   const [mostrarSelectorEmpresas, setMostrarSelectorEmpresas] = useState(false);
   const hoy = obtenerFechaLocalSV();
+  const autosaveTimerRef = useRef(null);
+  const primeraCargaCajaRef = useRef(true);
 
   const empresaIdsReporte = useMemo(() => {
     if (empresasReporteIds.length > 0) return empresasReporteIds;
@@ -82,6 +86,7 @@ export default function CajaDiaria() {
   const [metodos, setMetodos] = useState([]);
   const [filas, setFilas] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [autosaveStatus, setAutosaveStatus] = useState("");
   const [accionesAbiertasUid, setAccionesAbiertasUid] = useState(null);
 
   const [filtroDesde, setFiltroDesde] = useState(hoy);
@@ -215,7 +220,7 @@ export default function CajaDiaria() {
 
       if (lista.length > 0 && !lista.some((emp) => emp.id === empresa?.id)) {
         setEmpresa(lista[0]);
-        localStorage.setItem("empresa", JSON.stringify(lista[0]));
+        localStorage.setItem("caja_diaria_empresa", JSON.stringify(lista[0]));
       }
     } catch (error) {
       console.error("Error cargando empresas disponibles:", error);
@@ -227,7 +232,8 @@ export default function CajaDiaria() {
     if (!seleccionada) return;
 
     setEmpresa(seleccionada);
-    localStorage.setItem("empresa", JSON.stringify(seleccionada));
+    localStorage.setItem("caja_diaria_empresa", JSON.stringify(seleccionada));
+    window.dispatchEvent(new Event("cajaDiariaEmpresaActualizada"));
   };
 
   const alternarEmpresaReporte = (empresaId) => {
@@ -330,6 +336,33 @@ export default function CajaDiaria() {
     }
   }, [empresaIdsReporte.join("|"), filtroDesde, filtroHasta]);
 
+  useEffect(() => {
+    if (!empresa?.id || modoSoloLecturaMultiempresa) return;
+    if (primeraCargaCajaRef.current) return;
+    if (guardandoManual || modalManual.open || modalClasificacion.open || modalFacturacion.open || modalNuevaClasificacion) return;
+
+    programarAutosaveCaja("edicion_caja");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    filas,
+    cierreRealizado,
+    remesaEfectivo,
+    cuentaDestinoEfectivo,
+    numeroRemesaEfectivo,
+    comentarioCierre,
+    responsableCaja,
+    elaboradoPor,
+    revisadoPor,
+  ]);
+
+  useEffect(() => {
+    return () => {
+      if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
+    };
+  }, []);
+
+
+
   const crearFilaVacia = (metodosActuales = metodos, nombrePaciente = "") => {
     const pagos = {};
     const referencias = {};
@@ -379,6 +412,39 @@ export default function CajaDiaria() {
     }
 
     return true;
+  };
+
+  const programarAutosaveCaja = (motivo = "cambio") => {
+    if (!empresa?.id || modoSoloLecturaMultiempresa) return;
+
+    if (autosaveTimerRef.current) {
+      clearTimeout(autosaveTimerRef.current);
+    }
+
+    setAutosaveStatus("Guardando cambios...");
+
+    autosaveTimerRef.current = setTimeout(async () => {
+      await guardarCajaSilencioso(motivo);
+    }, 900);
+  };
+
+  const guardarCajaSilencioso = async (motivo = "autosave") => {
+    if (!empresa?.id || modoSoloLecturaMultiempresa || !fechaLocal) return;
+
+    try {
+      const resultado = await guardarCaja({ silencioso: true, origen: motivo });
+
+      if (resultado === false) {
+        setAutosaveStatus("Cambios pendientes");
+        return;
+      }
+
+      setAutosaveStatus("Guardado automático");
+      setTimeout(() => setAutosaveStatus(""), 2400);
+    } catch (error) {
+      console.error("Error en guardado automático:", error);
+      setAutosaveStatus("No se pudo guardar automáticamente");
+    }
   };
 
   const cargarMetodos = async () => {
@@ -1118,6 +1184,7 @@ export default function CajaDiaria() {
   };
 
   const cargarCajaDelDia = async (fechaBuscada) => {
+    primeraCargaCajaRef.current = true;
     const idsConsulta = empresaIdsReporte.length > 0 ? empresaIdsReporte : empresa?.id ? [empresa.id] : [];
     if (idsConsulta.length === 0) return;
 
@@ -1151,6 +1218,7 @@ export default function CajaDiaria() {
     if (!cajas || cajas.length === 0) {
       setFilas([]);
       setClasificacionesAsignadas({});
+      primeraCargaCajaRef.current = false;
       return;
     }
 
@@ -1232,11 +1300,12 @@ export default function CajaDiaria() {
           refs.push(nuevaRef);
         }
 
-        mapa[llave].referencias[item.metodo_pago_id] = refs.join(" | ");
+        mapa[llave].referencias[metodoColumnaId] = refs.join(" | ");
       }
     });
 
     setFilas(Object.values(mapa));
+    primeraCargaCajaRef.current = false;
 
     // Carga clasificaciones asignadas de todas las empresas seleccionadas para esa fecha.
     const { data: asignadas, error: errorAsignadas } = await supabase
@@ -1365,7 +1434,8 @@ export default function CajaDiaria() {
 
     if (empresaCaja?.id && String(empresaCaja.id) !== String(empresa?.id)) {
       setEmpresa(empresaCaja);
-      localStorage.setItem("empresa", JSON.stringify(empresaCaja));
+      localStorage.setItem("caja_diaria_empresa", JSON.stringify(empresaCaja));
+      window.dispatchEvent(new Event("cajaDiariaEmpresaActualizada"));
       setFechaLocal(fecha);
     } else {
       setFechaLocal(fecha);
@@ -1779,17 +1849,24 @@ export default function CajaDiaria() {
       ? filas.find((f) => f.uid === modalManual.filaOriginalUid)
       : null;
 
-    if (modalManual.editando) {
-      setFilas((prev) =>
-        prev.map((item) =>
+    const filasActualizadas = modalManual.editando
+      ? filas.map((item) =>
           item.uid === modalManual.filaOriginalUid ? filaFinal : item
         )
-      );
-    } else {
-      setFilas((prev) => [...prev, filaFinal]);
-    }
+      : [...filas, filaFinal];
+
+    setFilas(filasActualizadas);
 
     await sincronizarClasificacionesManual(filaFinal, filaOriginal);
+
+    await guardarCaja({
+      silencioso: true,
+      origen: "modal_manual_guardado",
+      filasOverride: filasActualizadas,
+    });
+
+    setAutosaveStatus("Guardado automático");
+    setTimeout(() => setAutosaveStatus(""), 2400);
 
     setGuardandoManual(false);
     cerrarModalManual();
@@ -2017,22 +2094,25 @@ export default function CajaDiaria() {
     }));
   };
 
-  const guardarCaja = async () => {
-    if (!validarEdicionUnaEmpresa()) return;
+  const guardarCaja = async (opciones = {}) => {
+    const silencioso = Boolean(opciones?.silencioso);
+    const filasTrabajo = Array.isArray(opciones?.filasOverride) ? opciones.filasOverride : filas;
+
+    if (!validarEdicionUnaEmpresa()) return false;
 
     if (!empresa?.id) {
-      return alert("No hay empresa seleccionada");
+      return silencioso ? false : alert("No hay empresa seleccionada");
     }
 
-    const filasValidas = filas.filter(
+    const filasValidas = filasTrabajo.filter(
       (fila) =>
-        fila.paciente.trim() !== "" &&
+        String(fila.paciente || "").trim() !== "" &&
         String(fila.empresaId || empresa.id) === String(empresa.id)
     );
     const filasManual = filasValidas.filter((fila) => !fila.venta_id);
     const filasVenta = filasValidas.filter((fila) => fila.venta_id);
 
-    setLoading(true);
+    if (!silencioso) setLoading(true);
 
     let cajaId = null;
 
@@ -2044,10 +2124,10 @@ export default function CajaDiaria() {
       .maybeSingle();
 
     if (errorBuscarCaja) {
-      setLoading(false);
+      if (!silencioso) setLoading(false);
       console.error(errorBuscarCaja);
-      alert("Error al buscar la caja");
-      return;
+      if (!silencioso) alert("Error al buscar la caja");
+      return false;
     }
 
     const payloadCaja = {
@@ -2072,10 +2152,10 @@ export default function CajaDiaria() {
         .eq("id", cajaId);
 
       if (errorActualizarCaja) {
-        setLoading(false);
+        if (!silencioso) setLoading(false);
         console.error(errorActualizarCaja);
-        alert("Error al actualizar la caja");
-        return;
+        if (!silencioso) alert("Error al actualizar la caja");
+        return false;
       }
 
       const { error: errorEliminarDetalleManual } = await supabase
@@ -2085,10 +2165,10 @@ export default function CajaDiaria() {
         .is("venta_id", null);
 
       if (errorEliminarDetalleManual) {
-        setLoading(false);
+        if (!silencioso) setLoading(false);
         console.error(errorEliminarDetalleManual);
-        alert("Error al reemplazar el detalle manual");
-        return;
+        if (!silencioso) alert("Error al reemplazar el detalle manual");
+        return false;
       }
     } else {
       const { data: nuevaCaja, error: errorCrearCaja } = await supabase
@@ -2104,10 +2184,10 @@ export default function CajaDiaria() {
         .single();
 
       if (errorCrearCaja) {
-        setLoading(false);
+        if (!silencioso) setLoading(false);
         console.error(errorCrearCaja);
-        alert("Error al crear la caja");
-        return;
+        if (!silencioso) alert("Error al crear la caja");
+        return false;
       }
 
       cajaId = nuevaCaja.id;
@@ -2119,10 +2199,10 @@ export default function CajaDiaria() {
       .eq("caja_diaria_id", cajaId);
 
     if (errorResetGrupo) {
-      setLoading(false);
+      if (!silencioso) setLoading(false);
       console.error(errorResetGrupo);
-      alert("Error al actualizar agrupaciones de facturación");
-      return;
+      if (!silencioso) alert("Error al actualizar agrupaciones de facturación");
+      return false;
     }
 
     const detalleParaGuardar = [];
@@ -2162,10 +2242,10 @@ export default function CajaDiaria() {
         .insert(detalleParaGuardar);
 
       if (errorInsertarDetalle) {
-        setLoading(false);
+        if (!silencioso) setLoading(false);
         console.error(errorInsertarDetalle);
-        alert("Error al guardar el detalle");
-        return;
+        if (!silencioso) alert("Error al guardar el detalle");
+        return false;
       }
     }
 
@@ -2180,32 +2260,36 @@ export default function CajaDiaria() {
         .eq("paciente", fila.paciente.trim());
 
       if (errorUpdateVentaGrupo) {
-        setLoading(false);
+        if (!silencioso) setLoading(false);
         console.error(errorUpdateVentaGrupo);
-        alert("Error al guardar agrupación de una venta");
-        return;
+        if (!silencioso) alert("Error al guardar agrupación de una venta");
+        return false;
       }
     }
 
-    setLoading(false);
-    alert("Caja diaria guardada correctamente");
-    await cargarCajaDelDia(fechaLocal);
+    if (!silencioso) setLoading(false);
+    if (!silencioso) {
+      alert("Caja diaria guardada correctamente");
+      await cargarCajaDelDia(fechaLocal);
+    }
+
     await cargarHistorialCajas();
+    return true;
   };
 
   const obtenerDatosReporte = async () => {
     if (empresaIdsReporte.length === 0) {
-      alert("Seleccioná al menos una empresa para el reporte");
+      if (!silencioso) alert("Seleccioná al menos una empresa para el reporte");
       return null;
     }
 
     if (!filtroDesde || !filtroHasta) {
-      alert("Seleccioná desde y hasta");
+      if (!silencioso) alert("Seleccioná desde y hasta");
       return null;
     }
 
     if (filtroDesde > filtroHasta) {
-      alert("La fecha desde no puede ser mayor que la fecha hasta");
+      if (!silencioso) alert("La fecha desde no puede ser mayor que la fecha hasta");
       return null;
     }
 
@@ -2242,7 +2326,7 @@ export default function CajaDiaria() {
 
     if (error) {
       console.error(error);
-      alert("Error al obtener datos del reporte");
+      if (!silencioso) alert("Error al obtener datos del reporte");
       return null;
     }
 
@@ -2356,7 +2440,7 @@ export default function CajaDiaria() {
   const exportarDetalleExcel = async () => {
     const datos = await obtenerDatosReporte();
     if (!datos || datos.detalle.length === 0) {
-      return alert("No hay datos para exportar");
+      return silencioso ? false : alert("No hay datos para exportar");
     }
 
     const rows = [
@@ -2429,7 +2513,7 @@ export default function CajaDiaria() {
   const exportarResumenExcel = async () => {
     const datos = await obtenerDatosReporte();
     if (!datos || datos.resumen.length === 0) {
-      return alert("No hay datos para exportar");
+      return silencioso ? false : alert("No hay datos para exportar");
     }
 
     const rows = [
@@ -2464,7 +2548,7 @@ export default function CajaDiaria() {
   const exportarDetallePDF = async () => {
     const datos = await obtenerDatosReporte();
     if (!datos || datos.detalle.length === 0) {
-      return alert("No hay datos para exportar");
+      return silencioso ? false : alert("No hay datos para exportar");
     }
 
     const doc = new jsPDF("landscape");
@@ -2575,7 +2659,7 @@ export default function CajaDiaria() {
   const exportarResumenPDF = async () => {
     const datos = await obtenerDatosReporte();
     if (!datos || datos.resumen.length === 0) {
-      return alert("No hay datos para exportar");
+      return silencioso ? false : alert("No hay datos para exportar");
     }
 
     const doc = new jsPDF();
@@ -2634,7 +2718,7 @@ export default function CajaDiaria() {
   const exportarInformeProfesionalPDF = async () => {
     const datos = await obtenerDatosReporte();
     if (!datos || datos.resumen.length === 0) {
-      return alert("No hay datos para exportar");
+      return silencioso ? false : alert("No hay datos para exportar");
     }
 
     const doc = new jsPDF("p", "mm", "a4");
@@ -2749,6 +2833,8 @@ export default function CajaDiaria() {
     doc.save(
       `Caja_Profesional_${empresa?.nombre || "Empresa"}_${cajaActual.fecha}.pdf`
     );
+
+    return true;
   };
 
   const totalesPorMetodo = useMemo(() => {
@@ -6484,6 +6570,19 @@ const styles = {
     outline: "none",
     fontSize: "11.5px",
     minHeight: "31px",
+  },
+  autosaveBadge: {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: "999px",
+    padding: "6px 10px",
+    background: "#eefcf3",
+    color: "#0f7a4d",
+    border: "1px solid #c7eed5",
+    fontSize: "12px",
+    fontWeight: "900",
+    marginLeft: "8px",
   },
 
 };
