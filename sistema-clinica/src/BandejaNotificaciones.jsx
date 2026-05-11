@@ -44,7 +44,64 @@ const TIPOS = {
   },
 };
 
+
+const PERMISO_POR_TIPO = {
+  cita_confirmada: "notif_cita_confirmada_ver",
+  cita_cancelada: "notif_cita_cancelada_ver",
+  cita_reagendada: "notif_cita_reagendada_ver",
+  cita_lunes_contacto: "notif_cita_lunes_contacto_ver",
+  cita_enviada_cobro: "notif_cita_enviada_cobro_ver",
+};
+
+function leerPermisosActuales() {
+  try {
+    return JSON.parse(localStorage.getItem("permisos") || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function leerRolActual() {
+  return String(localStorage.getItem("rol") || "").toLowerCase();
+}
+
+function puedeVerTipoNotificacion(tipo) {
+  const rol = leerRolActual();
+
+  if (rol === "owner" || rol === "admin" || rol === "propietario") {
+    return true;
+  }
+
+  const permisos = leerPermisosActuales();
+
+  if (permisos.bandeja_notificaciones_ver === false) {
+    return false;
+  }
+
+  const permisoTipo = PERMISO_POR_TIPO[tipo];
+
+  if (!permisoTipo) {
+    return Boolean(permisos.bandeja_notificaciones_ver);
+  }
+
+  return Boolean(permisos[permisoTipo]);
+}
+
+
+
 function BandejaNotificaciones({ empresaActiva = null, empresasUsuario = [] }) {
+  const permisosBandejaActuales = leerPermisosActuales();
+  const rolBandejaActual = leerRolActual();
+
+  if (
+    rolBandejaActual !== "owner" &&
+    rolBandejaActual !== "admin" &&
+    rolBandejaActual !== "propietario" &&
+    permisosBandejaActuales.bandeja_notificaciones_ver === false
+  ) {
+    return null;
+  }
+
   const [empresaLocal, setEmpresaLocal] = useState(() => {
     try {
       return JSON.parse(localStorage.getItem("empresa") || "null");
@@ -58,12 +115,41 @@ function BandejaNotificaciones({ empresaActiva = null, empresasUsuario = [] }) {
   const [mostrarMiniPanel, setMostrarMiniPanel] = useState(false);
   const [mostrarBandeja, setMostrarBandeja] = useState(false);
   const [toast, setToast] = useState(null);
+  const [permisosVersion, setPermisosVersion] = useState(0);
 
   const [filtroTipo, setFiltroTipo] = useState("todos");
   const [filtroEstado, setFiltroEstado] = useState("pendientes");
   const [filtroTexto, setFiltroTexto] = useState("");
 
   const empresa = empresaActiva || empresaLocal;
+
+  const tiposVisibles = useMemo(() => {
+    return Object.entries(TIPOS).filter(([tipo]) =>
+      puedeVerTipoNotificacion(tipo)
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [permisosVersion]);
+
+  const tiposVisiblesObj = useMemo(() => {
+    return Object.fromEntries(tiposVisibles);
+  }, [tiposVisibles]);
+
+  useEffect(() => {
+    const refrescarPorPermisos = () => {
+      setPermisosVersion((prev) => prev + 1);
+      setFiltroTipo("todos");
+      cargarMensajes(true);
+    };
+
+    window.addEventListener("storage", refrescarPorPermisos);
+    window.addEventListener("accesosActualizados", refrescarPorPermisos);
+
+    return () => {
+      window.removeEventListener("storage", refrescarPorPermisos);
+      window.removeEventListener("accesosActualizados", refrescarPorPermisos);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [empresaActiva?.id]);
 
   useEffect(() => {
     const actualizarEmpresa = () => {
@@ -106,6 +192,13 @@ function BandejaNotificaciones({ empresaActiva = null, empresasUsuario = [] }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [empresa?.id]);
 
+
+  useEffect(() => {
+    if (filtroTipo !== "todos" && !puedeVerTipoNotificacion(filtroTipo)) {
+      setFiltroTipo("todos");
+    }
+  }, [filtroTipo, permisosVersion]);
+
   const cargarMensajes = async (silencioso = false) => {
     if (!empresa?.id) return;
 
@@ -137,11 +230,18 @@ function BandejaNotificaciones({ empresaActiva = null, empresasUsuario = [] }) {
       return;
     }
 
-    const nuevos = data || [];
+    const nuevos = (data || []).filter((m) =>
+      puedeVerTipoNotificacion(m.tipo)
+    );
 
     if (silencioso && mensajes.length > 0) {
       const idsActuales = new Set(mensajes.map((m) => String(m.id)));
-      const nuevoMensaje = nuevos.find((m) => !idsActuales.has(String(m.id)) && !m.leida);
+      const nuevoMensaje = nuevos.find(
+        (m) =>
+          puedeVerTipoNotificacion(m.tipo) &&
+          !idsActuales.has(String(m.id)) &&
+          !m.leida
+      );
 
       if (nuevoMensaje) {
         mostrarToast(nuevoMensaje);
@@ -162,36 +262,40 @@ function BandejaNotificaciones({ empresaActiva = null, empresasUsuario = [] }) {
   const resumen = useMemo(() => {
     const base = {};
 
-    Object.keys(TIPOS).forEach((tipo) => {
+    tiposVisibles.forEach(([tipo]) => {
       base[tipo] = {
         total: 0,
         pendientes: 0,
       };
     });
 
-    mensajes.forEach((m) => {
-      if (!base[m.tipo]) {
-        base[m.tipo] = { total: 0, pendientes: 0 };
-      }
+    mensajes
+      .filter((m) => puedeVerTipoNotificacion(m.tipo))
+      .forEach((m) => {
+        if (!base[m.tipo]) return;
 
-      base[m.tipo].total += 1;
+        base[m.tipo].total += 1;
 
-      if (!m.leida || m.estado === "pendiente") {
-        base[m.tipo].pendientes += 1;
-      }
-    });
+        if (!m.leida || m.estado === "pendiente") {
+          base[m.tipo].pendientes += 1;
+        }
+      });
 
     return base;
-  }, [mensajes]);
+  }, [mensajes, tiposVisibles]);
 
   const totalPendientes = useMemo(() => {
-    return mensajes.filter((m) => !m.leida || m.estado === "pendiente").length;
-  }, [mensajes]);
+    return mensajes.filter(
+      (m) => puedeVerTipoNotificacion(m.tipo) && (!m.leida || m.estado === "pendiente")
+    ).length;
+  }, [mensajes, permisosVersion]);
 
   const mensajesFiltrados = useMemo(() => {
     const texto = filtroTexto.trim().toLowerCase();
 
     return mensajes.filter((m) => {
+      if (!puedeVerTipoNotificacion(m.tipo)) return false;
+
       const datos = m.datos || {};
       const paciente = datos.paciente || "";
       const telefono = datos.telefono || "";
@@ -212,7 +316,7 @@ function BandejaNotificaciones({ empresaActiva = null, empresasUsuario = [] }) {
 
       return coincideTipo && coincideEstado && coincideTexto;
     });
-  }, [mensajes, filtroTipo, filtroEstado, filtroTexto]);
+  }, [mensajes, filtroTipo, filtroEstado, filtroTexto, permisosVersion]);
 
   const marcarLeido = async (mensajeId) => {
     const { error } = await supabase
@@ -240,8 +344,13 @@ function BandejaNotificaciones({ empresaActiva = null, empresasUsuario = [] }) {
   const marcarTodosLeidos = async () => {
     if (!empresa?.id) return;
 
-    const pendientes = mensajes.filter((m) => !m.leida || m.estado === "pendiente");
+    const pendientes = mensajes.filter(
+      (m) => puedeVerTipoNotificacion(m.tipo) && (!m.leida || m.estado === "pendiente")
+    );
+
     if (pendientes.length === 0) return;
+
+    const idsPendientes = pendientes.map((m) => m.id);
 
     const { error } = await supabase
       .from("bandeja_mensajes")
@@ -250,7 +359,7 @@ function BandejaNotificaciones({ empresaActiva = null, empresasUsuario = [] }) {
         estado: "leido",
       })
       .eq("empresa_id", empresa.id)
-      .or("leida.eq.false,estado.eq.pendiente");
+      .in("id", idsPendientes);
 
     if (error) {
       console.error(error);
@@ -269,7 +378,7 @@ function BandejaNotificaciones({ empresaActiva = null, empresasUsuario = [] }) {
 
   return (
     <>
-      {toast && (
+      {toast && puedeVerTipoNotificacion(toast.tipo) && (
         <div style={styles.toast} onClick={() => setMostrarMiniPanel(true)}>
           <div style={styles.toastIcon}>{TIPOS[toast.tipo]?.icon || "🔔"}</div>
           <div>
@@ -298,7 +407,7 @@ function BandejaNotificaciones({ empresaActiva = null, empresasUsuario = [] }) {
             </div>
 
             <div style={styles.summaryList}>
-              {Object.entries(TIPOS).map(([tipo, info]) => {
+              {tiposVisibles.map(([tipo, info]) => {
                 const item = resumen[tipo] || { total: 0, pendientes: 0 };
 
                 return (
@@ -395,7 +504,7 @@ function BandejaNotificaciones({ empresaActiva = null, empresasUsuario = [] }) {
                 onChange={(e) => setFiltroTipo(e.target.value)}
               >
                 <option value="todos">Todos los tipos</option>
-                {Object.entries(TIPOS).map(([tipo, info]) => (
+                {tiposVisibles.map(([tipo, info]) => (
                   <option key={tipo} value={tipo}>
                     {info.label}
                   </option>
@@ -422,7 +531,7 @@ function BandejaNotificaciones({ empresaActiva = null, empresasUsuario = [] }) {
             </div>
 
             <div style={styles.groupCards}>
-              {Object.entries(TIPOS).map(([tipo, info]) => {
+              {tiposVisibles.map(([tipo, info]) => {
                 const item = resumen[tipo] || { total: 0, pendientes: 0 };
 
                 return (

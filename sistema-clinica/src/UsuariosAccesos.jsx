@@ -75,8 +75,7 @@ const modulosPermisos = [
       { key: "pacientes_crear", label: "Crear pacientes" },
       { key: "pacientes_editar", label: "Editar pacientes" },
       { key: "pacientes_eliminar", label: "Eliminar pacientes" },
-      // compatibilidad con el App actual si aún usa citas_ver para Pacientes
-      { key: "citas_ver", label: "Permitir entrada al módulo pacientes" },
+      // Nota: pacientes usa "pacientes_ver". No repetimos "citas_ver" para evitar keys duplicadas.
     ],
   },
   {
@@ -121,9 +120,7 @@ const modulosPermisos = [
     permisos: [
       { key: "metodos_cobro_ver", label: "Ver métodos de cobro" },
       { key: "metodos_cobro_editar", label: "Crear / editar métodos de cobro" },
-      // compatibilidad con App actual
-      { key: "configuracion_ver", label: "Permitir entrada a configuración" },
-      { key: "configuracion_editar", label: "Editar configuración" },
+      // Nota: no repetimos configuracion_ver/configuracion_editar para evitar keys duplicadas.
     ],
   },
   {
@@ -136,9 +133,7 @@ const modulosPermisos = [
       { key: "clasificaciones_crear", label: "Crear clasificaciones" },
       { key: "clasificaciones_editar", label: "Editar clasificaciones" },
       { key: "clasificaciones_eliminar", label: "Eliminar clasificaciones" },
-      // compatibilidad con App actual
-      { key: "configuracion_ver", label: "Permitir entrada a configuración" },
-      { key: "configuracion_editar", label: "Editar configuración" },
+      // Nota: no repetimos configuracion_ver/configuracion_editar para evitar keys duplicadas.
     ],
   },
   {
@@ -151,9 +146,7 @@ const modulosPermisos = [
       { key: "empleados_comision_crear", label: "Crear empleados comisión" },
       { key: "empleados_comision_editar", label: "Editar empleados comisión" },
       { key: "empleados_comision_eliminar", label: "Eliminar empleados comisión" },
-      // compatibilidad con App actual
-      { key: "configuracion_ver", label: "Permitir entrada a configuración" },
-      { key: "configuracion_editar", label: "Editar configuración" },
+      // Nota: no repetimos configuracion_ver/configuracion_editar para evitar keys duplicadas.
     ],
   },
   {
@@ -179,12 +172,18 @@ const modulosPermisos = [
   },
 ];
 
-const permisosBase = modulosPermisos.flatMap((modulo) =>
-  modulo.permisos.map((permiso) => ({
-    ...permiso,
-    grupo: modulo.titulo,
-    moduloId: modulo.id,
-  }))
+const permisosBase = Array.from(
+  new Map(
+    modulosPermisos
+      .flatMap((modulo) =>
+        modulo.permisos.map((permiso) => ({
+          ...permiso,
+          grupo: modulo.titulo,
+          moduloId: modulo.id,
+        }))
+      )
+      .map((permiso) => [permiso.key, permiso])
+  ).values()
 );
 
 const permisosAdmin = permisosBase.reduce((acc, p) => {
@@ -263,6 +262,25 @@ const permisosColaborador = {
   usuarios_editar: false,
 };
 
+
+function completarPermisos(permisosGuardados = {}, valorDefecto = false) {
+  const completos = {};
+
+  permisosBase.forEach((permiso) => {
+    completos[permiso.key] = Boolean(
+      Object.prototype.hasOwnProperty.call(permisosGuardados || {}, permiso.key)
+        ? permisosGuardados[permiso.key]
+        : valorDefecto
+    );
+  });
+
+  return completos;
+}
+
+function permisosVaciosGlobal() {
+  return completarPermisos({}, false);
+}
+
 function generarToken() {
   if (crypto?.randomUUID) return crypto.randomUUID();
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -282,7 +300,7 @@ function UsuariosAccesos() {
   const [codigoUsuario, setCodigoUsuario] = useState("");
   const [rol, setRol] = useState("colaborador");
   const [empresasSeleccionadas, setEmpresasSeleccionadas] = useState([]);
-  const [permisos, setPermisos] = useState(permisosColaborador);
+  const [permisos, setPermisos] = useState(() => completarPermisos(permisosColaborador, false));
 
   const [mostrarEmpresas, setMostrarEmpresas] = useState(false);
   const [busquedaUsuarios, setBusquedaUsuarios] = useState("");
@@ -311,6 +329,7 @@ function UsuariosAccesos() {
 
   const [loading, setLoading] = useState(false);
   const [cargando, setCargando] = useState(true);
+  const [debugGuardadoPermisos, setDebugGuardadoPermisos] = useState("");
 
   const puedeAdministrar =
     rolActivo === "owner" ||
@@ -324,12 +343,14 @@ function UsuariosAccesos() {
   }, []);
 
   useEffect(() => {
-    if (rol === "admin") {
-      setPermisos(permisosAdmin);
+    if (editandoUsuarioId || editandoInvitacionId) return;
+
+    if (rol === "admin" || rol === "owner" || rol === "propietario") {
+      setPermisos(completarPermisos(permisosAdmin, true));
     } else {
-      setPermisos(permisosColaborador);
+      setPermisos(completarPermisos(permisosColaborador, false));
     }
-  }, [rol]);
+  }, [rol, editandoUsuarioId, editandoInvitacionId]);
 
   const cargarDatos = async () => {
     setCargando(true);
@@ -497,7 +518,7 @@ function UsuariosAccesos() {
     setNombreMostrar("");
     setCodigoUsuario("");
     setRol("colaborador");
-    setPermisos(permisosColaborador);
+    setPermisos(completarPermisos(permisosColaborador, false));
     setEmpresasSeleccionadas(empresaActiva?.id ? [empresaActiva.id] : []);
     setMostrarEmpresas(false);
     setEditandoInvitacionId(null);
@@ -507,6 +528,12 @@ function UsuariosAccesos() {
   const guardarInvitacion = async () => {
     if (!puedeAdministrar) {
       return alert("No tienes permiso para invitar usuarios");
+    }
+
+    if (editandoInvitacionId) {
+      alert(
+        "Ojo: estás editando una INVITACIÓN. Si el usuario ya aceptó, los módulos reales se cambian desde 'Usuarios asignados' > Editar."
+      );
     }
 
     if (!email.trim()) {
@@ -519,13 +546,15 @@ function UsuariosAccesos() {
 
     setLoading(true);
 
+    const permisosGuardar = normalizarPermisosParaGuardar();
+
     const invitacionesParaGuardar = empresasSeleccionadas.map((empresaId) => ({
       empresa_id: empresaId,
       email: email.trim().toLowerCase(),
       codigo_usuario: codigoUsuario.trim() || null,
       nombre_mostrar: nombreMostrar.trim() || email.trim().toLowerCase(),
       rol,
-      permisos,
+      permisos: permisosGuardar,
       token: generarToken(),
       estado: "pendiente",
     }));
@@ -552,7 +581,7 @@ function UsuariosAccesos() {
             codigo_usuario: invitacion.codigo_usuario,
             nombre_mostrar: invitacion.nombre_mostrar,
             rol: invitacion.rol,
-            permisos: invitacion.permisos,
+            permisos: permisosGuardar,
             token: invitacion.token,
             estado: "pendiente",
             accepted_at: null,
@@ -583,12 +612,13 @@ function UsuariosAccesos() {
       return alert("No se pudo guardar o actualizar la invitación");
     }
 
+    notificarAccesosActualizados();
     alert("Invitación guardada correctamente. Si ya existía, se actualizó.");
     limpiarFormulario();
-    await cargarInvitaciones();
+    await cargarDatos();
   };
 
-  const cargarInvitacionEnFormulario = (invitacion) => {
+  const cargarInvitacionEnFormulario = (invitacion, grupoInvitacion = null) => {
     if (!puedeAdministrar) return alert("No tienes permiso para editar invitaciones");
 
     setEditandoInvitacionId(invitacion.id);
@@ -597,68 +627,187 @@ function UsuariosAccesos() {
     setNombreMostrar(invitacion.nombre_mostrar || "");
     setCodigoUsuario(invitacion.codigo_usuario || "");
     setRol(invitacion.rol || "colaborador");
-    setPermisos(invitacion.permisos || permisosColaborador);
-    setEmpresasSeleccionadas([invitacion.empresa_id]);
+    setPermisos(completarPermisos(invitacion.permisos || {}, false));
+    setEmpresasSeleccionadas(
+      grupoInvitacion?.registros?.length
+        ? grupoInvitacion.registros.map((r) => r.empresa_id)
+        : [invitacion.empresa_id]
+    );
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
-  const cargarUsuarioEnFormulario = (usuario) => {
+  const cargarUsuarioEnFormulario = (usuario, grupoUsuario = null) => {
     if (!puedeAdministrar) return alert("No tienes permiso para editar usuarios");
 
     if (usuario.rol === "owner" && rolActivo !== "owner") {
       return alert("Solo el Owner puede editar otro Owner");
     }
 
+    // IMPORTANTE:
+    // Esto edita la tabla REAL que usa el sistema: empresa_usuarios.
+    // No toca empresa_invitaciones.
     setEditandoUsuarioId(usuario.id);
     setEditandoInvitacionId(null);
+
     setEmail("");
     setNombreMostrar(usuario.nombre_mostrar || "");
     setCodigoUsuario(usuario.codigo_usuario || "");
     setRol(usuario.rol || "colaborador");
-    setPermisos(usuario.permisos || permisosColaborador);
-    setEmpresasSeleccionadas([usuario.empresa_id]);
+    setPermisos(completarPermisos(usuario.permisos || {}, false));
+
+    setEmpresasSeleccionadas(
+      grupoUsuario?.registros?.length
+        ? grupoUsuario.registros.filter((r) => r.activo).map((r) => r.empresa_id)
+        : [usuario.empresa_id]
+    );
+
+    setDebugGuardadoPermisos(
+      `Editando usuario real empresa_usuarios id=${usuario.id}`
+    );
+
     window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const permisosVacios = () => permisosVaciosGlobal();
+
+
+  const normalizarPermisosParaGuardar = () => completarPermisos(permisos, false);
+
+
+  const notificarAccesosActualizados = () => {
+    localStorage.setItem("accesosActualizados", String(Date.now()));
+    window.dispatchEvent(new Event("accesosActualizados"));
   };
 
   const guardarCambiosUsuario = async () => {
     if (!puedeAdministrar) return alert("No tienes permiso para editar usuarios");
-    if (!editandoUsuarioId) return;
 
-    const usuarioActual = usuarios.find((u) => u.id === editandoUsuarioId);
-
-    if (usuarioActual?.rol === "owner" && rolActivo !== "owner") {
-      return alert("Solo el Owner puede modificar otro Owner");
-    }
-
-    if (usuarioActual?.rol === "owner" && rol !== "owner") {
-      const confirmar = window.confirm("Estás cambiando un Owner a otro rol. ¿Seguro?");
-      if (!confirmar) return;
+    if (!editandoUsuarioId) {
+      return alert("No hay usuario real seleccionado. Dale clic en EDITAR dentro de Usuarios asignados, no en Invitaciones.");
     }
 
     setLoading(true);
+    setDebugGuardadoPermisos("");
 
-    const { error } = await supabase
-      .from("empresa_usuarios")
-      .update({
-        codigo_usuario: codigoUsuario.trim() || null,
-        nombre_mostrar: nombreMostrar.trim() || usuarioActual?.nombre_mostrar || "Usuario",
-        rol,
-        permisos,
-      })
-      .eq("id", editandoUsuarioId);
+    try {
+      const permisosGuardar = normalizarPermisosParaGuardar();
 
-    setLoading(false);
+      const usuarioEditar = usuarios.find(
+        (u) => String(u.id) === String(editandoUsuarioId)
+      );
 
-    if (error) {
-      console.error(error);
-      return alert("No se pudo actualizar el usuario");
+      if (!usuarioEditar?.id || !usuarioEditar?.user_id) {
+        throw new Error("Usuario no encontrado en empresa_usuarios");
+      }
+
+      const registrosDelUsuario = usuarios.filter(
+        (u) => String(u.user_id) === String(usuarioEditar.user_id)
+      );
+
+      const resultados = [];
+
+      for (const registro of registrosDelUsuario) {
+        const debeEstarActivo = empresasSeleccionadas.some(
+          (empresaId) => String(empresaId) === String(registro.empresa_id)
+        );
+
+        const payload = debeEstarActivo
+          ? {
+              permisos: permisosGuardar,
+              rol,
+              codigo_usuario: codigoUsuario.trim() || null,
+              nombre_mostrar:
+                nombreMostrar.trim() || usuarioEditar.nombre_mostrar || null,
+              activo: true,
+            }
+          : {
+              activo: false,
+            };
+
+        const { data, error } = await supabase
+          .from("empresa_usuarios")
+          .update(payload)
+          .eq("id", registro.id)
+          .select("id, empresa_id, user_id, permisos, activo");
+
+        if (error) throw error;
+
+        resultados.push({
+          id: registro.id,
+          empresa_id: registro.empresa_id,
+          filas: data?.length || 0,
+          activo: data?.[0]?.activo,
+          ventas_ver: data?.[0]?.permisos?.ventas_ver,
+          ventas_crear: data?.[0]?.permisos?.ventas_crear,
+          bandeja_notificaciones_ver:
+            data?.[0]?.permisos?.bandeja_notificaciones_ver,
+        });
+      }
+
+      // Si seleccionaste una empresa donde aún no existe registro empresa_usuarios, lo crea.
+      for (const empresaId of empresasSeleccionadas) {
+        const yaExiste = registrosDelUsuario.some(
+          (r) => String(r.empresa_id) === String(empresaId)
+        );
+
+        if (!yaExiste) {
+          const { data, error } = await supabase
+            .from("empresa_usuarios")
+            .insert([
+              {
+                empresa_id: empresaId,
+                user_id: usuarioEditar.user_id,
+                rol,
+                permisos: permisosGuardar,
+                activo: true,
+                codigo_usuario: codigoUsuario.trim() || null,
+                nombre_mostrar:
+                  nombreMostrar.trim() || usuarioEditar.nombre_mostrar || null,
+              },
+            ])
+            .select("id, empresa_id, user_id, permisos, activo");
+
+          if (error) throw error;
+
+          resultados.push({
+            id: data?.[0]?.id,
+            empresa_id: empresaId,
+            filas: data?.length || 0,
+            activo: data?.[0]?.activo,
+            ventas_ver: data?.[0]?.permisos?.ventas_ver,
+            ventas_crear: data?.[0]?.permisos?.ventas_crear,
+            bandeja_notificaciones_ver:
+              data?.[0]?.permisos?.bandeja_notificaciones_ver,
+          });
+        }
+      }
+
+      console.table(resultados);
+      localStorage.setItem("accesosDiagnostico", JSON.stringify(resultados));
+
+      const actualizados = resultados.filter((r) => r.filas > 0).length;
+
+      if (actualizados === 0) {
+        throw new Error("No se actualizó ninguna fila de empresa_usuarios.");
+      }
+
+      setDebugGuardadoPermisos(
+        `empresa_usuarios actualizado: ${actualizados} fila(s). Revisa consola: accesosDiagnostico`
+      );
+
+      notificarAccesosActualizados();
+      await cargarDatos();
+      limpiarFormulario();
+
+      alert("Permisos del usuario real actualizados correctamente. Que el usuario cierre sesión y vuelva a entrar.");
+    } catch (err) {
+      console.error("Error guardando empresa_usuarios:", err);
+      setDebugGuardadoPermisos(err.message || "Error al guardar permisos");
+      alert(err.message || "No se pudieron actualizar los permisos del usuario real");
+    } finally {
+      setLoading(false);
     }
-
-    alert("Usuario actualizado correctamente");
-    limpiarFormulario();
-    await cargarUsuarios();
   };
-
   const eliminarInvitacion = async (invitacion) => {
     if (!puedeAdministrar) return alert("No tienes permiso para eliminar invitaciones");
 
@@ -722,7 +871,7 @@ function UsuariosAccesos() {
           codigo_usuario: invitacion.codigo_usuario || null,
           nombre_mostrar: invitacion.nombre_mostrar || invitacion.email,
           rol: invitacion.rol || "colaborador",
-          permisos: invitacion.permisos || {},
+          permisos: completarPermisos(invitacion.permisos || {}, false),
           activo: true,
         },
       ]);
@@ -823,7 +972,7 @@ function UsuariosAccesos() {
           user_id: usuario.user_id,
           rol: usuario.rol,
           activo: usuario.activo,
-          permisos: usuario.permisos || {},
+          permisos: completarPermisos(usuario.permisos || {}, false),
           registros: [],
           empresas: [],
         });
@@ -857,7 +1006,7 @@ function UsuariosAccesos() {
           codigo_usuario: invitacion.codigo_usuario,
           rol: invitacion.rol,
           estado: invitacion.estado,
-          permisos: invitacion.permisos || {},
+          permisos: completarPermisos(invitacion.permisos || {}, false),
           registros: [],
           empresas: [],
         });
@@ -949,6 +1098,12 @@ function UsuariosAccesos() {
           <strong>{totales.invitacionesPendientes}</strong>
         </div>
       </div>
+
+      {debugGuardadoPermisos && (
+        <div style={styles.debugBox}>
+          {debugGuardadoPermisos}
+        </div>
+      )}
 
       {!puedeAdministrar && (
         <div style={styles.warnBox}>
@@ -1095,7 +1250,7 @@ function UsuariosAccesos() {
                 : editandoUsuarioId
                 ? "Guardar cambios de usuario"
                 : editandoInvitacionId
-                ? "Actualizar invitación"
+                ? "Actualizar solo invitación"
                 : "Guardar invitación"}
             </button>
 
@@ -1204,7 +1359,7 @@ function UsuariosAccesos() {
                     <button
                       type="button"
                       style={styles.primarySmallBtn}
-                      onClick={() => cargarUsuarioEnFormulario(u.registros[0])}
+                      onClick={() => cargarUsuarioEnFormulario(u.registros[0], u)}
                       disabled={!puedeAdministrar}
                     >
                       Editar
@@ -1260,7 +1415,7 @@ function UsuariosAccesos() {
                     <button
                       type="button"
                       style={styles.primarySmallBtn}
-                      onClick={() => cargarInvitacionEnFormulario(inv.registros[0])}
+                      onClick={() => cargarInvitacionEnFormulario(inv.registros[0], inv)}
                       disabled={!puedeAdministrar}
                     >
                       Editar
@@ -1300,7 +1455,7 @@ function UsuariosAccesos() {
 
             <div style={styles.permissionsListModal}>
               {moduloPermisosActivo.permisos.map((permiso) => (
-                <label key={permiso.key} style={styles.switchRowModal}>
+                <label key={`${moduloPermisosActivo.id}-${permiso.key}`} style={styles.switchRowModal}>
                   <span>{permiso.label}</span>
                   <input
                     type="checkbox"
@@ -1337,7 +1492,7 @@ function UsuariosAccesos() {
               <div style={styles.chipList}>
                 {usuarioDetalleActivo.registros.map((reg) => (
                   <span key={reg.id} style={styles.companyChip}>
-                    {reg.empresas?.nombre || "Empresa"} · {reg.activo ? "Activo" : "Inactivo"}
+                    ID {reg.id} · {reg.empresas?.nombre || "Empresa"} · {reg.activo ? "Activo" : "Inactivo"}
                   </span>
                 ))}
               </div>
@@ -1349,7 +1504,7 @@ function UsuariosAccesos() {
                 {permisosBase
                   .filter((p) => usuarioDetalleActivo.permisos?.[p.key])
                   .map((p) => (
-                    <span key={p.key} style={styles.permissionChip}>{p.label}</span>
+                    <span key={`${p.key}-${p.moduloId}`} style={styles.permissionChip}>{p.label}</span>
                   ))}
               </div>
             </div>
@@ -1359,7 +1514,7 @@ function UsuariosAccesos() {
                 type="button"
                 style={styles.primarySmallBtn}
                 onClick={() => {
-                  cargarUsuarioEnFormulario(usuarioDetalleActivo.registros[0]);
+                  cargarUsuarioEnFormulario(usuarioDetalleActivo.registros[0], usuarioDetalleActivo);
                   setUsuarioDetalleActivo(null);
                 }}
                 disabled={!puedeAdministrar}
@@ -1419,7 +1574,7 @@ function UsuariosAccesos() {
                 {permisosBase
                   .filter((p) => invitacionDetalleActiva.permisos?.[p.key])
                   .map((p) => (
-                    <span key={p.key} style={styles.permissionChip}>{p.label}</span>
+                    <span key={`${p.key}-${p.moduloId}`} style={styles.permissionChip}>{p.label}</span>
                   ))}
               </div>
             </div>
@@ -1429,7 +1584,7 @@ function UsuariosAccesos() {
                 type="button"
                 style={styles.primarySmallBtn}
                 onClick={() => {
-                  cargarInvitacionEnFormulario(invitacionDetalleActiva.registros[0]);
+                  cargarInvitacionEnFormulario(invitacionDetalleActiva.registros[0], invitacionDetalleActiva);
                   setInvitacionDetalleActiva(null);
                 }}
                 disabled={!puedeAdministrar}
@@ -2105,6 +2260,14 @@ const styles = {
     gap: "8px",
     flexWrap: "wrap",
     justifyContent: "flex-end",
+  },
+  debugBox: {
+    background: "#eef6ff",
+    color: "#1d4ed8",
+    border: "1px solid #bfdbfe",
+    borderRadius: "16px",
+    padding: "12px 14px",
+    fontWeight: "800",
   },
 };
 

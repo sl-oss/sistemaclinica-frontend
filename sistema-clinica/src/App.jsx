@@ -107,6 +107,23 @@ function App() {
   }, [user?.id, user?.email]);
 
   useEffect(() => {
+    if (!user?.id || !empresaActiva?.id) return;
+
+    const refrescar = () => recargarPermisosEmpresaActiva();
+
+    window.addEventListener("focus", refrescar);
+    window.addEventListener("storage", refrescar);
+    window.addEventListener("accesosActualizados", refrescar);
+
+    return () => {
+      window.removeEventListener("focus", refrescar);
+      window.removeEventListener("storage", refrescar);
+      window.removeEventListener("accesosActualizados", refrescar);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id, empresaActiva?.id]);
+
+  useEffect(() => {
     const irVenta = () => setPantalla("venta");
     const irReporte = () => setPantalla("reporte");
     const irCitas = () => setPantalla("citas");
@@ -292,6 +309,7 @@ function App() {
     setRolActivo(rol);
     setPermisosActivos(permisos);
     setEmpresaUsuarioId(String(membresia.id));
+    window.dispatchEvent(new Event("accesosActualizados"));
     setPantalla("dashboard");
   };
 
@@ -438,6 +456,59 @@ function App() {
     setNuevaEmpresa("");
     await obtenerEmpresasDelUsuario(user.id);
   };
+
+
+  const recargarPermisosEmpresaActiva = async () => {
+    if (!user?.id) return;
+
+    const empresaLocal = JSON.parse(localStorage.getItem("empresa") || "null");
+    const empresaId = empresaActiva?.id || empresaLocal?.id;
+
+    if (!empresaId) return;
+
+    const { data, error } = await supabase
+      .from("empresa_usuarios")
+      .select(`
+        id,
+        empresa_id,
+        rol,
+        permisos,
+        activo,
+        nombre_mostrar,
+        codigo_usuario,
+        empresas (
+          id,
+          nombre,
+          owner_user_id
+        )
+      `)
+      .eq("user_id", user.id)
+      .eq("empresa_id", empresaId)
+      .eq("activo", true)
+      .maybeSingle();
+
+    if (error) {
+      console.error("Error recargando permisos:", error);
+      return;
+    }
+
+    if (!data) return;
+
+    const empresaRecargada = data.empresas || empresaLocal || empresaActiva;
+    const rolRecargado = data.rol || "";
+    const permisosRecargados = data.permisos || {};
+
+    localStorage.setItem("empresa", JSON.stringify(empresaRecargada));
+    localStorage.setItem("rol", rolRecargado);
+    localStorage.setItem("permisos", JSON.stringify(permisosRecargados));
+    localStorage.setItem("empresa_usuario_id", String(data.id));
+
+    setEmpresaActiva(empresaRecargada);
+    setRolActivo(rolRecargado);
+    setPermisosActivos(permisosRecargados);
+    setEmpresaUsuarioId(String(data.id));
+  };
+
 
   const cambiarPantalla = (nuevaPantalla) => {
     setPantalla(nuevaPantalla);
@@ -1837,6 +1908,7 @@ const styles = {
     border: "1px solid #e2e8f0",
     borderRadius: "20px",
   },
+
 
   menuBarMovil: {
     position: "sticky",
