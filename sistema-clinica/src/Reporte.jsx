@@ -86,6 +86,8 @@ function Reporte() {
   const [items, setItems] = useState([]);
   const [clientes, setClientes] = useState([]);
   const [metodosPago, setMetodosPago] = useState([]);
+  const [clasificacionesPacientes, setClasificacionesPacientes] = useState([]);
+  const [editClasificacionesIds, setEditClasificacionesIds] = useState([]);
 
   const [fechaInicio, setFechaInicio] = useState("");
   const [fechaFin, setFechaFin] = useState("");
@@ -216,6 +218,7 @@ function Reporte() {
       obtenerItems(empresaId),
       obtenerClientes(empresaId),
       obtenerMetodosPago(empresaId),
+      obtenerClasificacionesPacientes(empresaId),
     ]);
   };
 
@@ -227,12 +230,14 @@ function Reporte() {
       .select(`
         *,
         clientes(id, nombre),
-        empresas(id, nombre),
         detalle_venta(
           id,
           item_id,
           cantidad,
           precio,
+          precio_base,
+          precio_editable,
+          origen_precio,
           items(id, nombre, tipo)
         ),
         venta_pagos(
@@ -317,6 +322,114 @@ function Reporte() {
     setMetodosPago(data || []);
   };
 
+  const obtenerClasificacionesPacientes = async (empresaId = empresa?.id) => {
+    if (!empresaId) return;
+
+    const { data, error } = await supabase
+      .from("clasificaciones_pacientes")
+      .select("*")
+      .eq("empresa_id", empresaId)
+      .order("nombre", { ascending: true });
+
+    if (error) {
+      console.warn("No se pudieron cargar clasificaciones:", error);
+      setClasificacionesPacientes([]);
+      return;
+    }
+
+    setClasificacionesPacientes(data || []);
+  };
+
+  const cargarClasificacionesVenta = async (venta) => {
+    if (!venta?.id) {
+      setEditClasificacionesIds([]);
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("caja_paciente_clasificaciones")
+      .select("clasificacion_id")
+      .eq("venta_id", String(venta.id));
+
+    if (error) {
+      console.warn("No se pudieron cargar clasificaciones de la venta:", error);
+      setEditClasificacionesIds([]);
+      return;
+    }
+
+    const ids = (data || [])
+      .map((row) => row.clasificacion_id)
+      .filter(Boolean)
+      .map(String);
+
+    setEditClasificacionesIds(Array.from(new Set(ids)));
+  };
+
+  const toggleClasificacionEdit = (clasificacionId) => {
+    const id = String(clasificacionId);
+
+    setEditClasificacionesIds((prev) => {
+      if (prev.includes(id)) {
+        return prev.filter((item) => item !== id);
+      }
+
+      return [...prev, id];
+    });
+  };
+
+  const obtenerNombrePacienteVenta = () => {
+    const clienteObj = clientes.find(
+      (c) => String(c.id) === String(editClienteId)
+    );
+
+    return (
+      clienteObj?.nombre ||
+      ventaEditando?.clientes?.nombre ||
+      "Cliente de contado"
+    );
+  };
+
+  const guardarClasificacionesVenta = async ({
+    ventaId,
+    empresaId,
+    fechaLocal,
+    paciente,
+  }) => {
+    if (!ventaId || !empresaId) return;
+
+    const { error: errorDelete } = await supabase
+      .from("caja_paciente_clasificaciones")
+      .delete()
+      .eq("venta_id", String(ventaId));
+
+    if (errorDelete) {
+      console.warn("No se pudieron limpiar clasificaciones anteriores:", errorDelete);
+    }
+
+    if (editClasificacionesIds.length === 0) return;
+
+    const fechaSolo = String(fechaLocal || obtenerFechaHoraSVISO()).slice(0, 10);
+    const pacienteLimpio = String(paciente || "Cliente de contado").trim();
+
+    const payload = editClasificacionesIds.map((clasificacionId) => ({
+      empresa_id: empresaId,
+      fecha_local: fechaSolo,
+      paciente: pacienteLimpio,
+      venta_id: String(ventaId),
+      grupo_facturacion: null,
+      clasificacion_id: clasificacionId,
+    }));
+
+    const { error } = await supabase
+      .from("caja_paciente_clasificaciones")
+      .insert(payload);
+
+    if (error) {
+      console.error("Error guardando clasificaciones:", error);
+      throw new Error("La venta se actualizó, pero no se pudieron guardar las clasificaciones del paciente.");
+    }
+  };
+
   const totalGeneral = useMemo(() => {
     return ventas.reduce((sum, v) => sum + Number(v.total || 0), 0);
   }, [ventas]);
@@ -335,6 +448,8 @@ function Reporte() {
       tipo: d.items?.tipo || "producto",
       cantidad: Number(d.cantidad || 0),
       precio: Number(d.precio || 0),
+      precio_base: Number(d.precio_base || d.items?.precio || d.precio || 0),
+      precio_editable: Boolean(d.precio_editable),
     }));
 
     const pagos = (venta.venta_pagos || []).length
@@ -347,6 +462,7 @@ function Reporte() {
 
     setEditItems(detalle);
     setEditPagos(pagos);
+    await cargarClasificacionesVenta(venta);
     setBusquedaItem("");
     setFiltroTipo("todos");
   };
@@ -359,6 +475,7 @@ function Reporte() {
     setEditEstado("pagado");
     setEditItems([]);
     setEditPagos([{ metodo_pago_id: "", monto: "", referencia: "" }]);
+    setEditClasificacionesIds([]);
     setBusquedaItem("");
     setFiltroTipo("todos");
   };
@@ -381,6 +498,8 @@ function Reporte() {
           tipo: item.tipo,
           cantidad: 1,
           precio: Number(item.precio || 0),
+          precio_base: Number(item.precio || 0),
+          precio_editable: Boolean(item.precio_editable),
         },
       ]);
     }
@@ -508,7 +627,6 @@ function Reporte() {
 
       return [
         formatearFechaHora(v.fecha_local),
-        v.empresas?.nombre || empresasDisponibles.find((e) => String(e.id) === String(v.empresa_id))?.nombre || "Empresa",
         v.clientes?.nombre || "Consumidor final",
         detalle || "-",
         pagos || "-",
@@ -521,7 +639,6 @@ function Reporte() {
       startY: 40,
       head: [[
         "Fecha",
-        "Empresa",
         "Cliente",
         "Detalle",
         "Pagos",
@@ -530,7 +647,6 @@ function Reporte() {
       ]],
       body,
       foot: [[
-        "",
         "",
         "",
         "",
@@ -560,13 +676,12 @@ function Reporte() {
       },
       margin: { left: 10, right: 10 },
       columnStyles: {
-        0: { cellWidth: 32 },
-        1: { cellWidth: 38 },
-        2: { cellWidth: 38 },
-        3: { cellWidth: 70 },
-        4: { cellWidth: 70 },
-        5: { cellWidth: 24, halign: "center" },
-        6: { cellWidth: 24, halign: "right" },
+        0: { cellWidth: 34 },
+        1: { cellWidth: 42 },
+        2: { cellWidth: 78 },
+        3: { cellWidth: 78 },
+        4: { cellWidth: 24, halign: "center" },
+        5: { cellWidth: 24, halign: "right" },
       },
     });
 
@@ -651,6 +766,9 @@ function Reporte() {
         item_id: i.item_id,
         cantidad: Number(i.cantidad || 0),
         precio: Number(i.precio || 0),
+        precio_base: Number(i.precio_base ?? i.precio ?? 0),
+        precio_editable: Boolean(i.precio_editable),
+        origen_precio: "venta",
       }));
 
       const { error: errorInsertDetalle } = await supabase
@@ -690,22 +808,18 @@ function Reporte() {
 
       if (errorDeleteCaja) throw errorDeleteCaja;
 
+      const nombrePacienteClasificacion = obtenerNombrePacienteVenta();
+
       if (pagosValidos.length > 0) {
         const cajaId = await obtenerOCrearCaja({
           empresaId: empresaVentaId,
           fechaLocal: fechaNuevaCompleta,
         });
 
-        const clienteObj = clientes.find(
-          (c) => String(c.id) === String(editClienteId)
-        );
-
-        const nombrePaciente = clienteObj?.nombre || "Cliente de contado";
-
         const detalleCaja = pagosValidos.map((p) => ({
           caja_diaria_id: cajaId,
           venta_id: ventaEditando.id,
-          paciente: nombrePaciente,
+          paciente: nombrePacienteClasificacion,
           metodo_pago_id: Number(p.metodo_pago_id),
           monto: Number(p.monto),
           referencia: p.referencia?.trim() || null,
@@ -717,6 +831,13 @@ function Reporte() {
 
         if (errorInsertCaja) throw errorInsertCaja;
       }
+
+      await guardarClasificacionesVenta({
+        ventaId: ventaEditando.id,
+        empresaId: empresaVentaId,
+        fechaLocal: fechaNuevaCompleta,
+        paciente: nombrePacienteClasificacion,
+      });
 
       for (const itemId of todosLosItemIds) {
         const cantidadAnterior = Number(mapaAnterior[itemId] || 0);
@@ -888,64 +1009,53 @@ function Reporte() {
             </p>
           </div>
 
-          <div style={styles.headerEmpresaSelect}>
-            <div style={styles.headerEmpresaTop}>
-              <span style={styles.headerEmpresaLabel}>Empresas a combinar</span>
-              <div style={styles.headerEmpresaActions}>
-                <button type="button" style={styles.miniBtn} onClick={seleccionarSoloEmpresaActiva}>
-                  Solo activa
-                </button>
-                <button type="button" style={styles.miniBtn} onClick={seleccionarTodasLasEmpresas}>
-                  Todas
-                </button>
-              </div>
-            </div>
-
-            <div style={styles.multiSelectWrap}>
-              <button
-                type="button"
-                style={styles.multiSelectButton}
-                onClick={() => setMostrarSelectorEmpresas((prev) => !prev)}
-              >
-                <span>{tituloEmpresasReporte}</span>
-                <span style={styles.multiSelectArrow}>{mostrarSelectorEmpresas ? "▴" : "▾"}</span>
-              </button>
-
-              {mostrarSelectorEmpresas && (
-                <div style={styles.multiSelectMenu}>
-                  {empresasDisponibles.map((emp) => {
-                    const checked = empresasIdsConsulta.some((id) => String(id) === String(emp.id));
-                    return (
-                      <label
-                        key={emp.id}
-                        style={{
-                          ...styles.multiSelectOption,
-                          ...(checked ? styles.multiSelectOptionActive : {}),
-                        }}
-                      >
-                        <span style={styles.fakeCheckbox}>{checked ? "✓" : ""}</span>
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={() => toggleEmpresaReporte(emp.id)}
-                          style={styles.hiddenCheckbox}
-                        />
-                        <span style={styles.empresaListName}>{emp.nombre}</span>
-                      </label>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          </div>
-
           <div style={styles.totalBadge}>
             <span style={styles.totalBadgeLabel}>Total período</span>
             <strong style={styles.totalBadgeValue}>${totalGeneral.toFixed(2)}</strong>
           </div>
         </div>
 
+        <div style={styles.empresaSelectorCard}>
+          <div>
+            <label style={styles.label}>Empresa(s) para este reporte</label>
+            <button
+              type="button"
+              style={styles.empresaDropdownBtn}
+              onClick={() => setMostrarSelectorEmpresas((prev) => !prev)}
+            >
+              <span>{tituloEmpresasReporte}</span>
+              <span>▾</span>
+            </button>
 
+            {mostrarSelectorEmpresas && (
+              <div style={styles.empresaDropdown}>
+                <div style={styles.empresaDropdownActions}>
+                  <button type="button" style={styles.miniBtn} onClick={seleccionarSoloEmpresaActiva}>
+                    Solo activa
+                  </button>
+                  <button type="button" style={styles.miniBtn} onClick={seleccionarTodasLasEmpresas}>
+                    Todas
+                  </button>
+                </div>
+
+                {empresasDisponibles.map((emp) => (
+                  <label key={emp.id} style={styles.empresaOption}>
+                    <input
+                      type="checkbox"
+                      checked={empresasIdsConsulta.includes(emp.id)}
+                      onChange={() => toggleEmpresaReporte(emp.id)}
+                    />
+                    <span>{emp.nombre}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div style={styles.empresaSelectorInfo}>
+            Las operaciones se siguen registrando en la empresa activa. Este selector solo combina datos para reportes.
+          </div>
+        </div>
 
         <div style={styles.card}>
           <div style={styles.filtros}>
@@ -1000,7 +1110,7 @@ function Reporte() {
               <div style={styles.ventaMeta}>
                 <div><strong>Cliente:</strong> {v.clientes?.nombre || "Consumidor final"}</div>
                 <div><strong>Fecha:</strong> {formatearFechaHora(v.fecha_local)}</div>
-                <div><strong>Empresa:</strong> <span style={styles.empresaBadge}>{v.empresas?.nombre || empresasDisponibles.find((e) => String(e.id) === String(v.empresa_id))?.nombre || "Empresa"}</span></div>
+                <div><strong>Empresa:</strong> {empresasDisponibles.find((e) => e.id === v.empresa_id)?.nombre || "Empresa"}</div>
               </div>
 
               <div style={styles.detalleBox}>
@@ -1088,6 +1198,50 @@ function Reporte() {
                     <option value="parcial">Parcial</option>
                   </select>
                 </div>
+              </div>
+
+              <div style={styles.editSection}>
+                <div style={styles.pagosHeader}>
+                  <div>
+                    <h3 style={styles.sectionTitle}>Clasificación del paciente</h3>
+                    <p style={styles.sectionHint}>
+                      Podés seleccionar una o varias clasificaciones. Se actualizarán en Caja Diaria.
+                    </p>
+                  </div>
+
+                  <span style={styles.counterTag}>
+                    {editClasificacionesIds.length} seleccionada(s)
+                  </span>
+                </div>
+
+                {clasificacionesPacientes.length === 0 ? (
+                  <div style={styles.emptyMini}>
+                    No hay clasificaciones configuradas para esta empresa.
+                  </div>
+                ) : (
+                  <div style={styles.clasificacionesGrid}>
+                    {clasificacionesPacientes.map((clasificacion) => {
+                      const activa = editClasificacionesIds.includes(
+                        String(clasificacion.id)
+                      );
+
+                      return (
+                        <button
+                          key={clasificacion.id}
+                          type="button"
+                          style={{
+                            ...styles.clasificacionChipBtn,
+                            ...(activa ? styles.clasificacionChipBtnActive : {}),
+                          }}
+                          onClick={() => toggleClasificacionEdit(clasificacion.id)}
+                        >
+                          <span>{activa ? "✓" : ""}</span>
+                          <strong>{clasificacion.nombre}</strong>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
 
               <div style={styles.editSection}>
@@ -1321,35 +1475,6 @@ const styles = {
     fontSize: "14px",
   },
 
-  headerEmpresaSelect: {
-    flex: "1 1 360px",
-    maxWidth: "520px",
-    minWidth: "320px",
-    alignSelf: "center",
-    position: "relative",
-    zIndex: 20,
-  },
-
-  headerEmpresaTop: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: "8px",
-    marginBottom: "6px",
-  },
-
-  headerEmpresaLabel: {
-    color: "#574866",
-    fontSize: "12px",
-    fontWeight: "800",
-  },
-
-  headerEmpresaActions: {
-    display: "flex",
-    gap: "6px",
-    flexWrap: "wrap",
-  },
-
   totalBadge: {
     background: "#f4f0f7",
     border: "1px solid #d3c7dd",
@@ -1385,10 +1510,10 @@ const styles = {
     padding: "18px 20px",
     boxShadow: "0 10px 30px rgba(15, 23, 42, 0.06)",
     display: "grid",
+    gridTemplateColumns: "minmax(260px, 1fr) minmax(260px, 1fr)",
     gap: "14px",
     alignItems: "start",
     position: "relative",
-    maxWidth: "720px",
   },
 
   empresaDropdownBtn: {
@@ -1454,155 +1579,6 @@ const styles = {
     color: "#64748b",
     fontSize: "13px",
     lineHeight: 1.5,
-  },
-  empresaSelectorHeader: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "flex-start",
-    gap: "12px",
-    flexWrap: "wrap",
-  },
-
-  empresaSelectorTitle: {
-    margin: 0,
-    color: "#574866",
-    fontSize: "17px",
-    fontWeight: "800",
-  },
-
-  empresaSelectorSub: {
-    margin: "4px 0 0 0",
-    color: "#64748b",
-    fontSize: "13px",
-  },
-
-  empresaListBox: {
-    marginTop: "12px",
-    maxHeight: "260px",
-    overflowY: "auto",
-    display: "grid",
-    gap: "8px",
-    paddingRight: "4px",
-  },
-
-  empresaListItem: {
-    display: "flex",
-    alignItems: "center",
-    gap: "12px",
-    width: "100%",
-    padding: "12px 14px",
-    borderRadius: "14px",
-    border: "1px solid #d7dbe2",
-    background: "#fff",
-    cursor: "pointer",
-    color: "#1f2937",
-    boxSizing: "border-box",
-  },
-
-  empresaListItemActive: {
-    background: "#eef6ff",
-    border: "1px solid #93c5fd",
-  },
-
-  fakeCheckbox: {
-    width: "22px",
-    height: "22px",
-    borderRadius: "6px",
-    border: "1px solid #cbd5e1",
-    background: "#fff",
-    display: "grid",
-    placeItems: "center",
-    color: "#2563eb",
-    fontWeight: "900",
-    flexShrink: 0,
-  },
-
-  hiddenCheckbox: {
-    display: "none",
-  },
-
-  empresaListName: {
-    fontWeight: "800",
-    lineHeight: 1.2,
-    wordBreak: "break-word",
-  },
-
-  multiSelectWrap: {
-    position: "relative",
-    width: "100%",
-    maxWidth: "520px",
-  },
-
-  multiSelectButton: {
-    width: "100%",
-    minHeight: "48px",
-    borderRadius: "14px",
-    border: "1px solid #cfd9e5",
-    background: "#fff",
-    color: "#1f2937",
-    fontWeight: "800",
-    padding: "12px 14px",
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    gap: "12px",
-    cursor: "pointer",
-    textAlign: "left",
-    boxSizing: "border-box",
-  },
-
-  multiSelectArrow: {
-    fontSize: "18px",
-    color: "#574866",
-    flexShrink: 0,
-  },
-
-  multiSelectMenu: {
-    position: "absolute",
-    top: "calc(100% + 8px)",
-    left: 0,
-    right: 0,
-    zIndex: 50,
-    maxHeight: "280px",
-    overflowY: "auto",
-    background: "#fff",
-    border: "1px solid #d7dbe2",
-    borderRadius: "16px",
-    boxShadow: "0 18px 45px rgba(15, 23, 42, 0.14)",
-    padding: "8px",
-    display: "grid",
-    gap: "6px",
-  },
-
-  multiSelectOption: {
-    display: "flex",
-    alignItems: "center",
-    gap: "12px",
-    width: "100%",
-    padding: "12px 14px",
-    borderRadius: "12px",
-    border: "1px solid transparent",
-    background: "#fff",
-    cursor: "pointer",
-    color: "#1f2937",
-    boxSizing: "border-box",
-  },
-
-  multiSelectOptionActive: {
-    background: "#eef6ff",
-    border: "1px solid #93c5fd",
-  },
-
-  empresaBadge: {
-    display: "inline-flex",
-    alignItems: "center",
-    padding: "4px 8px",
-    borderRadius: "999px",
-    background: "#eef6ff",
-    color: "#1d4ed8",
-    border: "1px solid #bfdbfe",
-    fontWeight: "800",
-    fontSize: "12px",
   },
 
   filtros: {
@@ -1950,6 +1926,55 @@ const styles = {
     cursor: "pointer",
     fontWeight: "700",
   },
+
+  sectionHint: {
+    margin: "-6px 0 0 0",
+    color: "#64748b",
+    fontSize: "13px",
+    lineHeight: 1.45,
+  },
+
+  counterTag: {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    background: "#f4f0f7",
+    color: "#574866",
+    border: "1px solid #d3c7dd",
+    borderRadius: "999px",
+    padding: "7px 10px",
+    fontWeight: "800",
+    fontSize: "12px",
+    whiteSpace: "nowrap",
+  },
+
+  clasificacionesGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+    gap: "9px",
+  },
+
+  clasificacionChipBtn: {
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    background: "#fff",
+    color: "#334155",
+    border: "1px solid #d7dbe2",
+    borderRadius: "14px",
+    padding: "11px 12px",
+    cursor: "pointer",
+    textAlign: "left",
+    fontWeight: "800",
+  },
+
+  clasificacionChipBtnActive: {
+    background: "#eefcf3",
+    color: "#0f7a4d",
+    border: "1px solid #86efac",
+    boxShadow: "0 8px 18px rgba(16,185,129,0.10)",
+  },
+
 };
 
 export default Reporte;
