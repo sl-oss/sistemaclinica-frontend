@@ -2829,12 +2829,42 @@ export default function CajaDiaria() {
       return alert("No hay datos para exportar");
     }
 
-    const metodosReporte = datos.metodosReporte || metodos;
+    const nombresMetodosUsados = new Set();
 
-    const doc = new jsPDF("landscape");
+    (datos.metodosReporte || metodos || []).forEach((m) => {
+      if (m?.nombre) nombresMetodosUsados.add(m.nombre);
+    });
+
+    (datos.resumen || []).forEach((r) => {
+      if (r?.metodo) nombresMetodosUsados.add(r.metodo);
+    });
+
+    (datos.detalle || []).forEach((item) => {
+      Object.keys(item.metodos || {}).forEach((nombre) => {
+        if (nombre) nombresMetodosUsados.add(nombre);
+      });
+    });
+
+    const metodosReporte = Array.from(nombresMetodosUsados).map((nombre) => ({
+      nombre,
+      label:
+        nombre.length > 12
+          ? nombre
+              .replace(/TRANSFERENCIA/gi, "TRANSF.")
+              .replace(/DAVIVIENDA/gi, "DAVIV.")
+              .replace(/HIPOTECARIO/gi, "HIPOT.")
+              .replace(/RESERVA/gi, "RES.")
+          : nombre,
+    }));
+
+    const doc = new jsPDF({
+      orientation: "landscape",
+      unit: "mm",
+      format: "legal",
+    });
 
     doc.setFillColor(244, 240, 247);
-    doc.rect(0, 0, 297, 28, "F");
+    doc.rect(0, 0, 356, 28, "F");
 
     doc.setFont("helvetica", "bold");
     doc.setFontSize(18);
@@ -2857,7 +2887,7 @@ export default function CajaDiaria() {
       "Empresa",
       "Paciente",
       "Origen",
-      ...metodosReporte.map((m) => m.nombre),
+      ...metodosReporte.map((m) => m.label || m.nombre),
       "Referencias",
       "Total Paciente",
     ]];
@@ -2866,6 +2896,12 @@ export default function CajaDiaria() {
     metodosReporte.forEach((m) => {
       totalesPorMetodoPDF[m.nombre] = 0;
     });
+
+    const abreviarTextoPDF = (texto, max = 18) => {
+      const limpio = String(texto || "").trim();
+      if (limpio.length <= max) return limpio;
+      return `${limpio.slice(0, max - 1)}…`;
+    };
 
     const body = datos.detalle.map((item) => {
       let totalPaciente = 0;
@@ -2878,8 +2914,6 @@ export default function CajaDiaria() {
         return `$${formatearMonto(monto)}`;
       });
 
-      // Si el detalle ya trae total real, lo usamos para cuadrar el total por paciente.
-      // Si no existe, usamos la suma de columnas visibles.
       const totalPacienteReal = Number(
         item.totalPaciente ?? item.total_paciente ?? item.total ?? totalPaciente
       );
@@ -2887,20 +2921,20 @@ export default function CajaDiaria() {
       const referenciasTexto = metodosReporte
         .map((m) =>
           item.referencias?.[m.nombre]
-            ? `${m.nombre}: ${item.referencias[m.nombre]}`
+            ? `${m.label || m.nombre}: ${item.referencias[m.nombre]}`
             : ""
         )
         .filter(Boolean)
         .join(" | ");
 
       return [
-        item.clasificaciones || "",
+        abreviarTextoPDF(item.clasificaciones || "", 14),
         formatearFecha(item.fecha),
-        item.empresa || "",
-        item.paciente,
-        item.origen || "",
+        abreviarTextoPDF(item.empresa || "", 16),
+        abreviarTextoPDF(item.paciente || "", 20),
+        abreviarTextoPDF(item.origen || "", 8),
         ...montosMetodo,
-        referenciasTexto,
+        abreviarTextoPDF(referenciasTexto, 24),
         `$${formatearMonto(totalPacienteReal)}`,
       ];
     });
@@ -2912,6 +2946,25 @@ export default function CajaDiaria() {
 
     const totalGeneralPDF =
       Number(datos.totalGeneralResumen || 0) || Number(totalColumnasPDF || 0);
+
+    const diferenciaPDF = Number((totalGeneralPDF - totalColumnasPDF).toFixed(2));
+
+    if (Math.abs(diferenciaPDF) > 0.01) {
+      metodosReporte.push({
+        nombre: "__otros_metodos__",
+        label: "Otros",
+      });
+
+      totalesPorMetodoPDF.__otros_metodos__ = diferenciaPDF;
+
+      body.forEach((fila) => {
+        // Inserta la columna "Otros" antes de Referencias y Total Paciente.
+        fila.splice(fila.length - 2, 0, "$0.00");
+      });
+
+      // La diferencia se muestra solo en el pie para que el total visible cuadre.
+      // Si querés detalle por paciente de "Otros", hay que revisar qué método faltó en datos.detalle.
+    }
 
     const foot = [[
       "",
@@ -2931,10 +2984,14 @@ export default function CajaDiaria() {
       head,
       body,
       foot,
+      margin: { left: 4, right: 4 },
+      tableWidth: "auto",
       styles: {
-        fontSize: 8,
-        cellPadding: 3,
+        fontSize: metodosReporte.length > 8 ? 5.2 : 6.2,
+        cellPadding: 1.2,
         textColor: [31, 41, 55],
+        overflow: "linebreak",
+        minCellHeight: 5,
       },
       headStyles: {
         fillColor: [107, 90, 122],
@@ -2951,6 +3008,24 @@ export default function CajaDiaria() {
       },
       bodyStyles: {
         lineColor: [226, 232, 240],
+      },
+      columnStyles: {
+        0: { cellWidth: 18 },
+        1: { cellWidth: 17 },
+        2: { cellWidth: 24 },
+        3: { cellWidth: 28 },
+        4: { cellWidth: 14 },
+        [5 + metodosReporte.length]: { cellWidth: 26 },
+        [6 + metodosReporte.length]: { cellWidth: 20, halign: "right" },
+      },
+      didParseCell: (data) => {
+        if (data.section === "head" || data.section === "foot") {
+          data.cell.styles.fontStyle = "bold";
+        }
+
+        if (data.column.index >= 5 && data.column.index < 5 + metodosReporte.length) {
+          data.cell.styles.halign = "right";
+        }
       },
     });
 
