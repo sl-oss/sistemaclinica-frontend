@@ -2825,37 +2825,46 @@ export default function CajaDiaria() {
 
   const exportarDetallePDF = async () => {
     const datos = await obtenerDatosReporte();
+
     if (!datos || datos.detalle.length === 0) {
       return alert("No hay datos para exportar");
     }
 
-    const nombresMetodosUsados = new Set();
+    const abreviarMetodoPDF = (nombre = "") => {
+      return String(nombre || "")
+        .replace(/TRANSFERENCIA/gi, "TRANSF.")
+        .replace(/DAVIVIENDA/gi, "DAVIV.")
+        .replace(/HIPOTECARIO/gi, "HIPOT.")
+        .replace(/RESERVA/gi, "RES.")
+        .replace(/EFECTIVO/gi, "EFECT.")
+        .replace(/CHEQUE/gi, "CHEQ.");
+    };
 
-    (datos.metodosReporte || metodos || []).forEach((m) => {
-      if (m?.nombre) nombresMetodosUsados.add(m.nombre);
-    });
+    const abreviarTextoPDF = (texto, max = 18) => {
+      const limpio = String(texto || "").trim();
+      if (limpio.length <= max) return limpio;
+      return `${limpio.slice(0, max - 1)}…`;
+    };
 
-    (datos.resumen || []).forEach((r) => {
-      if (r?.metodo) nombresMetodosUsados.add(r.metodo);
-    });
+    // IMPORTANTE:
+    // El PDF usa EXACTAMENTE los mismos métodos del resumen del reporte.
+    // Así los totales de columnas cuadran con la tabla web.
+    const metodosReporte = (datos.resumen || [])
+      .filter((r) => Number(r.total || 0) !== 0)
+      .map((r) => ({
+        nombre: r.metodo,
+        label: abreviarMetodoPDF(r.metodo),
+        total: Number(r.total || 0),
+      }));
 
-    (datos.detalle || []).forEach((item) => {
-      Object.keys(item.metodos || {}).forEach((nombre) => {
-        if (nombre) nombresMetodosUsados.add(nombre);
-      });
-    });
+    if (metodosReporte.length === 0) {
+      return alert("No hay métodos de pago con movimiento para exportar");
+    }
 
-    const metodosReporte = Array.from(nombresMetodosUsados).map((nombre) => ({
-      nombre,
-      label:
-        nombre.length > 12
-          ? nombre
-              .replace(/TRANSFERENCIA/gi, "TRANSF.")
-              .replace(/DAVIVIENDA/gi, "DAVIV.")
-              .replace(/HIPOTECARIO/gi, "HIPOT.")
-              .replace(/RESERVA/gi, "RES.")
-          : nombre,
-    }));
+    const totalGeneralPDF = metodosReporte.reduce(
+      (acc, m) => acc + Number(m.total || 0),
+      0
+    );
 
     const doc = new jsPDF({
       orientation: "landscape",
@@ -2867,55 +2876,39 @@ export default function CajaDiaria() {
     doc.rect(0, 0, 356, 28, "F");
 
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(18);
+    doc.setFontSize(15);
     doc.setTextColor(87, 72, 102);
-    doc.text("INFORME DETALLADO DE CAJA DIARIA", 14, 16);
+    doc.text("INFORME DETALLADO DE CAJA DIARIA", 8, 14);
 
     doc.setFont("helvetica", "normal");
-    doc.setFontSize(10);
+    doc.setFontSize(8);
     doc.setTextColor(71, 85, 105);
-    doc.text(`Empresa(s): ${nombreEmpresasReporte}`, 14, 24);
+    doc.text(`Empresa(s): ${nombreEmpresasReporte}`, 8, 22);
     doc.text(
       `Período: ${formatearFecha(filtroDesde)} al ${formatearFecha(filtroHasta)}`,
-      120,
-      24
+      160,
+      22
     );
 
     const head = [[
-      "Clasificaciones",
+      "Clasif.",
       "Fecha",
       "Empresa",
       "Paciente",
       "Origen",
       ...metodosReporte.map((m) => m.label || m.nombre),
-      "Referencias",
-      "Total Paciente",
+      "Ref.",
+      "Total",
     ]];
 
-    const totalesPorMetodoPDF = {};
-    metodosReporte.forEach((m) => {
-      totalesPorMetodoPDF[m.nombre] = 0;
-    });
-
-    const abreviarTextoPDF = (texto, max = 18) => {
-      const limpio = String(texto || "").trim();
-      if (limpio.length <= max) return limpio;
-      return `${limpio.slice(0, max - 1)}…`;
-    };
-
     const body = datos.detalle.map((item) => {
-      let totalPaciente = 0;
+      const montosMetodo = metodosReporte.map((m) =>
+        `$${formatearMonto(Number(item.metodos?.[m.nombre] || 0))}`
+      );
 
-      const montosMetodo = metodosReporte.map((m) => {
-        const monto = Number(item.metodos?.[m.nombre] || 0);
-        totalesPorMetodoPDF[m.nombre] =
-          Number(totalesPorMetodoPDF[m.nombre] || 0) + monto;
-        totalPaciente += monto;
-        return `$${formatearMonto(monto)}`;
-      });
-
-      const totalPacienteReal = Number(
-        item.totalPaciente ?? item.total_paciente ?? item.total ?? totalPaciente
+      const totalPaciente = metodosReporte.reduce(
+        (acc, m) => acc + Number(item.metodos?.[m.nombre] || 0),
+        0
       );
 
       const referenciasTexto = metodosReporte
@@ -2928,43 +2921,16 @@ export default function CajaDiaria() {
         .join(" | ");
 
       return [
-        abreviarTextoPDF(item.clasificaciones || "", 14),
+        abreviarTextoPDF(item.clasificaciones || "", 11),
         formatearFecha(item.fecha),
-        abreviarTextoPDF(item.empresa || "", 16),
-        abreviarTextoPDF(item.paciente || "", 20),
-        abreviarTextoPDF(item.origen || "", 8),
+        abreviarTextoPDF(item.empresa || "", 14),
+        abreviarTextoPDF(item.paciente || "", 19),
+        abreviarTextoPDF(item.origen || "", 7),
         ...montosMetodo,
-        abreviarTextoPDF(referenciasTexto, 24),
-        `$${formatearMonto(totalPacienteReal)}`,
+        abreviarTextoPDF(referenciasTexto, 18),
+        `$${formatearMonto(totalPaciente)}`,
       ];
     });
-
-    const totalColumnasPDF = Object.values(totalesPorMetodoPDF).reduce(
-      (acc, valor) => acc + Number(valor || 0),
-      0
-    );
-
-    const totalGeneralPDF =
-      Number(datos.totalGeneralResumen || 0) || Number(totalColumnasPDF || 0);
-
-    const diferenciaPDF = Number((totalGeneralPDF - totalColumnasPDF).toFixed(2));
-
-    if (Math.abs(diferenciaPDF) > 0.01) {
-      metodosReporte.push({
-        nombre: "__otros_metodos__",
-        label: "Otros",
-      });
-
-      totalesPorMetodoPDF.__otros_metodos__ = diferenciaPDF;
-
-      body.forEach((fila) => {
-        // Inserta la columna "Otros" antes de Referencias y Total Paciente.
-        fila.splice(fila.length - 2, 0, "$0.00");
-      });
-
-      // La diferencia se muestra solo en el pie para que el total visible cuadre.
-      // Si querés detalle por paciente de "Otros", hay que revisar qué método faltó en datos.detalle.
-    }
 
     const foot = [[
       "",
@@ -2972,31 +2938,56 @@ export default function CajaDiaria() {
       "",
       "TOTALES",
       "",
-      ...metodosReporte.map((m) =>
-        `$${formatearMonto(totalesPorMetodoPDF[m.nombre] || 0)}`
-      ),
+      ...metodosReporte.map((m) => `$${formatearMonto(m.total || 0)}`),
       "",
       `$${formatearMonto(totalGeneralPDF)}`,
     ]];
 
+    const cantidadMetodos = metodosReporte.length;
+    const anchoDisponible = 356 - 8 - 8;
+    const anchoFijo = 16 + 16 + 22 + 28 + 12 + 18 + 18;
+    const anchoMetodo = Math.max(
+      14,
+      Math.min(24, (anchoDisponible - anchoFijo) / cantidadMetodos)
+    );
+
+    const columnStyles = {
+      0: { cellWidth: 16 },
+      1: { cellWidth: 16 },
+      2: { cellWidth: 22 },
+      3: { cellWidth: 28 },
+      4: { cellWidth: 12 },
+      [5 + cantidadMetodos]: { cellWidth: 18 },
+      [6 + cantidadMetodos]: { cellWidth: 18, halign: "right" },
+    };
+
+    metodosReporte.forEach((_, index) => {
+      columnStyles[5 + index] = {
+        cellWidth: anchoMetodo,
+        halign: "right",
+      };
+    });
+
     autoTable(doc, {
-      startY: 34,
+      startY: 32,
       head,
       body,
       foot,
       margin: { left: 4, right: 4 },
       tableWidth: "auto",
       styles: {
-        fontSize: metodosReporte.length > 8 ? 5.2 : 6.2,
-        cellPadding: 1.2,
+        fontSize: cantidadMetodos > 8 ? 4.8 : 5.8,
+        cellPadding: 1,
         textColor: [31, 41, 55],
         overflow: "linebreak",
-        minCellHeight: 5,
+        minCellHeight: 4.5,
       },
       headStyles: {
         fillColor: [107, 90, 122],
         textColor: [255, 255, 255],
         fontStyle: "bold",
+        halign: "center",
+        valign: "middle",
       },
       footStyles: {
         fillColor: [244, 240, 247],
@@ -3009,21 +3000,13 @@ export default function CajaDiaria() {
       bodyStyles: {
         lineColor: [226, 232, 240],
       },
-      columnStyles: {
-        0: { cellWidth: 18 },
-        1: { cellWidth: 17 },
-        2: { cellWidth: 24 },
-        3: { cellWidth: 28 },
-        4: { cellWidth: 14 },
-        [5 + metodosReporte.length]: { cellWidth: 26 },
-        [6 + metodosReporte.length]: { cellWidth: 20, halign: "right" },
-      },
+      columnStyles,
       didParseCell: (data) => {
-        if (data.section === "head" || data.section === "foot") {
+        if (data.section === "foot") {
           data.cell.styles.fontStyle = "bold";
         }
 
-        if (data.column.index >= 5 && data.column.index < 5 + metodosReporte.length) {
+        if (data.column.index >= 5 && data.column.index < 5 + cantidadMetodos) {
           data.cell.styles.halign = "right";
         }
       },
