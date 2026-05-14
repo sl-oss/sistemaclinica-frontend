@@ -595,9 +595,9 @@ export default function CajaDiaria() {
 
   const guardarCajaSilencioso = async (motivo = "autosave", opcionesExtra = {}) => {
     const empresaGuardado = opcionesExtra.empresaOverride || empresa;
-    const fechaGuardado = opcionesExtra.fechaOverride || fechaLocal;
+    const fechaLocal = opcionesExtra.fechaOverride || fechaLocal;
 
-    if (!empresaGuardado?.id || modoSoloLecturaMultiempresa || !fechaGuardado) return;
+    if (!empresaGuardado?.id || modoSoloLecturaMultiempresa || !fechaLocal) return;
 
     try {
       const resultado = await guardarCaja({
@@ -972,7 +972,7 @@ export default function CajaDiaria() {
       .insert([
         {
           empresa_id: empresaFilaId,
-          fecha_local: fechaGuardado,
+          fecha_local: fechaLocal,
           paciente: fila.paciente.trim(),
           venta_id: fila.venta_id ? String(fila.venta_id) : null,
           grupo_facturacion: fila.grupoFacturacion || null,
@@ -988,7 +988,7 @@ export default function CajaDiaria() {
       return alert("Error al asignar clasificación");
     }
 
-    await cargarCajaDelDia(fechaGuardado);
+    await cargarCajaDelDia(fechaLocal);
   };
 
   const quitarClasificacionAsignada = async (registroId) => {
@@ -1855,7 +1855,7 @@ export default function CajaDiaria() {
 
     const payload = manualClasificacionesIds.map((clasificacionId) => ({
       empresa_id: empresaFilaId,
-      fecha_local: fechaGuardado,
+      fecha_local: fechaLocal,
       paciente: filaFinal.paciente.trim(),
       venta_id: null,
       grupo_facturacion: filaFinal.grupoFacturacion || null,
@@ -2285,12 +2285,12 @@ export default function CajaDiaria() {
   const guardarCaja = async (opciones = {}) => {
     const silencioso = Boolean(opciones?.silencioso);
     const empresaGuardado = opciones?.empresaOverride || empresa;
-    const fechaGuardado = opciones?.fechaOverride || fechaLocal;
+    const fechaLocal = opciones?.fechaOverride || fechaLocal;
     const filasTrabajo = Array.isArray(opciones?.filasOverride) ? opciones.filasOverride : filas;
 
     if (!validarEdicionUnaEmpresa()) return false;
 
-    if (!empresaGuardado?.id || !fechaGuardado) {
+    if (!empresaGuardado?.id || !fechaLocal) {
       return silencioso ? false : alert("No hay empresa o fecha seleccionada");
     }
 
@@ -2329,7 +2329,7 @@ export default function CajaDiaria() {
       .from("cajas_diarias")
       .select("*")
       .eq("empresa_id", empresaGuardado.id)
-      .eq("fecha_local", fechaGuardado)
+      .eq("fecha_local", fechaLocal)
       .maybeSingle();
 
     if (errorBuscarCaja) {
