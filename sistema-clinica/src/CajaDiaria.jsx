@@ -2216,19 +2216,30 @@ export default function CajaDiaria() {
     return relacionadas.map((r) => r.paciente || "Sin nombre").join(" + ");
   };
 
-  const agruparDetallePorGrupo = (detalleBase) => {
+  const agruparDetallePorGrupo = (detalleBase, metodosReporteParam = []) => {
     const grupos = {};
+    const metodosParaAgrupar =
+      Array.isArray(metodosReporteParam) && metodosReporteParam.length > 0
+        ? metodosReporteParam
+        : metodos;
 
     detalleBase.forEach((item, index) => {
-      const key = item.grupoFacturacion
-        ? `${item.fecha}__${item.grupoFacturacion}`
-        : `${item.fecha}__solo__${index}`;
+      const empresaKey = String(item.empresa_id || "");
+      const fechaKey = String(item.fecha || "");
+      const grupoKey = String(item.grupoFacturacion || "");
+
+      // IMPORTANTE:
+      // Antes se agrupaba solo por fecha + grupo. En reportes combinados o intervalos
+      // eso puede mezclar empresas o días. Ahora separamos por empresa + fecha.
+      const key = grupoKey
+        ? `${empresaKey}__${fechaKey}__grupo__${grupoKey}`
+        : `${empresaKey}__${fechaKey}__solo__${index}`;
 
       if (!grupos[key]) {
         const metodosIniciales = {};
         const refsIniciales = {};
 
-        metodos.forEach((m) => {
+        metodosParaAgrupar.forEach((m) => {
           metodosIniciales[m.nombre] = 0;
           refsIniciales[m.nombre] = "";
         });
@@ -2258,10 +2269,13 @@ export default function CajaDiaria() {
         grupos[key].origen.push(item.origen);
       }
 
-      metodos.forEach((m) => {
-        grupos[key].metodos[m.nombre] += Number(item.metodos?.[m.nombre] || 0);
+      metodosParaAgrupar.forEach((m) => {
+        grupos[key].metodos[m.nombre] =
+          Number(grupos[key].metodos[m.nombre] || 0) +
+          Number(item.metodos?.[m.nombre] || 0);
 
         const ref = item.referencias?.[m.nombre] || "";
+
         if (ref) {
           const refs = grupos[key].referencias[m.nombre]
             ? grupos[key].referencias[m.nombre]
@@ -2581,36 +2595,47 @@ export default function CajaDiaria() {
       return null;
     }
 
-    const { data, error } = await supabase
-      .from("cajas_diarias")
-      .select(`
-        id,
-        empresa_id,
-        fecha_local,
-        cierre_realizado,
-        remesa_efectivo,
-        cuenta_destino_efectivo,
-        numero_remesa_efectivo,
-        comentario_cierre,
-        responsable_caja,
-        elaborado_por,
-        revisado_por,
-        caja_diaria_detalle (
-          paciente,
-          monto,
-          referencia,
-          metodo_pago_id,
-          venta_id,
-          grupo_facturacion,
-          metodos_pago (
-            nombre
-          )
-        )
-      `)
-      .in("empresa_id", empresaIdsReporte)
-      .gte("fecha_local", filtroDesde)
-      .lte("fecha_local", filtroHasta)
-      .order("fecha_local", { ascending: true });
+    const [{ data, error }, { data: metodosDB, error: errorMetodos }] =
+      await Promise.all([
+        supabase
+          .from("cajas_diarias")
+          .select(`
+            id,
+            empresa_id,
+            fecha_local,
+            cierre_realizado,
+            remesa_efectivo,
+            cuenta_destino_efectivo,
+            numero_remesa_efectivo,
+            comentario_cierre,
+            responsable_caja,
+            elaborado_por,
+            revisado_por,
+            caja_diaria_detalle (
+              id,
+              paciente,
+              monto,
+              referencia,
+              metodo_pago_id,
+              venta_id,
+              grupo_facturacion,
+              metodos_pago (
+                id,
+                nombre,
+                empresa_id
+              )
+            )
+          `)
+          .in("empresa_id", empresaIdsReporte)
+          .gte("fecha_local", filtroDesde)
+          .lte("fecha_local", filtroHasta)
+          .order("fecha_local", { ascending: true }),
+        supabase
+          .from("metodos_pago")
+          .select("id, empresa_id, nombre, orden, activo")
+          .in("empresa_id", empresaIdsReporte)
+          .order("orden", { ascending: true }),
+      ]);
 
     if (error) {
       console.error(error);
@@ -2618,26 +2643,113 @@ export default function CajaDiaria() {
       return null;
     }
 
-    const nombresMetodoMap = new Map();
+    if (errorMetodos) {
+      console.error(errorMetodos);
+      alert("Error al cargar métodos para el reporte");
+      return null;
+    }
 
-    metodos.forEach((m) => {
-      const nombre = String(m.nombre || "Sin método").trim() || "Sin método";
-      nombresMetodoMap.set(nombre.toLowerCase(), nombre);
+    const normalizarNombreMetodo = (nombre = "") => {
+      return String(nombre || "Sin método")
+        .trim()
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/\s+/g, " ")
+        .replace(/davivien.*/g, "davivienda")
+        .replace(/hipotec.*/g, "hipotecario")
+        .replace(/transfer.*/g, "transferencia")
+        .replace(/transf.*/g, "transferencia")
+        .replace(/efect.*/g, "efectivo")
+        .replace(/reserv.*/g, "reserva")
+        .replace(/cheq.*/g, "cheque")
+        .replace(/pos\s+/g, "pos ")
+        .trim();
+    };
+
+    const etiquetaMetodo = (nombre = "") => {
+      const key = normalizarNombreMetodo(nombre);
+
+      if (key.includes("reserva")) return "RESERVA";
+      if (key.includes("efectivo")) return "EFECTIVO";
+      if (key.includes("transferencia")) return "Transferencia";
+      if (key.includes("cheque")) return "CHEQUE";
+      if (key.includes("davivienda")) return "POS DAVIVIENDA";
+      if (key.includes("bac")) return "Pos BAC";
+      if (key.includes("hipotecario")) return "POS Hipotecario";
+
+      return String(nombre || "Sin método").trim() || "Sin método";
+    };
+
+    const prioridadMetodo = (nombre = "") => {
+      const key = normalizarNombreMetodo(nombre);
+      if (key.includes("reserva")) return 1;
+      if (key.includes("efectivo")) return 2;
+      if (key.includes("transferencia")) return 3;
+      if (key.includes("cheque")) return 4;
+      if (key.includes("davivienda")) return 5;
+      if (key.includes("bac")) return 6;
+      if (key.includes("hipotecario")) return 7;
+      return 99;
+    };
+
+    const columnasMap = new Map();
+    const metodoRealAColumna = {};
+
+    (metodosDB || []).forEach((m) => {
+      const label = etiquetaMetodo(m.nombre);
+      const key = normalizarNombreMetodo(label);
+
+      if (!columnasMap.has(key)) {
+        columnasMap.set(key, {
+          id: key,
+          nombre: label,
+          metodoIds: [],
+          orden: prioridadMetodo(label),
+        });
+      }
+
+      columnasMap.get(key).metodoIds.push(Number(m.id));
+      metodoRealAColumna[String(m.id)] = columnasMap.get(key).nombre;
     });
 
+    // Si hay detalles con métodos borrados/inactivos que no vinieron en metodos_pago,
+    // también los agregamos para no perder dinero.
     (data || []).forEach((caja) => {
       (caja.caja_diaria_detalle || []).forEach((d) => {
-        const nombre = String(d.metodos_pago?.nombre || "Sin método").trim() || "Sin método";
-        if (!nombresMetodoMap.has(nombre.toLowerCase())) {
-          nombresMetodoMap.set(nombre.toLowerCase(), nombre);
+        const realId = String(d.metodo_pago_id || "");
+        if (metodoRealAColumna[realId]) return;
+
+        const nombre = d.metodos_pago?.nombre || "Sin método";
+        const label = etiquetaMetodo(nombre);
+        const key = normalizarNombreMetodo(label);
+
+        if (!columnasMap.has(key)) {
+          columnasMap.set(key, {
+            id: key,
+            nombre: label,
+            metodoIds: [],
+            orden: prioridadMetodo(label),
+          });
         }
+
+        columnasMap.get(key).metodoIds.push(Number(d.metodo_pago_id));
+        metodoRealAColumna[realId] = columnasMap.get(key).nombre;
       });
     });
 
-    const metodosReporte = Array.from(nombresMetodoMap.values()).map((nombre) => ({
-      id: nombre,
-      nombre,
-    }));
+    const metodosReporte = Array.from(columnasMap.values())
+      .sort((a, b) => {
+        if (Number(a.orden || 99) !== Number(b.orden || 99)) {
+          return Number(a.orden || 99) - Number(b.orden || 99);
+        }
+        return String(a.nombre).localeCompare(String(b.nombre));
+      })
+      .map((m) => ({
+        id: m.id,
+        nombre: m.nombre,
+        metodoIds: Array.from(new Set(m.metodoIds || [])),
+      }));
 
     const inicializarMetodosReporte = () => {
       const valores = {};
@@ -2660,7 +2772,9 @@ export default function CajaDiaria() {
 
       (caja.caja_diaria_detalle || []).forEach((d) => {
         const paciente = d.paciente || "Sin nombre";
-        const metodoNombre = String(d.metodos_pago?.nombre || "Sin método").trim() || "Sin método";
+        const metodoNombre =
+          metodoRealAColumna[String(d.metodo_pago_id)] ||
+          etiquetaMetodo(d.metodos_pago?.nombre || "Sin método");
         const monto = Number(d.monto || 0);
         const referencia = d.referencia || "";
         const origen = d.venta_id ? "Venta / CxC" : "Manual";
@@ -2669,8 +2783,8 @@ export default function CajaDiaria() {
         totalGeneralReal += monto;
 
         const llave = d.venta_id
-          ? `${caja.empresa_id}__${paciente}__${d.venta_id}__${grupoFacturacion || "sin_grupo"}`
-          : `${caja.empresa_id}__${paciente}__manual__${grupoFacturacion || crypto.randomUUID()}`;
+          ? `${caja.empresa_id}__${caja.fecha_local}__${paciente}__venta__${d.venta_id}__${grupoFacturacion || "sin_grupo"}`
+          : `${caja.empresa_id}__${caja.fecha_local}__${paciente}__manual__${grupoFacturacion || d.id}`;
 
         if (!mapaPacientes[llave]) {
           const inicial = inicializarMetodosReporte();
@@ -2689,7 +2803,7 @@ export default function CajaDiaria() {
         }
 
         mapaPacientes[llave].metodos[metodoNombre] =
-          (mapaPacientes[llave].metodos[metodoNombre] || 0) + monto;
+          Number(mapaPacientes[llave].metodos[metodoNombre] || 0) + monto;
 
         if (referencia) {
           const actual = mapaPacientes[llave].referencias[metodoNombre] || "";
@@ -2697,9 +2811,7 @@ export default function CajaDiaria() {
             ? actual.split(" | ").map((x) => x.trim()).filter(Boolean)
             : [];
 
-          if (!refs.includes(referencia)) {
-            refs.push(referencia);
-          }
+          if (!refs.includes(referencia)) refs.push(referencia);
 
           mapaPacientes[llave].referencias[metodoNombre] = refs.join(" | ");
         }
@@ -2726,7 +2838,7 @@ export default function CajaDiaria() {
       detalleBase.push(...Object.values(mapaPacientes));
     });
 
-    const detalleAgrupado = agruparDetallePorGrupo(detalleBase).map((item) => {
+    const detalleAgrupado = agruparDetallePorGrupo(detalleBase, metodosReporte).map((item) => {
       const inicial = inicializarMetodosReporte();
 
       return {
@@ -2763,20 +2875,12 @@ export default function CajaDiaria() {
       resumen: resumenArray,
       cierres,
       metodosReporte,
-      totalGeneralResumen: Number(totalGeneralReal || totalDesdeResumen || 0),
+      totalGeneralResumen: Number(totalDesdeResumen || totalGeneralReal || 0),
     };
   };
 
   const exportarDetalleExcel = async () => {
-    const usarTablaWeb =
-      filtroDesde === fechaLocal &&
-      filtroHasta === fechaLocal &&
-      Array.isArray(filas) &&
-      filas.length > 0;
-
-    const datos = usarTablaWeb
-      ? obtenerDatosReporteDesdeTablaWeb()
-      : await obtenerDatosReporte();
+    const datos = await obtenerDatosReporte();
 
     if (!datos || datos.detalle.length === 0) {
       return alert("No hay datos para exportar");
@@ -2852,15 +2956,7 @@ export default function CajaDiaria() {
   };
 
   const exportarResumenExcel = async () => {
-    const usarTablaWeb =
-      filtroDesde === fechaLocal &&
-      filtroHasta === fechaLocal &&
-      Array.isArray(filas) &&
-      filas.length > 0;
-
-    const datos = usarTablaWeb
-      ? obtenerDatosReporteDesdeTablaWeb()
-      : await obtenerDatosReporte();
+    const datos = await obtenerDatosReporte();
 
     if (!datos || datos.resumen.length === 0) {
       return alert("No hay datos para exportar");
@@ -2896,15 +2992,7 @@ export default function CajaDiaria() {
   };
 
   const exportarDetallePDF = async () => {
-    const usarTablaWeb =
-      filtroDesde === fechaLocal &&
-      filtroHasta === fechaLocal &&
-      Array.isArray(filas) &&
-      filas.length > 0;
-
-    const datos = usarTablaWeb
-      ? obtenerDatosReporteDesdeTablaWeb()
-      : await obtenerDatosReporte();
+    const datos = await obtenerDatosReporte();
 
     if (!datos || datos.detalle.length === 0) {
       return alert("No hay datos para exportar");
@@ -2953,7 +3041,7 @@ export default function CajaDiaria() {
     });
 
     doc.setFillColor(244, 240, 247);
-    doc.rect(0, 0, 356, 28, "F");
+    doc.rect(0, 0, doc.internal.pageSize.getWidth(), 28, "F");
 
     doc.setFont("helvetica", "bold");
     doc.setFontSize(15);
@@ -3024,7 +3112,7 @@ export default function CajaDiaria() {
     ]];
 
     const cantidadMetodos = metodosReporte.length;
-    const anchoDisponible = 356 - 8 - 8;
+    const anchoDisponible = doc.internal.pageSize.getWidth() - 8 - 8;
     const anchoFijo = 16 + 16 + 22 + 28 + 12 + 18 + 18;
     const anchoMetodo = Math.max(
       14,
@@ -3098,15 +3186,7 @@ export default function CajaDiaria() {
   };
 
   const exportarResumenPDF = async () => {
-    const usarTablaWeb =
-      filtroDesde === fechaLocal &&
-      filtroHasta === fechaLocal &&
-      Array.isArray(filas) &&
-      filas.length > 0;
-
-    const datos = usarTablaWeb
-      ? obtenerDatosReporteDesdeTablaWeb()
-      : await obtenerDatosReporte();
+    const datos = await obtenerDatosReporte();
 
     if (!datos || datos.resumen.length === 0) {
       return alert("No hay datos para exportar");
