@@ -500,8 +500,25 @@ export default function CajaDiaria() {
       return alert("Seleccioná solo una empresa para modificar la caja.");
     }
 
+    const clave = window.prompt(
+      "⚠️ Esta acción limpiará TODO el formulario de la caja actual.\n\nIngrese la contraseña para continuar:"
+    );
+
+    if (clave === null) return;
+
+    if (clave !== "EdAdmon26") {
+      return alert("Contraseña incorrecta. No se limpió el formulario.");
+    }
+
+    const confirmar = window.confirm(
+      "¿Seguro que deseas limpiar completamente el formulario de esta caja?"
+    );
+
+    if (!confirmar) return;
+
     setFilas([]);
     limpiarFormularioCierre();
+    alert("Formulario limpiado correctamente.");
   };
 
   const validarEmpresaUsuarioActual = async (empresaId = empresa?.id) => {
@@ -2331,7 +2348,7 @@ export default function CajaDiaria() {
       .from("cajas_diarias")
       .select("*")
       .eq("empresa_id", empresaGuardado.id)
-      .eq("fecha_local", fechaLocal)
+      .eq("fecha_local", fechaCaja)
       .maybeSingle();
 
     if (errorBuscarCaja) {
@@ -2389,7 +2406,7 @@ export default function CajaDiaria() {
         .insert([
           {
             fecha: obtenerFechaHoraSVISO(),
-            fecha_local: fechaLocal,
+            fecha_local: fechaCaja,
             ...payloadCaja,
           },
         ])
@@ -2432,8 +2449,8 @@ export default function CajaDiaria() {
           Number(valor) !== 0
         ) {
           const metodoRealId =
-            (metodo.empresasOrigen || []).some((empId) => String(empId) === String(empresa.id))
-              ? metodo.metodoIds[(metodo.empresasOrigen || []).findIndex((empId) => String(empId) === String(empresa.id))]
+            (metodo.empresasOrigen || []).some((empId) => String(empId) === String(empresaGuardado.id))
+              ? metodo.metodoIds[(metodo.empresasOrigen || []).findIndex((empId) => String(empId) === String(empresaGuardado.id))]
               : metodo.id;
 
           detalleParaGuardar.push({
@@ -2496,17 +2513,17 @@ export default function CajaDiaria() {
 
   const obtenerDatosReporte = async () => {
     if (empresaIdsReporte.length === 0) {
-      if (!silencioso) alert("Seleccioná al menos una empresa para el reporte");
+      alert("Seleccioná al menos una empresa para el reporte");
       return null;
     }
 
     if (!filtroDesde || !filtroHasta) {
-      if (!silencioso) alert("Seleccioná desde y hasta");
+      alert("Seleccioná desde y hasta");
       return null;
     }
 
     if (filtroDesde > filtroHasta) {
-      if (!silencioso) alert("La fecha desde no puede ser mayor que la fecha hasta");
+      alert("La fecha desde no puede ser mayor que la fecha hasta");
       return null;
     }
 
@@ -2543,29 +2560,67 @@ export default function CajaDiaria() {
 
     if (error) {
       console.error(error);
-      if (!silencioso) alert("Error al obtener datos del reporte");
+      alert("Error al obtener datos del reporte");
       return null;
     }
 
+    const nombresMetodoMap = new Map();
+
+    metodos.forEach((m) => {
+      const nombre = String(m.nombre || "Sin método").trim() || "Sin método";
+      nombresMetodoMap.set(nombre.toLowerCase(), nombre);
+    });
+
+    (data || []).forEach((caja) => {
+      (caja.caja_diaria_detalle || []).forEach((d) => {
+        const nombre = String(d.metodos_pago?.nombre || "Sin método").trim() || "Sin método";
+        if (!nombresMetodoMap.has(nombre.toLowerCase())) {
+          nombresMetodoMap.set(nombre.toLowerCase(), nombre);
+        }
+      });
+    });
+
+    const metodosReporte = Array.from(nombresMetodoMap.values()).map((nombre) => ({
+      id: nombre,
+      nombre,
+    }));
+
+    const inicializarMetodosReporte = () => {
+      const valores = {};
+      const refs = {};
+
+      metodosReporte.forEach((m) => {
+        valores[m.nombre] = 0;
+        refs[m.nombre] = "";
+      });
+
+      return { valores, refs };
+    };
+
     const detalleBase = [];
     const cierres = [];
+    let totalGeneralReal = 0;
 
     (data || []).forEach((caja) => {
       const mapaPacientes = {};
 
       (caja.caja_diaria_detalle || []).forEach((d) => {
         const paciente = d.paciente || "Sin nombre";
-        const metodoNombre = d.metodos_pago?.nombre || "Sin método";
+        const metodoNombre = String(d.metodos_pago?.nombre || "Sin método").trim() || "Sin método";
         const monto = Number(d.monto || 0);
         const referencia = d.referencia || "";
         const origen = d.venta_id ? "Venta / CxC" : "Manual";
         const grupoFacturacion = d.grupo_facturacion || "";
 
+        totalGeneralReal += monto;
+
         const llave = d.venta_id
-          ? `${paciente}__${d.venta_id}__${grupoFacturacion || "sin_grupo"}`
-          : `${paciente}__manual__${grupoFacturacion || crypto.randomUUID()}`;
+          ? `${caja.empresa_id}__${paciente}__${d.venta_id}__${grupoFacturacion || "sin_grupo"}`
+          : `${caja.empresa_id}__${paciente}__manual__${grupoFacturacion || crypto.randomUUID()}`;
 
         if (!mapaPacientes[llave]) {
+          const inicial = inicializarMetodosReporte();
+
           mapaPacientes[llave] = {
             fecha: caja.fecha_local,
             empresa: obtenerNombreEmpresa(caja.empresa_id),
@@ -2574,14 +2629,9 @@ export default function CajaDiaria() {
             origen,
             venta_id: d.venta_id || null,
             grupoFacturacion,
-            metodos: {},
-            referencias: {},
+            metodos: inicial.valores,
+            referencias: inicial.refs,
           };
-
-          metodos.forEach((m) => {
-            mapaPacientes[llave].metodos[m.nombre] = 0;
-            mapaPacientes[llave].referencias[m.nombre] = "";
-          });
         }
 
         mapaPacientes[llave].metodos[metodoNombre] =
@@ -2622,43 +2672,54 @@ export default function CajaDiaria() {
       detalleBase.push(...Object.values(mapaPacientes));
     });
 
-    const detalleAgrupado = agruparDetallePorGrupo(detalleBase).map((item) => ({
-      ...item,
-      clasificaciones: obtenerTextoClasificacionesParaReporte(item),
-    }));
+    const detalleAgrupado = agruparDetallePorGrupo(detalleBase).map((item) => {
+      const inicial = inicializarMetodosReporte();
+
+      return {
+        ...item,
+        metodos: { ...inicial.valores, ...(item.metodos || {}) },
+        referencias: { ...inicial.refs, ...(item.referencias || {}) },
+        clasificaciones: obtenerTextoClasificacionesParaReporte(item),
+      };
+    });
 
     const resumen = {};
-    metodos.forEach((m) => {
+    metodosReporte.forEach((m) => {
       resumen[m.nombre] = 0;
     });
 
     detalleAgrupado.forEach((item) => {
-      metodos.forEach((m) => {
+      metodosReporte.forEach((m) => {
         resumen[m.nombre] += Number(item.metodos[m.nombre] || 0);
       });
     });
 
-    const resumenArray = metodos.map((m) => ({
+    const resumenArray = metodosReporte.map((m) => ({
       metodo: m.nombre,
       total: Number(resumen[m.nombre] || 0),
     }));
+
+    const totalDesdeResumen = resumenArray.reduce(
+      (acc, item) => acc + Number(item.total || 0),
+      0
+    );
 
     return {
       detalle: detalleAgrupado,
       resumen: resumenArray,
       cierres,
-      totalGeneralResumen: resumenArray.reduce(
-        (acc, item) => acc + Number(item.total || 0),
-        0
-      ),
+      metodosReporte,
+      totalGeneralResumen: Number(totalGeneralReal || totalDesdeResumen || 0),
     };
   };
 
   const exportarDetalleExcel = async () => {
     const datos = await obtenerDatosReporte();
     if (!datos || datos.detalle.length === 0) {
-      return silencioso ? false : alert("No hay datos para exportar");
+      return alert("No hay datos para exportar");
     }
+
+    const metodosReporte = datos.metodosReporte || metodos;
 
     const rows = [
       { Fecha: "", Paciente: nombreEmpresasReporte },
@@ -2679,11 +2740,11 @@ export default function CajaDiaria() {
         Origen: item.origen || "",
       };
 
-      metodos.forEach((m) => {
+      metodosReporte.forEach((m) => {
         fila[m.nombre] = formatearMonto(item.metodos[m.nombre] || 0);
       });
 
-      fila["Referencias"] = metodos
+      fila["Referencias"] = metodosReporte
         .map((m) =>
           item.referencias[m.nombre]
             ? `${m.nombre}: ${item.referencias[m.nombre]}`
@@ -2693,7 +2754,7 @@ export default function CajaDiaria() {
         .join(" | ");
 
       fila["Total Paciente"] = formatearMonto(
-        metodos.reduce((acc, m) => acc + Number(item.metodos[m.nombre] || 0), 0)
+        metodosReporte.reduce((acc, m) => acc + Number(item.metodos[m.nombre] || 0), 0)
       );
 
       rows.push(fila);
@@ -2706,7 +2767,7 @@ export default function CajaDiaria() {
       Origen: "",
     };
 
-    metodos.forEach((m) => {
+    metodosReporte.forEach((m) => {
       filaTotales[m.nombre] = formatearMonto(
         datos.resumen.find((r) => r.metodo === m.nombre)?.total || 0
       );
@@ -2730,7 +2791,7 @@ export default function CajaDiaria() {
   const exportarResumenExcel = async () => {
     const datos = await obtenerDatosReporte();
     if (!datos || datos.resumen.length === 0) {
-      return silencioso ? false : alert("No hay datos para exportar");
+      return alert("No hay datos para exportar");
     }
 
     const rows = [
@@ -2765,8 +2826,10 @@ export default function CajaDiaria() {
   const exportarDetallePDF = async () => {
     const datos = await obtenerDatosReporte();
     if (!datos || datos.detalle.length === 0) {
-      return silencioso ? false : alert("No hay datos para exportar");
+      return alert("No hay datos para exportar");
     }
+
+    const metodosReporte = datos.metodosReporte || metodos;
 
     const doc = new jsPDF("landscape");
 
@@ -2794,18 +2857,18 @@ export default function CajaDiaria() {
       "Empresa",
       "Paciente",
       "Origen",
-      ...metodos.map((m) => m.nombre),
+      ...metodosReporte.map((m) => m.nombre),
       "Referencias",
       "Total Paciente",
     ]];
 
     const body = datos.detalle.map((item) => {
-      const totalPaciente = metodos.reduce(
+      const totalPaciente = metodosReporte.reduce(
         (acc, m) => acc + Number(item.metodos[m.nombre] || 0),
         0
       );
 
-      const referenciasTexto = metodos
+      const referenciasTexto = metodosReporte
         .map((m) =>
           item.referencias[m.nombre]
             ? `${m.nombre}: ${item.referencias[m.nombre]}`
@@ -2820,7 +2883,7 @@ export default function CajaDiaria() {
         item.empresa || "",
         item.paciente,
         item.origen || "",
-        ...metodos.map((m) => `$${formatearMonto(item.metodos[m.nombre] || 0)}`),
+        ...metodosReporte.map((m) => `$${formatearMonto(item.metodos[m.nombre] || 0)}`),
         referenciasTexto,
         `$${formatearMonto(totalPaciente)}`,
       ];
@@ -2832,7 +2895,7 @@ export default function CajaDiaria() {
       "",
       "TOTALES",
       "",
-      ...metodos.map((m) => {
+      ...metodosReporte.map((m) => {
         const total = datos.resumen.find((r) => r.metodo === m.nombre)?.total || 0;
         return `$${formatearMonto(total)}`;
       }),
@@ -2876,7 +2939,7 @@ export default function CajaDiaria() {
   const exportarResumenPDF = async () => {
     const datos = await obtenerDatosReporte();
     if (!datos || datos.resumen.length === 0) {
-      return silencioso ? false : alert("No hay datos para exportar");
+      return alert("No hay datos para exportar");
     }
 
     const doc = new jsPDF();
@@ -2935,7 +2998,7 @@ export default function CajaDiaria() {
   const exportarInformeProfesionalPDF = async () => {
     const datos = await obtenerDatosReporte();
     if (!datos || datos.resumen.length === 0) {
-      return silencioso ? false : alert("No hay datos para exportar");
+      return alert("No hay datos para exportar");
     }
 
     const doc = new jsPDF("p", "mm", "a4");
@@ -3213,26 +3276,15 @@ export default function CajaDiaria() {
 
             <button
               type="button"
-              onClick={() => {
-    const password = prompt(
-      "⚠️ Esta acción eliminará TODOS los datos del formulario actual.\n\nIngrese la contraseña para continuar:"
-    );
-
-    if (password !== "1234") {
-      return alert("Contraseña incorrecta.");
-    }
-
-    const confirmar = window.confirm(
-      "¿Seguro que deseas limpiar completamente el formulario?"
-    );
-
-    if (!confirmar) return;
-
-    limpiarCajaActual();
-  }}
-  className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg"
->
-  Limpiar Formulario
+              onClick={limpiarCajaActual}
+              style={{
+                ...styles.clearBtn,
+                ...(modoSoloLecturaMultiempresa ? styles.disabledBtn : {}),
+              }}
+              disabled={modoSoloLecturaMultiempresa}
+              title={modoSoloLecturaMultiempresa ? "Seleccioná solo una empresa para limpiar o modificar" : ""}
+            >
+              Limpiar formulario
             </button>
           </div>
         </div>
