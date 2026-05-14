@@ -41,9 +41,15 @@ function formatearMonto(valor) {
 
 export default function CajaDiaria() {
   const empresaGlobal = JSON.parse(localStorage.getItem("empresa") || "null");
-  const empresaCajaGuardada = JSON.parse(localStorage.getItem("caja_diaria_empresa") || "null");
-  const empresaInicial = empresaCajaGuardada || empresaGlobal;
+
+  // IMPORTANTE:
+  // No usamos "caja_diaria_empresa" porque queda guardada en el navegador
+  // aunque cierre sesión y entre otro usuario. Eso mezclaba empresas.
+  const empresaInicial = empresaGlobal;
+
   const [empresa, setEmpresa] = useState(empresaInicial);
+  const [usuarioActual, setUsuarioActual] = useState(null);
+  const [empresaUsuarioActiva, setEmpresaUsuarioActiva] = useState(null);
   const [empresasDisponibles, setEmpresasDisponibles] = useState(
     empresaInicial?.id ? [empresaInicial] : []
   );
@@ -56,6 +62,15 @@ export default function CajaDiaria() {
   const hoy = obtenerFechaLocalSV();
   const autosaveTimerRef = useRef(null);
   const primeraCargaCajaRef = useRef(true);
+  const cargandoCajaRef = useRef(false);
+  const userIdActivoRef = useRef(null);
+
+  const cancelarAutosavePendiente = () => {
+    if (autosaveTimerRef.current) {
+      clearTimeout(autosaveTimerRef.current);
+      autosaveTimerRef.current = null;
+    }
+  };
 
   const empresaIdsReporte = useMemo(() => {
     if (empresasReporteIds.length > 0) return empresasReporteIds;
@@ -156,12 +171,29 @@ export default function CajaDiaria() {
       }
 
       const userId = userData?.user?.id;
-      if (!userId) return;
+      setUsuarioActual(userData?.user || null);
+      userIdActivoRef.current = userId || null;
+
+      if (!userId) {
+        cancelarAutosavePendiente();
+        setEmpresa(null);
+        setEmpresaUsuarioActiva(null);
+        setEmpresasDisponibles([]);
+        setEmpresasReporteIds([]);
+        setFilas([]);
+        setHistorialCajas([]);
+        localStorage.removeItem("caja_diaria_empresa");
+        return;
+      }
 
       const { data, error } = await supabase
         .from("empresa_usuarios")
         .select(`
+          id,
           empresa_id,
+          user_id,
+          rol,
+          permisos,
           activo,
           empresas (
             id,
@@ -177,8 +209,13 @@ export default function CajaDiaria() {
       }
 
       const empresas = (data || [])
-        .map((item) => item.empresas)
-        .filter(Boolean);
+        .filter((item) => item.empresas)
+        .map((item) => ({
+          ...item.empresas,
+          empresa_usuario_id: item.id,
+          rol_usuario: item.rol,
+          permisos_usuario: item.permisos || {},
+        }));
 
       const mapa = new Map();
       empresas.forEach((emp) => mapa.set(emp.id, emp));
@@ -218,10 +255,37 @@ export default function CajaDiaria() {
         localStorage.setItem("empresas_caja_reporte_ids", JSON.stringify([lista[0].id]));
       }
 
-      if (lista.length > 0 && !lista.some((emp) => emp.id === empresa?.id)) {
-        setEmpresa(lista[0]);
-        localStorage.setItem("caja_diaria_empresa", JSON.stringify(lista[0]));
+      // La empresa activa de Caja Diaria SIEMPRE debe ser una empresa permitida
+      // para el usuario autenticado. Si venía una empresa vieja de otro usuario,
+      // se reemplaza por la primera permitida.
+      if (lista.length > 0) {
+        const empresaPermitidaActual = lista.find(
+          (emp) => String(emp.id) === String(empresa?.id)
+        );
+
+        if (!empresaPermitidaActual) {
+          setEmpresa(lista[0]);
+          setEmpresaUsuarioActiva({
+            id: lista[0].empresa_usuario_id,
+            rol: lista[0].rol_usuario,
+            permisos: lista[0].permisos_usuario || {},
+          });
+          localStorage.setItem("empresa", JSON.stringify(lista[0]));
+          window.dispatchEvent(new Event("empresaActualizada"));
+        } else {
+          setEmpresa(empresaPermitidaActual);
+          setEmpresaUsuarioActiva({
+            id: empresaPermitidaActual.empresa_usuario_id,
+            rol: empresaPermitidaActual.rol_usuario,
+            permisos: empresaPermitidaActual.permisos_usuario || {},
+          });
+        }
+      } else {
+        setEmpresa(null);
+        setEmpresaUsuarioActiva(null);
       }
+
+      localStorage.removeItem("caja_diaria_empresa");
     } catch (error) {
       console.error("Error cargando empresas disponibles:", error);
     }
@@ -231,8 +295,21 @@ export default function CajaDiaria() {
     const seleccionada = empresasDisponibles.find((emp) => String(emp.id) === String(empresaId));
     if (!seleccionada) return;
 
+    cancelarAutosavePendiente();
+    primeraCargaCajaRef.current = true;
+    setFilas([]);
+    setHistorialCajas([]);
+    limpiarFormularioCierre();
+
     setEmpresa(seleccionada);
-    localStorage.setItem("caja_diaria_empresa", JSON.stringify(seleccionada));
+    setEmpresaUsuarioActiva({
+      id: seleccionada.empresa_usuario_id,
+      rol: seleccionada.rol_usuario,
+      permisos: seleccionada.permisos_usuario || {},
+    });
+    localStorage.setItem("empresa", JSON.stringify(seleccionada));
+    localStorage.removeItem("caja_diaria_empresa");
+    window.dispatchEvent(new Event("empresaActualizada"));
     window.dispatchEvent(new Event("cajaDiariaEmpresaActualizada"));
   };
 
@@ -303,7 +380,29 @@ export default function CajaDiaria() {
 
 
   useEffect(() => {
+    // Limpia la empresa de caja vieja que podía venir de otro usuario/sesión.
+    localStorage.removeItem("caja_diaria_empresa");
     cargarEmpresasDisponibles();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      const nuevoUserId = session?.user?.id || null;
+
+      if (userIdActivoRef.current && userIdActivoRef.current !== nuevoUserId) {
+        cancelarAutosavePendiente();
+        localStorage.removeItem("caja_diaria_empresa");
+        setFilas([]);
+        setHistorialCajas([]);
+        limpiarFormularioCierre();
+      }
+
+      userIdActivoRef.current = nuevoUserId;
+      cargarEmpresasDisponibles();
+    });
+
+    return () => subscription.unsubscribe();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -338,7 +437,7 @@ export default function CajaDiaria() {
 
   useEffect(() => {
     if (!empresa?.id || modoSoloLecturaMultiempresa) return;
-    if (primeraCargaCajaRef.current) return;
+    if (primeraCargaCajaRef.current || cargandoCajaRef.current) return;
     if (guardandoManual || modalManual.open || modalClasificacion.open || modalFacturacion.open || modalNuevaClasificacion) return;
 
     programarAutosaveCaja("edicion_caja");
@@ -405,6 +504,56 @@ export default function CajaDiaria() {
     limpiarFormularioCierre();
   };
 
+  const validarEmpresaUsuarioActual = async (empresaId = empresa?.id) => {
+    const { data: userData, error: errorUser } = await supabase.auth.getUser();
+
+    if (errorUser) {
+      console.error(errorUser);
+      return {
+        ok: false,
+        mensaje: "No se pudo validar el usuario autenticado.",
+      };
+    }
+
+    const user = userData?.user;
+
+    if (!user?.id) {
+      return {
+        ok: false,
+        mensaje: "No hay usuario autenticado.",
+      };
+    }
+
+    const { data, error } = await supabase
+      .from("empresa_usuarios")
+      .select("id, empresa_id, user_id, rol, permisos, activo")
+      .eq("empresa_id", empresaId)
+      .eq("user_id", user.id)
+      .eq("activo", true)
+      .maybeSingle();
+
+    if (error) {
+      console.error(error);
+      return {
+        ok: false,
+        mensaje: "No se pudo validar el acceso del usuario a esta empresa.",
+      };
+    }
+
+    if (!data?.id) {
+      return {
+        ok: false,
+        mensaje: "Este usuario no tiene acceso activo a esta empresa.",
+      };
+    }
+
+    return {
+      ok: true,
+      user,
+      empresaUsuario: data,
+    };
+  };
+
   const validarEdicionUnaEmpresa = () => {
     if (modoSoloLecturaMultiempresa) {
       alert("Modo combinado: solo podés consultar/exportar. Para modificar, seleccioná solo una empresa.");
@@ -417,22 +566,45 @@ export default function CajaDiaria() {
   const programarAutosaveCaja = (motivo = "cambio") => {
     if (!empresa?.id || modoSoloLecturaMultiempresa) return;
 
-    if (autosaveTimerRef.current) {
-      clearTimeout(autosaveTimerRef.current);
-    }
+    cancelarAutosavePendiente();
+
+    const empresaCapturada = empresa;
+    const fechaCapturada = fechaLocal;
+    const filasCapturadas = filas;
 
     setAutosaveStatus("Guardando cambios...");
 
     autosaveTimerRef.current = setTimeout(async () => {
-      await guardarCajaSilencioso(motivo);
+      // Si el usuario cambió de empresa/fecha antes de que corra el autosave,
+      // no guardamos para evitar cruzar cajas.
+      if (
+        String(empresaCapturada?.id || "") !== String(empresa?.id || "") ||
+        String(fechaCapturada || "") !== String(fechaLocal || "")
+      ) {
+        setAutosaveStatus("");
+        return;
+      }
+
+      await guardarCajaSilencioso(motivo, {
+        empresaOverride: empresaCapturada,
+        fechaOverride: fechaCapturada,
+        filasOverride: filasCapturadas,
+      });
     }, 900);
   };
 
-  const guardarCajaSilencioso = async (motivo = "autosave") => {
-    if (!empresa?.id || modoSoloLecturaMultiempresa || !fechaLocal) return;
+  const guardarCajaSilencioso = async (motivo = "autosave", opcionesExtra = {}) => {
+    const empresaGuardado = opcionesExtra.empresaOverride || empresa;
+    const fechaGuardado = opcionesExtra.fechaOverride || fechaLocal;
+
+    if (!empresaGuardado?.id || modoSoloLecturaMultiempresa || !fechaGuardado) return;
 
     try {
-      const resultado = await guardarCaja({ silencioso: true, origen: motivo });
+      const resultado = await guardarCaja({
+        silencioso: true,
+        origen: motivo,
+        ...opcionesExtra,
+      });
 
       if (resultado === false) {
         setAutosaveStatus("Cambios pendientes");
@@ -623,6 +795,7 @@ export default function CajaDiaria() {
     if (error) {
       console.error(error);
       alert("Error al cargar clasificaciones asignadas");
+      cargandoCajaRef.current = false;
       return;
     }
 
@@ -799,7 +972,7 @@ export default function CajaDiaria() {
       .insert([
         {
           empresa_id: empresaFilaId,
-          fecha_local: fechaLocal,
+          fecha_local: fechaGuardado,
           paciente: fila.paciente.trim(),
           venta_id: fila.venta_id ? String(fila.venta_id) : null,
           grupo_facturacion: fila.grupoFacturacion || null,
@@ -815,7 +988,7 @@ export default function CajaDiaria() {
       return alert("Error al asignar clasificación");
     }
 
-    await cargarCajaDelDia(fechaLocal);
+    await cargarCajaDelDia(fechaGuardado);
   };
 
   const quitarClasificacionAsignada = async (registroId) => {
@@ -1184,9 +1357,15 @@ export default function CajaDiaria() {
   };
 
   const cargarCajaDelDia = async (fechaBuscada) => {
+    cancelarAutosavePendiente();
     primeraCargaCajaRef.current = true;
+    cargandoCajaRef.current = true;
+
     const idsConsulta = empresaIdsReporte.length > 0 ? empresaIdsReporte : empresa?.id ? [empresa.id] : [];
-    if (idsConsulta.length === 0) return;
+    if (idsConsulta.length === 0) {
+      cargandoCajaRef.current = false;
+      return;
+    }
 
     const { data: cajas, error: errorCaja } = await supabase
       .from("cajas_diarias")
@@ -1197,6 +1376,7 @@ export default function CajaDiaria() {
     if (errorCaja) {
       console.error(errorCaja);
       alert("Error al cargar la caja del día");
+      cargandoCajaRef.current = false;
       return;
     }
 
@@ -1219,6 +1399,7 @@ export default function CajaDiaria() {
       setFilas([]);
       setClasificacionesAsignadas({});
       primeraCargaCajaRef.current = false;
+      cargandoCajaRef.current = false;
       return;
     }
 
@@ -1248,6 +1429,7 @@ export default function CajaDiaria() {
     if (errorDetalle) {
       console.error(errorDetalle);
       alert("Error al cargar el detalle");
+      cargandoCajaRef.current = false;
       return;
     }
 
@@ -1375,6 +1557,7 @@ export default function CajaDiaria() {
     });
 
     setClasificacionesAsignadas(mapaAsignadas);
+    cargandoCajaRef.current = false;
   };
 
   const cargarHistorialCajas = async () => {
@@ -1396,6 +1579,10 @@ export default function CajaDiaria() {
         comentario_cierre,
         cuenta_destino_efectivo,
         numero_remesa_efectivo,
+        creado_por_user_id,
+        actualizado_por_user_id,
+        creado_por_empresa_usuario_id,
+        actualizado_por_empresa_usuario_id,
         caja_diaria_detalle (
           monto
         )
@@ -1434,7 +1621,8 @@ export default function CajaDiaria() {
 
     if (empresaCaja?.id && String(empresaCaja.id) !== String(empresa?.id)) {
       setEmpresa(empresaCaja);
-      localStorage.setItem("caja_diaria_empresa", JSON.stringify(empresaCaja));
+      localStorage.setItem("empresa", JSON.stringify(empresaCaja));
+      localStorage.removeItem("caja_diaria_empresa");
       window.dispatchEvent(new Event("cajaDiariaEmpresaActualizada"));
       setFechaLocal(fecha);
     } else {
@@ -1667,7 +1855,7 @@ export default function CajaDiaria() {
 
     const payload = manualClasificacionesIds.map((clasificacionId) => ({
       empresa_id: empresaFilaId,
-      fecha_local: fechaLocal,
+      fecha_local: fechaGuardado,
       paciente: filaFinal.paciente.trim(),
       venta_id: null,
       grupo_facturacion: filaFinal.grupoFacturacion || null,
@@ -2096,18 +2284,39 @@ export default function CajaDiaria() {
 
   const guardarCaja = async (opciones = {}) => {
     const silencioso = Boolean(opciones?.silencioso);
+    const empresaGuardado = opciones?.empresaOverride || empresa;
+    const fechaGuardado = opciones?.fechaOverride || fechaLocal;
     const filasTrabajo = Array.isArray(opciones?.filasOverride) ? opciones.filasOverride : filas;
 
     if (!validarEdicionUnaEmpresa()) return false;
 
-    if (!empresa?.id) {
-      return silencioso ? false : alert("No hay empresa seleccionada");
+    if (!empresaGuardado?.id || !fechaGuardado) {
+      return silencioso ? false : alert("No hay empresa o fecha seleccionada");
     }
+
+    const empresaPermitida = empresasDisponibles.some(
+      (emp) => String(emp.id) === String(empresaGuardado.id)
+    );
+
+    if (!empresaPermitida) {
+      console.error("Intento de guardar caja en empresa no permitida:", empresaGuardado);
+      return silencioso ? false : alert("Esta empresa no pertenece al usuario actual. Recargá la página.");
+    }
+
+    const validacionUsuario = await validarEmpresaUsuarioActual(empresaGuardado.id);
+
+    if (!validacionUsuario.ok) {
+      console.error("Validación empresa_usuario falló:", validacionUsuario);
+      return silencioso ? false : alert(validacionUsuario.mensaje);
+    }
+
+    const userGuardado = validacionUsuario.user;
+    const empresaUsuarioGuardado = validacionUsuario.empresaUsuario;
 
     const filasValidas = filasTrabajo.filter(
       (fila) =>
         String(fila.paciente || "").trim() !== "" &&
-        String(fila.empresaId || empresa.id) === String(empresa.id)
+        String(fila.empresaId || empresaGuardado.id) === String(empresaGuardado.id)
     );
     const filasManual = filasValidas.filter((fila) => !fila.venta_id);
     const filasVenta = filasValidas.filter((fila) => fila.venta_id);
@@ -2119,8 +2328,8 @@ export default function CajaDiaria() {
     const { data: cajaExistente, error: errorBuscarCaja } = await supabase
       .from("cajas_diarias")
       .select("*")
-      .eq("empresa_id", empresa.id)
-      .eq("fecha_local", fechaLocal)
+      .eq("empresa_id", empresaGuardado.id)
+      .eq("fecha_local", fechaGuardado)
       .maybeSingle();
 
     if (errorBuscarCaja) {
@@ -2131,7 +2340,7 @@ export default function CajaDiaria() {
     }
 
     const payloadCaja = {
-      empresa_id: empresa.id,
+      empresa_id: empresaGuardado.id,
       cierre_realizado: cierreRealizado,
       remesa_efectivo: remesaEfectivo,
       cuenta_destino_efectivo: cuentaDestinoEfectivo || null,
@@ -2141,6 +2350,8 @@ export default function CajaDiaria() {
       responsable_caja: responsableCaja || null,
       elaborado_por: elaboradoPor || null,
       revisado_por: revisadoPor || null,
+      actualizado_por_user_id: userGuardado.id,
+      actualizado_por_empresa_usuario_id: empresaUsuarioGuardado.id,
     };
 
     if (cajaExistente) {
@@ -2231,6 +2442,8 @@ export default function CajaDiaria() {
             referencia: referencia?.trim() || null,
             venta_id: null,
             grupo_facturacion: fila.grupoFacturacion || null,
+            creado_por_user_id: userGuardado.id,
+            creado_por_empresa_usuario_id: empresaUsuarioGuardado.id,
           });
         }
       });
@@ -2254,6 +2467,8 @@ export default function CajaDiaria() {
         .from("caja_diaria_detalle")
         .update({
           grupo_facturacion: fila.grupoFacturacion || null,
+          actualizado_por_user_id: userGuardado.id,
+          actualizado_por_empresa_usuario_id: empresaUsuarioGuardado.id,
         })
         .eq("caja_diaria_id", cajaId)
         .eq("venta_id", fila.venta_id)
