@@ -3213,15 +3213,26 @@ export default function CajaDiaria() {
 
             <button
               type="button"
-              onClick={limpiarCajaActual}
-              style={{
-                ...styles.clearBtn,
-                ...(modoSoloLecturaMultiempresa ? styles.disabledBtn : {}),
-              }}
-              disabled={modoSoloLecturaMultiempresa}
-              title={modoSoloLecturaMultiempresa ? "Seleccioná solo una empresa para limpiar o modificar" : ""}
-            >
-              Limpiar formulario
+              onClick={() => {
+    const password = prompt(
+      "⚠️ Esta acción eliminará TODOS los datos del formulario actual.\n\nIngrese la contraseña para continuar:"
+    );
+
+    if (password !== "1234") {
+      return alert("Contraseña incorrecta.");
+    }
+
+    const confirmar = window.confirm(
+      "¿Seguro que deseas limpiar completamente el formulario?"
+    );
+
+    if (!confirmar) return;
+
+    limpiarCajaActual();
+  }}
+  className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg"
+>
+  Limpiar Formulario
             </button>
           </div>
         </div>
