@@ -2579,6 +2579,84 @@ export default function CajaDiaria() {
     };
   };
 
+  const construirMapaClasificacionesReporte = (asignaciones = []) => {
+    const mapa = {};
+
+    (asignaciones || []).forEach((item) => {
+      const keys = [
+        construirLlaveClasificacion({
+          empresaId: item.empresa_id,
+          fecha: item.fecha_local,
+          paciente: item.paciente,
+          ventaId: item.venta_id || "",
+          grupoFacturacion: item.grupo_facturacion || "",
+        }),
+        construirLlaveClasificacion({
+          empresaId: item.empresa_id,
+          fecha: item.fecha_local,
+          paciente: item.paciente,
+          ventaId: item.venta_id || "",
+          grupoFacturacion: "",
+        }),
+        construirLlaveClasificacion({
+          empresaId: item.empresa_id,
+          fecha: item.fecha_local,
+          paciente: item.paciente,
+          ventaId: "",
+          grupoFacturacion: item.grupo_facturacion || "",
+        }),
+        construirLlaveClasificacion({
+          empresaId: item.empresa_id,
+          fecha: item.fecha_local,
+          paciente: item.paciente,
+          ventaId: "",
+          grupoFacturacion: "",
+        }),
+      ];
+
+      keys.forEach((key) => {
+        if (!mapa[key]) mapa[key] = [];
+
+        if (!mapa[key].some((x) => String(x.id) === String(item.id))) {
+          mapa[key].push(item);
+        }
+      });
+    });
+
+    return mapa;
+  };
+
+  const obtenerTextoClasificacionesReporteDesdeMapa = (item, mapaClasificaciones) => {
+    if (!item || !mapaClasificaciones) return "";
+
+    const filaTemporal = {
+      paciente: item.paciente || "",
+      venta_id: item.venta_id || "",
+      grupoFacturacion: item.grupoFacturacion || item.grupo_facturacion || "",
+      empresaId: item.empresaId || item.empresa_id || empresa?.id,
+    };
+
+    const llaves = obtenerLlavesPosiblesClasificacion(
+      filaTemporal,
+      item.fecha || fechaLocal
+    );
+
+    const encontradas = [];
+
+    llaves.forEach((key) => {
+      (mapaClasificaciones[key] || []).forEach((asig) => {
+        if (!encontradas.some((x) => String(x.id) === String(asig.id))) {
+          encontradas.push(asig);
+        }
+      });
+    });
+
+    return encontradas
+      .map((asig) => asig.clasificaciones_pacientes?.nombre)
+      .filter(Boolean)
+      .join(", ");
+  };
+
   const obtenerDatosReporte = async () => {
     if (empresaIdsReporte.length === 0) {
       alert("Seleccioná al menos una empresa para el reporte");
@@ -2595,8 +2673,11 @@ export default function CajaDiaria() {
       return null;
     }
 
-    const [{ data, error }, { data: metodosDB, error: errorMetodos }] =
-      await Promise.all([
+    const [
+      { data, error },
+      { data: metodosDB, error: errorMetodos },
+      { data: asignacionesClasificacion, error: errorClasificacionesReporte },
+    ] = await Promise.all([
         supabase
           .from("cajas_diarias")
           .select(`
@@ -2635,6 +2716,25 @@ export default function CajaDiaria() {
           .select("id, empresa_id, nombre, orden, activo")
           .in("empresa_id", empresaIdsReporte)
           .order("orden", { ascending: true }),
+        supabase
+          .from("caja_paciente_clasificaciones")
+          .select(`
+            id,
+            empresa_id,
+            fecha_local,
+            paciente,
+            venta_id,
+            grupo_facturacion,
+            clasificacion_id,
+            clasificaciones_pacientes (
+              id,
+              nombre,
+              monto
+            )
+          `)
+          .in("empresa_id", empresaIdsReporte)
+          .gte("fecha_local", filtroDesde)
+          .lte("fecha_local", filtroHasta),
       ]);
 
     if (error) {
@@ -2648,6 +2748,16 @@ export default function CajaDiaria() {
       alert("Error al cargar métodos para el reporte");
       return null;
     }
+
+    if (errorClasificacionesReporte) {
+      console.error(errorClasificacionesReporte);
+      alert("Error al cargar clasificaciones del reporte");
+      return null;
+    }
+
+    const mapaClasificacionesReporte = construirMapaClasificacionesReporte(
+      asignacionesClasificacion || []
+    );
 
     const normalizarNombreMetodo = (nombre = "") => {
       return String(nombre || "Sin método")
@@ -2845,7 +2955,10 @@ export default function CajaDiaria() {
         ...item,
         metodos: { ...inicial.valores, ...(item.metodos || {}) },
         referencias: { ...inicial.refs, ...(item.referencias || {}) },
-        clasificaciones: obtenerTextoClasificacionesParaReporte(item),
+        clasificaciones: obtenerTextoClasificacionesReporteDesdeMapa(
+          item,
+          mapaClasificacionesReporte
+        ),
       };
     });
 
@@ -3013,6 +3126,7 @@ export default function CajaDiaria() {
       if (limpio.length <= max) return limpio;
       return `${limpio.slice(0, max - 1)}…`;
     };
+    
 
     // IMPORTANTE:
     // El PDF usa EXACTAMENTE los mismos métodos del resumen del reporte.
@@ -3028,6 +3142,7 @@ export default function CajaDiaria() {
     if (metodosReporte.length === 0) {
       return alert("No hay métodos de pago con movimiento para exportar");
     }
+
 
     const totalGeneralPDF = metodosReporte.reduce(
       (acc, m) => acc + Number(m.total || 0),
@@ -3089,7 +3204,7 @@ export default function CajaDiaria() {
         .join(" | ");
 
       return [
-        abreviarTextoPDF(item.clasificaciones || "", 11),
+        abreviarTextoPDF(item.clasificaciones || "",300),
         formatearFecha(item.fecha),
         abreviarTextoPDF(item.empresa || "", 14),
         abreviarTextoPDF(item.paciente || "", 19),
