@@ -595,14 +595,16 @@ export default function CajaDiaria() {
 
   const guardarCajaSilencioso = async (motivo = "autosave", opcionesExtra = {}) => {
     const empresaGuardado = opcionesExtra.empresaOverride || empresa;
-    const fechaLocal = opcionesExtra.fechaOverride || fechaLocal;
+    const fechaAutosave = opcionesExtra.fechaOverride || fechaLocal;
 
-    if (!empresaGuardado?.id || modoSoloLecturaMultiempresa || !fechaLocal) return;
+    if (!empresaGuardado?.id || modoSoloLecturaMultiempresa || !fechaAutosave) return;
 
     try {
       const resultado = await guardarCaja({
         silencioso: true,
         origen: motivo,
+        empresaOverride: empresaGuardado,
+        fechaOverride: fechaAutosave,
         ...opcionesExtra,
       });
 
@@ -2285,12 +2287,12 @@ export default function CajaDiaria() {
   const guardarCaja = async (opciones = {}) => {
     const silencioso = Boolean(opciones?.silencioso);
     const empresaGuardado = opciones?.empresaOverride || empresa;
-    const fechaLocal = opciones?.fechaOverride || fechaLocal;
+    const fechaCaja = opciones?.fechaOverride || fechaLocal;
     const filasTrabajo = Array.isArray(opciones?.filasOverride) ? opciones.filasOverride : filas;
 
     if (!validarEdicionUnaEmpresa()) return false;
 
-    if (!empresaGuardado?.id || !fechaLocal) {
+    if (!empresaGuardado?.id || !fechaCaja) {
       return silencioso ? false : alert("No hay empresa o fecha seleccionada");
     }
 
