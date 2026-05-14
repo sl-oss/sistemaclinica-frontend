@@ -2511,6 +2511,60 @@ export default function CajaDiaria() {
     return true;
   };
 
+  const obtenerDatosReporteDesdeTablaWeb = () => {
+    const metodosReporte = (metodos || []).map((m) => ({
+      id: m.id,
+      nombre: m.nombre,
+    }));
+
+    const detalle = (filas || [])
+      .filter((fila) => String(fila.paciente || "").trim() !== "")
+      .map((fila) => {
+        const metodosFila = {};
+        const referenciasFila = {};
+
+        metodosReporte.forEach((m) => {
+          metodosFila[m.nombre] = Number(fila.pagos?.[m.id] || 0);
+          referenciasFila[m.nombre] = fila.referencias?.[m.id] || "";
+        });
+
+        return {
+          fecha: fechaLocal,
+          empresa: fila.empresaNombre || obtenerNombreEmpresa(fila.empresaId),
+          empresa_id: fila.empresaId || empresa?.id,
+          paciente: fila.paciente || "Sin nombre",
+          origen: fila.origen === "venta" || fila.venta_id ? "Venta / CxC" : "Manual",
+          venta_id: fila.venta_id || null,
+          grupoFacturacion: fila.grupoFacturacion || "",
+          metodos: metodosFila,
+          referencias: referenciasFila,
+          clasificaciones: obtenerTextoClasificacionesParaReporte(fila),
+        };
+      });
+
+    const resumen = metodosReporte.map((m) => ({
+      metodo: m.nombre,
+      total: (filas || []).reduce(
+        (acc, fila) => acc + Number(fila.pagos?.[m.id] || 0),
+        0
+      ),
+    }));
+
+    const totalGeneralResumen = resumen.reduce(
+      (acc, item) => acc + Number(item.total || 0),
+      0
+    );
+
+    return {
+      detalle,
+      resumen,
+      cierres: [],
+      metodosReporte,
+      totalGeneralResumen,
+      fuente: "tabla_web",
+    };
+  };
+
   const obtenerDatosReporte = async () => {
     if (empresaIdsReporte.length === 0) {
       alert("Seleccioná al menos una empresa para el reporte");
@@ -2714,7 +2768,16 @@ export default function CajaDiaria() {
   };
 
   const exportarDetalleExcel = async () => {
-    const datos = await obtenerDatosReporte();
+    const usarTablaWeb =
+      filtroDesde === fechaLocal &&
+      filtroHasta === fechaLocal &&
+      Array.isArray(filas) &&
+      filas.length > 0;
+
+    const datos = usarTablaWeb
+      ? obtenerDatosReporteDesdeTablaWeb()
+      : await obtenerDatosReporte();
+
     if (!datos || datos.detalle.length === 0) {
       return alert("No hay datos para exportar");
     }
@@ -2789,7 +2852,16 @@ export default function CajaDiaria() {
   };
 
   const exportarResumenExcel = async () => {
-    const datos = await obtenerDatosReporte();
+    const usarTablaWeb =
+      filtroDesde === fechaLocal &&
+      filtroHasta === fechaLocal &&
+      Array.isArray(filas) &&
+      filas.length > 0;
+
+    const datos = usarTablaWeb
+      ? obtenerDatosReporteDesdeTablaWeb()
+      : await obtenerDatosReporte();
+
     if (!datos || datos.resumen.length === 0) {
       return alert("No hay datos para exportar");
     }
@@ -2824,7 +2896,15 @@ export default function CajaDiaria() {
   };
 
   const exportarDetallePDF = async () => {
-    const datos = await obtenerDatosReporte();
+    const usarTablaWeb =
+      filtroDesde === fechaLocal &&
+      filtroHasta === fechaLocal &&
+      Array.isArray(filas) &&
+      filas.length > 0;
+
+    const datos = usarTablaWeb
+      ? obtenerDatosReporteDesdeTablaWeb()
+      : await obtenerDatosReporte();
 
     if (!datos || datos.detalle.length === 0) {
       return alert("No hay datos para exportar");
@@ -2869,7 +2949,7 @@ export default function CajaDiaria() {
     const doc = new jsPDF({
       orientation: "landscape",
       unit: "mm",
-      format: "legal",
+      format: "letter",
     });
 
     doc.setFillColor(244, 240, 247);
@@ -2948,7 +3028,7 @@ export default function CajaDiaria() {
     const anchoFijo = 16 + 16 + 22 + 28 + 12 + 18 + 18;
     const anchoMetodo = Math.max(
       14,
-      Math.min(24, (anchoDisponible - anchoFijo) / cantidadMetodos)
+      Math.min(35, (anchoDisponible - anchoFijo) / cantidadMetodos)
     );
 
     const columnStyles = {
@@ -3018,7 +3098,16 @@ export default function CajaDiaria() {
   };
 
   const exportarResumenPDF = async () => {
-    const datos = await obtenerDatosReporte();
+    const usarTablaWeb =
+      filtroDesde === fechaLocal &&
+      filtroHasta === fechaLocal &&
+      Array.isArray(filas) &&
+      filas.length > 0;
+
+    const datos = usarTablaWeb
+      ? obtenerDatosReporteDesdeTablaWeb()
+      : await obtenerDatosReporte();
+
     if (!datos || datos.resumen.length === 0) {
       return alert("No hay datos para exportar");
     }
