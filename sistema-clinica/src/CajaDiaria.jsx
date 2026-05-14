@@ -2862,15 +2862,31 @@ export default function CajaDiaria() {
       "Total Paciente",
     ]];
 
+    const totalesPorMetodoPDF = {};
+    metodosReporte.forEach((m) => {
+      totalesPorMetodoPDF[m.nombre] = 0;
+    });
+
     const body = datos.detalle.map((item) => {
-      const totalPaciente = metodosReporte.reduce(
-        (acc, m) => acc + Number(item.metodos[m.nombre] || 0),
-        0
+      let totalPaciente = 0;
+
+      const montosMetodo = metodosReporte.map((m) => {
+        const monto = Number(item.metodos?.[m.nombre] || 0);
+        totalesPorMetodoPDF[m.nombre] =
+          Number(totalesPorMetodoPDF[m.nombre] || 0) + monto;
+        totalPaciente += monto;
+        return `$${formatearMonto(monto)}`;
+      });
+
+      // Si el detalle ya trae total real, lo usamos para cuadrar el total por paciente.
+      // Si no existe, usamos la suma de columnas visibles.
+      const totalPacienteReal = Number(
+        item.totalPaciente ?? item.total_paciente ?? item.total ?? totalPaciente
       );
 
       const referenciasTexto = metodosReporte
         .map((m) =>
-          item.referencias[m.nombre]
+          item.referencias?.[m.nombre]
             ? `${m.nombre}: ${item.referencias[m.nombre]}`
             : ""
         )
@@ -2883,11 +2899,19 @@ export default function CajaDiaria() {
         item.empresa || "",
         item.paciente,
         item.origen || "",
-        ...metodosReporte.map((m) => `$${formatearMonto(item.metodos[m.nombre] || 0)}`),
+        ...montosMetodo,
         referenciasTexto,
-        `$${formatearMonto(totalPaciente)}`,
+        `$${formatearMonto(totalPacienteReal)}`,
       ];
     });
+
+    const totalColumnasPDF = Object.values(totalesPorMetodoPDF).reduce(
+      (acc, valor) => acc + Number(valor || 0),
+      0
+    );
+
+    const totalGeneralPDF =
+      Number(datos.totalGeneralResumen || 0) || Number(totalColumnasPDF || 0);
 
     const foot = [[
       "",
@@ -2895,12 +2919,11 @@ export default function CajaDiaria() {
       "",
       "TOTALES",
       "",
-      ...metodosReporte.map((m) => {
-        const total = datos.resumen.find((r) => r.metodo === m.nombre)?.total || 0;
-        return `$${formatearMonto(total)}`;
-      }),
+      ...metodosReporte.map((m) =>
+        `$${formatearMonto(totalesPorMetodoPDF[m.nombre] || 0)}`
+      ),
       "",
-      `$${formatearMonto(datos.totalGeneralResumen)}`,
+      `$${formatearMonto(totalGeneralPDF)}`,
     ]];
 
     autoTable(doc, {
