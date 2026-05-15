@@ -99,6 +99,7 @@ function Reporte() {
   const [editFecha, setEditFecha] = useState(obtenerFechaLocalSV());
   const [editClienteId, setEditClienteId] = useState("");
   const [editEstado, setEditEstado] = useState("pagado");
+  const [editEmpresaCobroId, setEditEmpresaCobroId] = useState("");
   const [editItems, setEditItems] = useState([]);
   const [editPagos, setEditPagos] = useState([
     { metodo_pago_id: "", monto: "", referencia: "" },
@@ -242,6 +243,7 @@ function Reporte() {
         ),
         venta_pagos(
           id,
+          empresa_id,
           metodo_pago_id,
           monto,
           referencia,
@@ -430,17 +432,41 @@ function Reporte() {
     }
   };
 
+  const cambiarEmpresaCobroEdicion = async (empresaId) => {
+    if (!empresaId) return;
+
+    setEditEmpresaCobroId(empresaId);
+    await obtenerMetodosPago(empresaId);
+    await obtenerClasificacionesPacientes(empresaId);
+  };
+
   const totalGeneral = useMemo(() => {
     return ventas.reduce((sum, v) => sum + Number(v.total || 0), 0);
   }, [ventas]);
 
   const abrirEdicion = async (venta) => {
     const empresaVentaId = venta?.empresa_id || empresa?.id;
+    const empresaCobroGuardada =
+      (venta?.venta_pagos || []).find((p) => p?.empresa_id)?.empresa_id ||
+      venta?.empresa_cobro_id ||
+      venta?.empresa_caja_id ||
+      empresaVentaId;
+
     await cargarCatalogosEmpresa(empresaVentaId);
+
+    if (
+      empresaCobroGuardada &&
+      String(empresaCobroGuardada) !== String(empresaVentaId)
+    ) {
+      await obtenerMetodosPago(empresaCobroGuardada);
+      await obtenerClasificacionesPacientes(empresaCobroGuardada);
+    }
+
     setVentaEditando(venta);
     setEditFecha(String(venta.fecha_local || "").slice(0, 10));
     setEditClienteId(venta.cliente_id || "");
     setEditEstado(venta.estado || "pendiente");
+    setEditEmpresaCobroId(empresaCobroGuardada || empresaVentaId);
 
     const detalle = (venta.detalle_venta || []).map((d) => ({
       item_id: d.item_id,
@@ -473,6 +499,7 @@ function Reporte() {
     setEditFecha(obtenerFechaLocalSV());
     setEditClienteId("");
     setEditEstado("pagado");
+    setEditEmpresaCobroId("");
     setEditItems([]);
     setEditPagos([{ metodo_pago_id: "", monto: "", referencia: "" }]);
     setEditClasificacionesIds([]);
@@ -691,6 +718,8 @@ function Reporte() {
   const guardarEdicion = async () => {
     if (!ventaEditando || !empresa?.id) return;
     const empresaVentaId = ventaEditando.empresa_id || empresa.id;
+    const empresaCobroId = editEmpresaCobroId || empresaVentaId;
+
     if (editItems.length === 0) return alert("La venta debe tener al menos un item");
 
     const pagosValidos = editPagos.filter(
@@ -787,7 +816,7 @@ function Reporte() {
       if (pagosValidos.length > 0) {
         const pagosGuardar = pagosValidos.map((p) => ({
           venta_id: ventaEditando.id,
-          empresa_id: empresaVentaId,
+          empresa_id: empresaCobroId,
           metodo_pago_id: Number(p.metodo_pago_id),
           monto: Number(p.monto),
           referencia: p.referencia?.trim() || null,
@@ -812,7 +841,7 @@ function Reporte() {
 
       if (pagosValidos.length > 0) {
         const cajaId = await obtenerOCrearCaja({
-          empresaId: empresaVentaId,
+          empresaId: empresaCobroId,
           fechaLocal: fechaNuevaCompleta,
         });
 
@@ -834,7 +863,7 @@ function Reporte() {
 
       await guardarClasificacionesVenta({
         ventaId: ventaEditando.id,
-        empresaId: empresaVentaId,
+        empresaId: empresaCobroId,
         fechaLocal: fechaNuevaCompleta,
         paciente: nombrePacienteClasificacion,
       });
@@ -1196,6 +1225,21 @@ function Reporte() {
                     <option value="pagado">Pagado</option>
                     <option value="pendiente">Pendiente</option>
                     <option value="parcial">Parcial</option>
+                  </select>
+                </div>
+
+                <div style={styles.formGroup}>
+                  <label style={styles.label}>Empresa que guardará el cobro</label>
+                  <select
+                    value={editEmpresaCobroId}
+                    onChange={(e) => cambiarEmpresaCobroEdicion(e.target.value)}
+                    style={styles.input}
+                  >
+                    {empresasDisponibles.map((emp) => (
+                      <option key={emp.id} value={emp.id}>
+                        {emp.nombre}
+                      </option>
+                    ))}
                   </select>
                 </div>
               </div>

@@ -3,6 +3,10 @@ import { supabase } from "./supabaseClient";
 
 function Dashboard({ onNavigate }) {
   const empresaGuardada = JSON.parse(localStorage.getItem("empresa") || "null");
+  const [rolActivo, setRolActivo] = useState(localStorage.getItem("rol") || "");
+  const [permisosActivos, setPermisosActivos] = useState(() =>
+    JSON.parse(localStorage.getItem("permisos") || "{}")
+  );
 
   const [empresasUsuario, setEmpresasUsuario] = useState([]);
   const [empresasSeleccionadasIds, setEmpresasSeleccionadasIds] = useState(() => {
@@ -49,6 +53,21 @@ function Dashboard({ onNavigate }) {
 
   useEffect(() => {
     cargarEmpresasUsuario();
+  }, []);
+
+  useEffect(() => {
+    const actualizarPermisosLocales = () => {
+      setRolActivo(localStorage.getItem("rol") || "");
+      setPermisosActivos(JSON.parse(localStorage.getItem("permisos") || "{}"));
+    };
+
+    window.addEventListener("storage", actualizarPermisosLocales);
+    window.addEventListener("accesosActualizados", actualizarPermisosLocales);
+
+    return () => {
+      window.removeEventListener("storage", actualizarPermisosLocales);
+      window.removeEventListener("accesosActualizados", actualizarPermisosLocales);
+    };
   }, []);
 
   useEffect(() => {
@@ -319,8 +338,51 @@ function Dashboard({ onNavigate }) {
     return [...itemsStockBajo].slice(0, 6);
   }, [itemsStockBajo]);
 
+  const esAdminTotal =
+    rolActivo === "owner" || rolActivo === "propietario" || rolActivo === "admin";
+
+  const permisoDashboard = (permisoDashboardKey, permisoModuloKey = null) => {
+    if (esAdminTotal) return true;
+
+    if (
+      Object.prototype.hasOwnProperty.call(
+        permisosActivos || {},
+        permisoDashboardKey
+      )
+    ) {
+      return Boolean(permisosActivos?.[permisoDashboardKey]);
+    }
+
+    if (permisoModuloKey) {
+      return Boolean(permisosActivos?.[permisoModuloKey]);
+    }
+
+    // Para usuarios antiguos sin la llave dashboard_ver, no bloqueamos toda la pantalla;
+    // solo ocultamos cada bloque según su permiso real.
+    if (permisoDashboardKey === "dashboard_ver") return true;
+
+    return false;
+  };
+
+  const puedeVerDashboard = permisoDashboard("dashboard_ver");
+  const puedeVerCitasDashboard = permisoDashboard("dashboard_citas_ver", "citas_ver");
+  const puedeVerVentasDashboard = permisoDashboard("dashboard_ventas_ver", "ventas_ver");
+  const puedeVerDeudasDashboard = permisoDashboard("dashboard_deudas_ver", "deudas_ver");
+  const puedeVerStockDashboard = permisoDashboard("dashboard_stock_ver", "inventario_ver");
+  const puedeVerAccesosRapidosDashboard = permisoDashboard(
+    "dashboard_accesos_rapidos_ver"
+  );
+
   if (empresaIdsReporte.length === 0) {
     return <div style={styles.empty}>No hay empresa seleccionada</div>;
+  }
+
+  if (!puedeVerDashboard) {
+    return (
+      <div style={styles.empty}>
+        No tienes acceso al dashboard. Solicita permiso de Inicio / Dashboard.
+      </div>
+    );
   }
 
   return (
@@ -402,6 +464,7 @@ function Dashboard({ onNavigate }) {
       ) : (
         <>
           <div style={styles.kpiGrid}>
+            {puedeVerCitasDashboard && (
             <div style={styles.kpiCard}>
               <div style={styles.kpiLabel}>Pendientes de confirmar</div>
               <div style={styles.kpiValue}>{citasPorConfirmarCount}</div>
@@ -412,7 +475,9 @@ function Dashboard({ onNavigate }) {
                 Ver citas
               </button>
             </div>
+            )}
 
+            {puedeVerCitasDashboard && (
             <div style={styles.kpiCard}>
               <div style={styles.kpiLabel}>Pendientes de atender</div>
               <div style={styles.kpiValue}>{citasPendientesAtenderCount}</div>
@@ -423,7 +488,9 @@ function Dashboard({ onNavigate }) {
                 Ir a agenda
               </button>
             </div>
+            )}
 
+            {puedeVerCitasDashboard && (
             <div style={styles.kpiCard}>
               <div style={styles.kpiLabel}>Citas de hoy</div>
               <div style={styles.kpiValue}>{citasHoyCount}</div>
@@ -434,7 +501,9 @@ function Dashboard({ onNavigate }) {
                 Ver hoy
               </button>
             </div>
+            )}
 
+            {puedeVerVentasDashboard && (
             <div style={styles.kpiCard}>
               <div style={styles.kpiLabel}>Ventas de hoy</div>
               <div style={styles.kpiValue}>${money(totalVentasHoy)}</div>
@@ -445,7 +514,9 @@ function Dashboard({ onNavigate }) {
                 Ver ventas
               </button>
             </div>
+            )}
 
+            {puedeVerDeudasDashboard && (
             <div style={styles.kpiCardWarn}>
               <div style={styles.kpiLabel}>Deudas +30 días</div>
               <div style={styles.kpiValue}>{deudasMas30.length}</div>
@@ -456,7 +527,9 @@ function Dashboard({ onNavigate }) {
                 Ver deudas
               </button>
             </div>
+            )}
 
+            {puedeVerStockDashboard && (
             <div style={styles.kpiCardDanger}>
               <div style={styles.kpiLabel}>Stock bajo</div>
               <div style={styles.kpiValue}>{itemsStockBajo.length}</div>
@@ -467,9 +540,11 @@ function Dashboard({ onNavigate }) {
                 Ver productos
               </button>
             </div>
+            )}
           </div>
 
           <div style={styles.mainGrid}>
+            {puedeVerCitasDashboard && (
             <div style={styles.cardLarge}>
               <div style={styles.cardHeader}>
                 <div>
@@ -527,7 +602,9 @@ function Dashboard({ onNavigate }) {
                 </div>
               )}
             </div>
+            )}
 
+            {puedeVerDeudasDashboard && (
             <div style={styles.cardSide}>
               <div style={styles.cardHeader}>
                 <div>
@@ -556,9 +633,11 @@ function Dashboard({ onNavigate }) {
                 Ir a deudas
               </button>
             </div>
+            )}
           </div>
 
           <div style={styles.bottomGrid}>
+            {puedeVerDeudasDashboard && (
             <div style={styles.cardHalf}>
               <div style={styles.cardHeader}>
                 <div>
@@ -597,7 +676,9 @@ function Dashboard({ onNavigate }) {
                 </div>
               )}
             </div>
+            )}
 
+            {puedeVerStockDashboard && (
             <div style={styles.cardHalf}>
               <div style={styles.cardHeader}>
                 <div>
@@ -648,8 +729,10 @@ function Dashboard({ onNavigate }) {
                 </div>
               )}
             </div>
+            )}
           </div>
 
+          {puedeVerAccesosRapidosDashboard && (
           <div style={styles.cardQuick}>
             <div style={styles.cardHeader}>
               <div>
@@ -659,44 +742,57 @@ function Dashboard({ onNavigate }) {
             </div>
 
             <div style={styles.quickGrid}>
+              {permisoDashboard("dashboard_ventas_ver", "ventas_crear") && (
               <button
                 style={styles.quickBtn}
                 onClick={() => onNavigate?.("venta")}
               >
                 🛒 Nueva venta
               </button>
+              )}
+              {puedeVerCitasDashboard && (
               <button
                 style={styles.quickBtn}
                 onClick={() => onNavigate?.("citas")}
               >
                 📅 Ver citas
               </button>
+              )}
+              {puedeVerDeudasDashboard && (
               <button
                 style={styles.quickBtn}
                 onClick={() => onNavigate?.("deudas")}
               >
                 📋 Revisar deudas
               </button>
+              )}
+              {puedeVerStockDashboard && (
               <button
                 style={styles.quickBtn}
                 onClick={() => onNavigate?.("items")}
               >
                 📦 Inventario
               </button>
+              )}
+              {permisoDashboard("dashboard_ventas_ver", "reportes_ver") && (
               <button
                 style={styles.quickBtn}
                 onClick={() => onNavigate?.("reporte")}
               >
                 📊 Reporte ventas
               </button>
+              )}
+              {permisoDashboard("dashboard_caja_ver", "caja_ver") && (
               <button
                 style={styles.quickBtn}
                 onClick={() => onNavigate?.("Caja Diaria")}
               >
                 💲 Caja diaria
               </button>
+              )}
             </div>
           </div>
+          )}
         </>
       )}
     </div>

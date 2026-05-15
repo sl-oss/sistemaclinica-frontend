@@ -3,6 +3,32 @@ import { supabase } from "./supabaseClient";
 
 const modulosPermisos = [
   {
+    id: "empresas",
+    icono: "🏢",
+    titulo: "Empresas",
+    descripcion: "Permite crear empresas y cambiar entre empresas asignadas.",
+    permisos: [
+      { key: "empresas_cambiar", label: "Cambiar entre empresas" },
+      { key: "empresas_crear", label: "Crear nuevas empresas" },
+    ],
+  },
+
+  {
+    id: "dashboard",
+    icono: "🏠",
+    titulo: "Dashboard / Inicio",
+    descripcion: "Controla qué resumen puede ver el usuario al entrar al sistema.",
+    permisos: [
+      { key: "dashboard_ver", label: "Ver pantalla de inicio" },
+      { key: "dashboard_citas_ver", label: "Ver resumen de citas" },
+      { key: "dashboard_ventas_ver", label: "Ver ventas de hoy" },
+      { key: "dashboard_deudas_ver", label: "Ver deudas y saldos pendientes" },
+      { key: "dashboard_stock_ver", label: "Ver stock bajo" },
+      { key: "dashboard_accesos_rapidos_ver", label: "Ver accesos rápidos" },
+    ],
+  },
+
+  {
     id: "citas",
     icono: "📅",
     titulo: "Citas",
@@ -192,6 +218,16 @@ const permisosAdmin = permisosBase.reduce((acc, p) => {
 }, {});
 
 const permisosColaborador = {
+  empresas_cambiar: false,
+  empresas_crear: false,
+
+  dashboard_ver: true,
+  dashboard_citas_ver: true,
+  dashboard_ventas_ver: true,
+  dashboard_deudas_ver: true,
+  dashboard_stock_ver: true,
+  dashboard_accesos_rapidos_ver: true,
+
   citas_ver: true,
   citas_crear: true,
   citas_editar: true,
@@ -307,6 +343,8 @@ function UsuariosAccesos() {
   const [editandoInvitacionId, setEditandoInvitacionId] = useState(null);
   const [editandoUsuarioId, setEditandoUsuarioId] = useState(null);
   const [modulosAbiertos, setModulosAbiertos] = useState(() => ({
+    empresas: true,
+    dashboard: true,
     citas: true,
     ventas: false,
     deudas: false,

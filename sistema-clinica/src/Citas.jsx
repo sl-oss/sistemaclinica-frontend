@@ -169,6 +169,10 @@ function Citas({ onNavigate }) {
 
       const fechaCita = String(cita.fecha).slice(0, 10);
       const coincideTipo = filtroTipo === "todos" || info.tipo === filtroTipo;
+
+      const coincideLlegada =
+        filtroEstado !== "llegaron" || Boolean(cita.paciente_llego);
+
       const coincideRango =
         (!filtroDesde || fechaCita >= filtroDesde) &&
         (!filtroHasta || fechaCita <= filtroHasta);
@@ -178,7 +182,7 @@ function Citas({ onNavigate }) {
         (obtenerHoraBase(cita.hora) === horaSeleccionadaLista &&
           fechaCita === fechaSeleccionada);
 
-      return coincideTexto && coincideTipo && coincideRango && coincideHora;
+      return coincideTexto && coincideTipo && coincideLlegada && coincideRango && coincideHora;
     });
   }, [citas, filtroTexto, filtroTipo, filtroDesde, filtroHasta, horaSeleccionadaLista, fechaSeleccionada, empresasUsuario]);
 
@@ -376,6 +380,9 @@ function Citas({ onNavigate }) {
         servicio,
         estado,
         confirmada,
+        paciente_llego,
+        hora_llegada,
+        llegada_at,
         clientes(nombre, telefono),
         empresas(id, nombre)
       `)
@@ -471,6 +478,9 @@ function Citas({ onNavigate }) {
         servicio,
         estado,
         confirmada,
+        paciente_llego,
+        hora_llegada,
+        llegada_at,
         clientes(nombre, telefono),
         empresas(id, nombre)
       `)
@@ -748,6 +758,9 @@ autoTable(doc, {
         servicio,
         estado,
         confirmada,
+        paciente_llego,
+        hora_llegada,
+        llegada_at,
         motivo_cancelacion,
         desea_reprogramar,
         fecha_reprogramada,
@@ -820,6 +833,9 @@ autoTable(doc, {
         servicio,
         estado,
         confirmada,
+        paciente_llego,
+        hora_llegada,
+        llegada_at,
         motivo_cancelacion,
         desea_reprogramar,
         fecha_reprogramada,
@@ -833,7 +849,9 @@ autoTable(doc, {
       .order("fecha", { ascending: true })
       .order("hora", { ascending: true });
 
-    if (filtroEstado === "pendientes") query = query.eq("estado", "pendiente");
+    if (filtroEstado === "pendientes" || filtroEstado === "llegaron") {
+      query = query.eq("estado", "pendiente");
+    }
     if (filtroEstado === "atendidas") query = query.eq("estado", "atendida");
     if (filtroEstado === "canceladas") query = query.eq("estado", "cancelada");
 
@@ -1162,6 +1180,104 @@ autoTable(doc, {
     await obtenerCitas();
   };
 
+  const guardarNotificacionPacienteLlego = async (cita, horaLocal) => {
+    if (!cita?.id || !cita?.empresa_id) return;
+
+    const paciente = cita.clientes?.nombre || "Paciente";
+    const empresaNombre = obtenerNombreEmpresa(cita.empresa_id, cita.empresas);
+    const fechaCita = formatearFechaPantalla(cita.fecha);
+    const horaCita = normalizarHora(cita.hora);
+
+    // Dejamos cualquier aviso anterior de la misma cita como historial.
+    const { error: errorHistorial } = await supabase
+      .from("bandeja_mensajes")
+      .update({ es_ultima_accion: false })
+      .eq("cita_id", cita.id)
+      .eq("tipo", "paciente_llego");
+
+    if (errorHistorial) {
+      console.error("Error marcando historial de llegada:", errorHistorial);
+    }
+
+    const { error } = await supabase.from("bandeja_mensajes").insert([
+      {
+        empresa_id: cita.empresa_id,
+        cita_id: cita.id,
+        cliente_id: cita.cliente_id,
+        tipo: "paciente_llego",
+        titulo: "Paciente llegó",
+        mensaje: `${paciente} ya llegó a ${empresaNombre}. Cita del ${fechaCita} a las ${horaCita}. Llegó a las ${horaLocal}.`,
+        estado: "pendiente",
+        leida: false,
+        es_ultima_accion: true,
+        datos: {
+          paciente,
+          telefono: cita.clientes?.telefono || "",
+          fecha_original: cita.fecha || null,
+          hora_original: cita.hora || null,
+          hora_llegada: horaLocal,
+          empresa: empresaNombre,
+        },
+      },
+    ]);
+
+    if (error) {
+      console.error("Error creando notificación de llegada:", error);
+    } else {
+      window.dispatchEvent(new Event("bandejaMensajesActualizada"));
+    }
+  };
+
+  const marcarPacienteLlego = async (cita) => {
+    if (!cita?.id) return;
+
+    if (cita.estado === "cancelada") {
+      return alert("No se puede marcar llegada en una cita cancelada");
+    }
+
+    const yaLlego = Boolean(cita.paciente_llego);
+
+    const confirmar = window.confirm(
+      yaLlego
+        ? "¿Deseás quitar la marca de llegada de este paciente?"
+        : "¿Confirmás que el paciente ya llegó a la clínica?"
+    );
+
+    if (!confirmar) return;
+
+    const ahora = new Date();
+
+    const horaLocal = ahora.toLocaleTimeString("es-SV", {
+      timeZone: "America/El_Salvador",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    });
+
+    const { error } = await supabase
+      .from("citas")
+      .update({
+        paciente_llego: !yaLlego,
+        hora_llegada: yaLlego ? null : horaLocal,
+        llegada_at: yaLlego ? null : ahora.toISOString(),
+      })
+      .eq("id", cita.id)
+      .eq("empresa_id", cita.empresa_id || empresa?.id);
+
+    if (error) {
+      console.error(error);
+      return alert(
+        "No se pudo actualizar la llegada. Verificá que la tabla citas tenga las columnas paciente_llego, hora_llegada y llegada_at."
+      );
+    }
+
+    if (!yaLlego) {
+      await guardarNotificacionPacienteLlego(cita, horaLocal);
+    }
+
+    await obtenerCitas();
+  };
+
   const atender = async (cita) => {
     if (!cita?.id || !cita?.empresa_id) return;
 
@@ -1282,22 +1398,64 @@ autoTable(doc, {
   };
 
   const moverAnterior = () => {
-    if (vista === "mes") moverMes(-1);
-    else if (vista === "semana") moverFecha(-7);
-    else moverFecha(-1);
+    if (vista === "mes") {
+      moverMes(-1);
+      return;
+    }
+
+    const base = new Date(`${fechaSeleccionada}T00:00:00`);
+    base.setDate(base.getDate() - (vista === "semana" ? 7 : 1));
+
+    const nuevaFecha = formatoFechaLocal(base);
+
+    setFechaSeleccionada(nuevaFecha);
+    setFecha(nuevaFecha);
+    setMesVisible(nuevaFecha.slice(0, 7));
+
+    // Mantener sincronizado el filtro de HOY/lista
+    if (vista !== "mes") {
+      setFiltroDesde(nuevaFecha);
+      setFiltroHasta(nuevaFecha);
+    }
   };
 
   const moverSiguiente = () => {
-    if (vista === "mes") moverMes(1);
-    else if (vista === "semana") moverFecha(7);
-    else moverFecha(1);
+    if (vista === "mes") {
+      moverMes(1);
+      return;
+    }
+
+    const base = new Date(`${fechaSeleccionada}T00:00:00`);
+    base.setDate(base.getDate() + (vista === "semana" ? 7 : 1));
+
+    const nuevaFecha = formatoFechaLocal(base);
+
+    setFechaSeleccionada(nuevaFecha);
+    setFecha(nuevaFecha);
+    setMesVisible(nuevaFecha.slice(0, 7));
+
+    // Mantener sincronizado el filtro de HOY/lista
+    if (vista !== "mes") {
+      setFiltroDesde(nuevaFecha);
+      setFiltroHasta(nuevaFecha);
+    }
   };
 
   const irHoy = () => {
     const hoy = obtenerFechaSV();
+
     setFechaSeleccionada(hoy);
     setFecha(hoy);
     setMesVisible(hoy.slice(0, 7));
+
+    // Cuando estamos en lista, el botón HOY debe filtrar realmente solo las citas de hoy.
+    setFiltroDesde(hoy);
+    setFiltroHasta(hoy);
+    setHoraSeleccionadaLista("");
+
+    if (vista !== "mes") {
+      setVista("lista");
+    }
   };
 
   if (!empresa) {
@@ -1435,6 +1593,7 @@ autoTable(doc, {
               onChange={(e) => setFiltroEstado(e.target.value)}
             >
               <option value="pendientes">Por Atender</option>
+              <option value="llegaron">Ya llegaron</option>
               <option value="atendidas">Atendidas</option>
               <option value="canceladas">Canceladas</option>
               <option value="todas">Todas</option>
@@ -1561,6 +1720,7 @@ autoTable(doc, {
                 onConfirmar={confirmarCita}
                 onReagendar={abrirModalReagendar}
                 onAtender={atender}
+                onLlegada={marcarPacienteLlego}
                 obtenerNombreEmpresa={obtenerNombreEmpresa}
                 leerServicio={leerServicio}
               />
@@ -1579,6 +1739,7 @@ autoTable(doc, {
                 onConfirmar={confirmarCita}
                 onReagendar={abrirModalReagendar}
                 onAtender={atender}
+                onLlegada={marcarPacienteLlego}
                 obtenerNombreEmpresa={obtenerNombreEmpresa}
                 leerServicio={leerServicio}
               />
@@ -1595,6 +1756,7 @@ autoTable(doc, {
                 onConfirmar={confirmarCita}
                 onReagendar={abrirModalReagendar}
                 onAtender={atender}
+                onLlegada={marcarPacienteLlego}
                 obtenerNombreEmpresa={obtenerNombreEmpresa}
                 leerServicio={leerServicio}
               />
@@ -1785,6 +1947,11 @@ autoTable(doc, {
                         <strong>{normalizarHora(cita.hora)} · {cita.clientes?.nombre || "Paciente"}</strong>
                         <div style={styles.citaMiniText}>📞 {cita.clientes?.telefono || "Sin teléfono"}</div>
                         <div style={styles.empresaTag}>{obtenerNombreEmpresa(cita.empresa_id, cita.empresas)}</div>
+      {cita.paciente_llego && (
+        <div style={styles.llegadaTag}>
+          {cita.hora_llegada ? normalizarHora(cita.hora_llegada) : "Llegó"}
+        </div>
+      )}
                         {info.comentario && <div style={styles.citaMiniText}>{info.comentario}</div>}
                       </div>
 
@@ -2156,6 +2323,7 @@ function AgendaSemana({
   onConfirmar,
   onReagendar,
   onAtender,
+  onLlegada,
   obtenerNombreEmpresa,
   leerServicio,
 }) {
@@ -2196,6 +2364,7 @@ function AgendaSemana({
             onConfirmar={onConfirmar}
             onReagendar={onReagendar}
             onAtender={onAtender}
+            onLlegada={onLlegada}
             obtenerNombreEmpresa={obtenerNombreEmpresa}
             leerServicio={leerServicio}
           />
@@ -2217,6 +2386,7 @@ function FragmentWeekRow({
   onConfirmar,
   onReagendar,
   onAtender,
+  onLlegada,
   obtenerNombreEmpresa,
   leerServicio,
 }) {
@@ -2244,6 +2414,7 @@ function FragmentWeekRow({
                   onConfirmar={onConfirmar}
                   onReagendar={onReagendar}
                   onAtender={onAtender}
+                  onLlegada={onLlegada}
                   obtenerNombreEmpresa={obtenerNombreEmpresa}
                   leerServicio={leerServicio}
                 />
@@ -2268,6 +2439,7 @@ function AgendaDia({
   onConfirmar,
   onReagendar,
   onAtender,
+  onLlegada,
   obtenerNombreEmpresa,
   leerServicio,
 }) {
@@ -2310,6 +2482,23 @@ function AgendaDia({
                           <span style={{ ...styles.tipoBadgeMini, ...prioridadStyle(info.tipo) }}>
                             {labelTipo(info.tipo)}
                           </span>
+                          {cita.paciente_llego && (
+                            <span style={styles.llegadaTagMini}>
+                              {cita.hora_llegada ? normalizarHora(cita.hora_llegada) : "Llegó"}
+                            </span>
+                          )}
+                          {cita.estado !== "cancelada" && (
+                            <button
+                              type="button"
+                              style={cita.paciente_llego ? styles.btnMiniLlegadaActiva : styles.btnMiniLlegada}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onLlegada?.(cita);
+                              }}
+                            >
+                              {cita.paciente_llego ? "✓" : "Llegó"}
+                            </button>
+                          )}
                         </div>
                       );
                     })}
@@ -2346,6 +2535,7 @@ function ListaCitas({
   onConfirmar,
   onReagendar,
   onAtender,
+  onLlegada,
   obtenerNombreEmpresa,
   leerServicio,
 }) {
@@ -2374,6 +2564,7 @@ function ListaCitas({
               onConfirmar={onConfirmar}
               onReagendar={onReagendar}
               onAtender={onAtender}
+              onLlegada={onLlegada}
               obtenerNombreEmpresa={obtenerNombreEmpresa}
               leerServicio={leerServicio}
             />
@@ -2406,6 +2597,7 @@ function CitaMini({
   onConfirmar,
   onReagendar,
   onAtender,
+  onLlegada,
   obtenerNombreEmpresa,
   leerServicio,
 }) {
@@ -2420,6 +2612,11 @@ function CitaMini({
 
       <div style={styles.citaMiniText}>📞 {cita.clientes?.telefono || "Sin teléfono"}</div>
       <div style={styles.empresaTag}>{obtenerNombreEmpresa(cita.empresa_id, cita.empresas)}</div>
+      {cita.paciente_llego && (
+        <div style={styles.llegadaTag}>
+          {cita.hora_llegada ? normalizarHora(cita.hora_llegada) : "Llegó"}
+        </div>
+      )}
       {info.comentario && <div style={styles.citaMiniText}>{info.comentario}</div>}
 
       <div style={styles.actions}>
@@ -2427,6 +2624,13 @@ function CitaMini({
         <button style={styles.iconBtn} onClick={() => onCancelar(cita)}>❌</button>
         <button style={styles.iconBtn} onClick={() => onEliminar(cita)}>🗑</button>
         <button style={styles.iconBtn} onClick={() => onReagendar(cita)}>📅</button>
+        <button
+          style={cita.paciente_llego ? styles.iconBtnLlegadaActiva : styles.iconBtnLlegada}
+          onClick={() => onLlegada?.(cita)}
+          title={cita.paciente_llego ? "Paciente ya llegó" : "Marcar paciente llegó"}
+        >
+          {cita.paciente_llego ? "✅" : "🚶"}
+        </button>
         <button style={styles.iconBtn} onClick={() => onAtender(cita)}>🦷</button>
         <button style={styles.iconBtn} onClick={() => onConfirmar(cita)}>
           {cita.confirmada ? "✅" : "✔"}
@@ -2468,6 +2672,11 @@ function CitaCard(props) {
 
       <strong style={styles.citaNombre}>{cita.clientes?.nombre || "Sin nombre"}</strong>
       <div style={styles.empresaTag}>{obtenerNombreEmpresa(cita.empresa_id, cita.empresas)}</div>
+      {cita.paciente_llego && (
+        <div style={styles.llegadaTag}>
+          {cita.hora_llegada ? normalizarHora(cita.hora_llegada) : "Llegó"}
+        </div>
+      )}
       <div style={styles.citaText}>📞 {cita.clientes?.telefono || "Sin teléfono"}</div>
       <div style={styles.citaText}>📅 {formatearFechaPantalla(cita.fecha)} · ⏰ {normalizarHora(cita.hora)}</div>
       {info.comentario && <div style={styles.citaServicio}>{info.comentario}</div>}
@@ -2490,6 +2699,13 @@ function CitaCard(props) {
             <button style={styles.iconBtn} onClick={() => props.onCancelar(cita)}>❌</button>
             <button style={styles.iconBtn} onClick={() => props.onEliminar(cita)}>🗑</button>
             <button style={styles.iconBtn} onClick={() => props.onReagendar(cita)}>📅</button>
+            <button
+              style={cita.paciente_llego ? styles.iconBtnLlegadaActiva : styles.iconBtnLlegada}
+              onClick={() => props.onLlegada?.(cita)}
+              title={cita.paciente_llego ? "Paciente ya llegó" : "Marcar paciente llegó"}
+            >
+              {cita.paciente_llego ? "✅" : "🚶"}
+            </button>
             <button style={styles.iconBtn} onClick={() => props.onAtender(cita)}>🦷</button>
             <button style={styles.iconBtn} onClick={() => props.onConfirmar(cita)}>
               {cita.confirmada ? "✅" : "✔"}
@@ -3340,6 +3556,9 @@ const styles = {
   },
 
   citaMini: {
+    overflow: "hidden",
+    maxWidth: "100%",
+    minWidth: 0,
     background: "#fff",
     border: "1px solid #e2e8f0",
     borderRadius: 14,
@@ -3369,6 +3588,8 @@ const styles = {
   },
 
   citaCard: {
+    maxWidth: "100%",
+    overflow: "hidden",
     background: "white",
     border: "1px solid #e2e8f0",
     borderRadius: 16,
@@ -3424,6 +3645,7 @@ const styles = {
   },
 
   empresaTag: {
+    whiteSpace: "nowrap",
     display: "inline-flex",
     alignItems: "center",
     marginTop: "6px",
@@ -3433,7 +3655,7 @@ const styles = {
     color: "#1d4ed8",
     border: "1px solid #bfdbfe",
     fontWeight: "800",
-    fontSize: "11px",
+    fontSize: "10px",
   },
 
   canceladaInfo: {
@@ -3582,9 +3804,11 @@ const styles = {
     color: "#0f7a4d",
     border: "1px solid #c7eed5",
     borderRadius: "10px",
-    padding: "8px 10px",
+    padding: "6px 8px",
     cursor: "pointer",
-    fontWeight: "800",
+    fontWeight: "850",
+    fontSize: "11px",
+    whiteSpace: "nowrap",
   },
 
   btnMiniWarn: {
@@ -3592,9 +3816,11 @@ const styles = {
     color: "#9a3412",
     border: "1px solid #fed7aa",
     borderRadius: "10px",
-    padding: "8px 10px",
+    padding: "6px 8px",
     cursor: "pointer",
-    fontWeight: "800",
+    fontWeight: "850",
+    fontSize: "11px",
+    whiteSpace: "nowrap",
   },
 
   btnMiniSoft: {
@@ -3602,9 +3828,11 @@ const styles = {
     color: "#574866",
     border: "1px solid #d3c7dd",
     borderRadius: "10px",
-    padding: "8px 10px",
+    padding: "6px 8px",
     cursor: "pointer",
-    fontWeight: "800",
+    fontWeight: "850",
+    fontSize: "11px",
+    whiteSpace: "nowrap",
   },
 
   btnMiniWhats: {
@@ -3612,9 +3840,11 @@ const styles = {
     color: "#047857",
     border: "1px solid #a7f3d0",
     borderRadius: "10px",
-    padding: "8px 10px",
+    padding: "6px 8px",
     cursor: "pointer",
-    fontWeight: "800",
+    fontWeight: "850",
+    fontSize: "11px",
+    whiteSpace: "nowrap",
   },
 
   cuposBox: {
@@ -4001,6 +4231,94 @@ const styles = {
     fontWeight: "850",
   },
 
+
+
+
+  iconBtnLlegada: {
+    border: "1px solid #bfdbfe",
+    background: "#eff6ff",
+    color: "#1d4ed8",
+    borderRadius: "10px",
+    padding: "7px 9px",
+    cursor: "pointer",
+    fontWeight: "950",
+  },
+
+  iconBtnLlegadaActiva: {
+    border: "1px solid #86efac",
+    background: "#dcfce7",
+    color: "#15803d",
+    borderRadius: "10px",
+    padding: "7px 9px",
+    cursor: "pointer",
+    fontWeight: "950",
+  },
+
+  llegadaTagMini: {
+    display: "inline-flex",
+    width: "fit-content",
+    alignItems: "center",
+    background: "#dcfce7",
+    color: "#15803d",
+    border: "1px solid #86efac",
+    borderRadius: "999px",
+    padding: "3px 7px",
+    fontSize: "10px",
+    fontWeight: "950",
+    marginTop: "4px",
+  },
+
+  btnMiniLlegada: {
+    background: "#f8fafc",
+    color: "#334155",
+    border: "1px solid #cbd5e1",
+    borderRadius: "999px",
+    padding: "5px 8px",
+    cursor: "pointer",
+    fontWeight: "950",
+    fontSize: "10px",
+    lineHeight: 1,
+    minHeight: "24px",
+    whiteSpace: "nowrap",
+  },
+
+  btnMiniLlegadaActiva: {
+    background: "#dcfce7",
+    color: "#15803d",
+    border: "1px solid #86efac",
+    borderRadius: "999px",
+    padding: "5px 8px",
+    cursor: "pointer",
+    fontWeight: "950",
+    fontSize: "11px",
+    lineHeight: 1,
+    minWidth: "26px",
+    minHeight: "24px",
+    whiteSpace: "nowrap",
+  },
+
+  llegadaTag: {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    background: "#dcfce7",
+    color: "#15803d",
+    border: "1px solid #86efac",
+    borderRadius: "999px",
+    padding: "3px 7px",
+    fontSize: "9px",
+    fontWeight: "950",
+    lineHeight: 1,
+    whiteSpace: "nowrap",
+    maxWidth: "54px",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+  },
+
 };
 
+
+
 export default Citas;
+
+  

@@ -1,7 +1,15 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "./supabaseClient";
 
 const TIPOS = {
+  paciente_llego: {
+    label: "Pacientes que llegaron",
+    short: "Llegaron",
+    icon: "🚶",
+    color: "#15803d",
+    bg: "#dcfce7",
+    border: "#86efac",
+  },
   cita_confirmada: {
     label: "Citas confirmadas",
     short: "Confirmadas",
@@ -46,6 +54,7 @@ const TIPOS = {
 
 
 const PERMISO_POR_TIPO = {
+  paciente_llego: "notif_paciente_llego_ver",
   cita_confirmada: "notif_cita_confirmada_ver",
   cita_cancelada: "notif_cita_cancelada_ver",
   cita_reagendada: "notif_cita_reagendada_ver",
@@ -65,14 +74,14 @@ function leerRolActual() {
   return String(localStorage.getItem("rol") || "").toLowerCase();
 }
 
-function puedeVerTipoNotificacion(tipo) {
-  const rol = leerRolActual();
+function puedeVerTipoNotificacion(tipo, contexto = null) {
+  const rol = String(contexto?.rol || leerRolActual() || "").toLowerCase();
 
   if (rol === "owner" || rol === "admin" || rol === "propietario") {
     return true;
   }
 
-  const permisos = leerPermisosActuales();
+  const permisos = contexto?.permisos || leerPermisosActuales();
 
   if (permisos.bandeja_notificaciones_ver === false) {
     return false;
@@ -84,24 +93,20 @@ function puedeVerTipoNotificacion(tipo) {
     return Boolean(permisos.bandeja_notificaciones_ver);
   }
 
+  if (tipo === "paciente_llego" && permisos[permisoTipo] === undefined) {
+    return Boolean(
+      permisos.citas_ver ||
+      permisos.bandeja_notificaciones_ver ||
+      permisos.notif_cita_confirmada_ver
+    );
+  }
+
   return Boolean(permisos[permisoTipo]);
 }
 
 
 
 function BandejaNotificaciones({ empresaActiva = null, empresasUsuario = [] }) {
-  const permisosBandejaActuales = leerPermisosActuales();
-  const rolBandejaActual = leerRolActual();
-
-  if (
-    rolBandejaActual !== "owner" &&
-    rolBandejaActual !== "admin" &&
-    rolBandejaActual !== "propietario" &&
-    permisosBandejaActuales.bandeja_notificaciones_ver === false
-  ) {
-    return null;
-  }
-
   const [empresaLocal, setEmpresaLocal] = useState(() => {
     try {
       return JSON.parse(localStorage.getItem("empresa") || "null");
@@ -110,6 +115,10 @@ function BandejaNotificaciones({ empresaActiva = null, empresasUsuario = [] }) {
     }
   });
 
+  const [empresasAcceso, setEmpresasAcceso] = useState(() =>
+    Array.isArray(empresasUsuario) ? empresasUsuario.filter(Boolean) : []
+  );
+  const [permisosPorEmpresa, setPermisosPorEmpresa] = useState({});
   const [mensajes, setMensajes] = useState([]);
   const [cargando, setCargando] = useState(false);
   const [mostrarMiniPanel, setMostrarMiniPanel] = useState(false);
@@ -117,18 +126,96 @@ function BandejaNotificaciones({ empresaActiva = null, empresasUsuario = [] }) {
   const [toast, setToast] = useState(null);
   const [permisosVersion, setPermisosVersion] = useState(0);
 
+  // Evita que el mismo mensaje vuelva a caer como toast cada vez que se refresca la bandeja.
+  const mensajesRef = useRef([]);
+  const toastMostradosRef = useRef(new Set());
+  const toastTimerRef = useRef(null);
+  const audioCtxRef = useRef(null);
+  const [sonidoActivo, setSonidoActivo] = useState(() => {
+    return localStorage.getItem("sonido_notificaciones") !== "off";
+  });
+
   const [filtroTipo, setFiltroTipo] = useState("todos");
   const [filtroEstado, setFiltroEstado] = useState("pendientes");
   const [filtroTexto, setFiltroTexto] = useState("");
+  const [filtroVigencia, setFiltroVigencia] = useState("ultima");
+
+  useEffect(() => {
+    mensajesRef.current = mensajes;
+  }, [mensajes]);
+
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current) {
+        clearTimeout(toastTimerRef.current);
+      }
+    };
+  }, []);
 
   const empresa = empresaActiva || empresaLocal;
 
+  const empresasConsultaIds = useMemo(() => {
+    const base = empresasAcceso.length > 0 ? empresasAcceso : empresasUsuario;
+    const ids = (base || [])
+      .map((emp) => emp?.id)
+      .filter(Boolean)
+      .map((id) => String(id));
+
+    if (ids.length === 0 && empresa?.id) return [String(empresa.id)];
+
+    return Array.from(new Set(ids));
+  }, [empresasAcceso, empresasUsuario, empresa?.id]);
+
+  const obtenerContextoEmpresa = (empresaId) => {
+    const key = String(empresaId || empresa?.id || "");
+    return permisosPorEmpresa[key] || {
+      rol: leerRolActual(),
+      permisos: leerPermisosActuales(),
+    };
+  };
+
+  const puedeVerMensaje = (mensaje) => {
+    return puedeVerTipoNotificacion(
+      mensaje?.tipo,
+      obtenerContextoEmpresa(mensaje?.empresa_id)
+    );
+  };
+
+  const puedeVerBandeja = useMemo(() => {
+    if (empresasConsultaIds.length === 0) {
+      return puedeVerTipoNotificacion("cita_confirmada");
+    }
+
+    return empresasConsultaIds.some((empresaId) => {
+      const contexto = obtenerContextoEmpresa(empresaId);
+      const rol = String(contexto?.rol || "").toLowerCase();
+
+      if (rol === "owner" || rol === "admin" || rol === "propietario") {
+        return true;
+      }
+
+      return contexto?.permisos?.bandeja_notificaciones_ver !== false;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [empresasConsultaIds.join("|"), permisosVersion]);
+
+  const obtenerNombreEmpresaMensaje = (empresaId) => {
+    return (
+      empresasAcceso.find((emp) => String(emp.id) === String(empresaId))?.nombre ||
+      empresasUsuario.find((emp) => String(emp.id) === String(empresaId))?.nombre ||
+      empresa?.nombre ||
+      "Empresa"
+    );
+  };
+
   const tiposVisibles = useMemo(() => {
     return Object.entries(TIPOS).filter(([tipo]) =>
-      puedeVerTipoNotificacion(tipo)
+      empresasConsultaIds.some((empresaId) =>
+        puedeVerTipoNotificacion(tipo, obtenerContextoEmpresa(empresaId))
+      )
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [permisosVersion]);
+  }, [permisosVersion, empresasConsultaIds.join("|")]);
 
   const tiposVisiblesObj = useMemo(() => {
     return Object.fromEntries(tiposVisibles);
@@ -150,6 +237,74 @@ function BandejaNotificaciones({ empresaActiva = null, empresasUsuario = [] }) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [empresaActiva?.id]);
+
+  const cargarEmpresasAcceso = async () => {
+    try {
+      const { data: authData } = await supabase.auth.getUser();
+      const userId = authData?.user?.id;
+
+      if (!userId) {
+        const base = Array.isArray(empresasUsuario) ? empresasUsuario.filter(Boolean) : [];
+        setEmpresasAcceso(base);
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from("empresa_usuarios")
+        .select(`
+          empresa_id,
+          rol,
+          permisos,
+          activo,
+          empresas (
+            id,
+            nombre
+          )
+        `)
+        .eq("user_id", userId)
+        .eq("activo", true);
+
+      if (error) throw error;
+
+      const empresas = (data || [])
+        .map((fila) => ({
+          ...(fila.empresas || {}),
+          id: fila.empresas?.id || fila.empresa_id,
+          rol_usuario: fila.rol,
+          permisos_usuario: fila.permisos || {},
+        }))
+        .filter((emp) => emp?.id);
+
+      const mapaPermisos = {};
+      empresas.forEach((emp) => {
+        mapaPermisos[String(emp.id)] = {
+          rol: emp.rol_usuario,
+          permisos: emp.permisos_usuario || {},
+        };
+      });
+
+      setEmpresasAcceso(
+        Array.from(new Map(empresas.map((emp) => [String(emp.id), emp])).values())
+      );
+      setPermisosPorEmpresa(mapaPermisos);
+      setPermisosVersion((prev) => prev + 1);
+    } catch (error) {
+      console.error("Error cargando empresas para bandeja:", error);
+      const base = Array.isArray(empresasUsuario) ? empresasUsuario.filter(Boolean) : [];
+      setEmpresasAcceso(base);
+    }
+  };
+
+  useEffect(() => {
+    cargarEmpresasAcceso();
+
+    window.addEventListener("accesosActualizados", cargarEmpresasAcceso);
+
+    return () => {
+      window.removeEventListener("accesosActualizados", cargarEmpresasAcceso);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [empresasUsuario.length, empresaActiva?.id]);
 
   useEffect(() => {
     const actualizarEmpresa = () => {
@@ -177,10 +332,10 @@ function BandejaNotificaciones({ empresaActiva = null, empresasUsuario = [] }) {
       window.removeEventListener("bandejaMensajesActualizada", actualizarBandeja);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [empresa?.id]);
+  }, [empresasConsultaIds.join("|")]);
 
   useEffect(() => {
-    if (!empresa?.id) return;
+    if (empresasConsultaIds.length === 0) return;
 
     cargarMensajes(false);
 
@@ -190,17 +345,128 @@ function BandejaNotificaciones({ empresaActiva = null, empresasUsuario = [] }) {
 
     return () => clearInterval(intervalo);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [empresa?.id]);
+  }, [empresasConsultaIds.join("|"), permisosVersion]);
 
 
   useEffect(() => {
-    if (filtroTipo !== "todos" && !puedeVerTipoNotificacion(filtroTipo)) {
+    if (
+      filtroTipo !== "todos" &&
+      !empresasConsultaIds.some((empresaId) =>
+        puedeVerTipoNotificacion(filtroTipo, obtenerContextoEmpresa(empresaId))
+      )
+    ) {
       setFiltroTipo("todos");
     }
-  }, [filtroTipo, permisosVersion]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filtroTipo, permisosVersion, empresasConsultaIds.join("|")]);
+
+
+  const obtenerAudioContext = () => {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) return null;
+
+    if (!audioCtxRef.current) {
+      audioCtxRef.current = new AudioContextClass();
+    }
+
+    return audioCtxRef.current;
+  };
+
+  const reproducirNota = (ctx, frecuencia, inicio, duracion, volumen = 0.45) => {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+
+    osc.type = "square";
+    osc.frequency.setValueAtTime(frecuencia, inicio);
+
+    gain.gain.setValueAtTime(0.0001, inicio);
+    gain.gain.exponentialRampToValueAtTime(volumen, inicio + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, inicio + duracion);
+
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+
+    osc.start(inicio);
+    osc.stop(inicio + duracion + 0.08);
+  };
+
+  const reproducirSonidoNotificacion = async (tipo) => {
+    if (!sonidoActivo) return;
+
+    try {
+      const ctx = obtenerAudioContext();
+      if (!ctx) return;
+
+      if (ctx.state === "suspended") {
+        await ctx.resume();
+      }
+
+      const ahora = ctx.currentTime;
+
+      const patrones = {
+        // Timbre tipo recepción: ding-dong-ding
+        paciente_llego: [
+          [1046, 0, 0.28],
+          [784, 0.32, 0.34],
+          [1046, 0.76, 0.22],
+        ],
+
+        // Confirmación: sonido positivo corto
+        cita_confirmada: [
+          [659, 0, 0.14],
+          [880, 0.17, 0.18],
+        ],
+
+        // Cancelación: tono descendente más serio
+        cita_cancelada: [
+          [440, 0, 0.2],
+          [330, 0.22, 0.22],
+          [220, 0.46, 0.28],
+        ],
+
+        // Reagenda: tres tonos ascendentes
+        cita_reagendada: [
+          [523, 0, 0.12],
+          [659, 0.16, 0.12],
+          [784, 0.32, 0.18],
+        ],
+
+        // Lunes: doble beep
+        cita_lunes_contacto: [
+          [587, 0, 0.16],
+          [587, 0.24, 0.16],
+        ],
+
+        // Cobro: tono más agudo y rápido
+        cita_enviada_cobro: [
+          [988, 0, 0.1],
+          [1318, 0.14, 0.12],
+          [988, 0.3, 0.14],
+        ],
+      };
+
+      const patron = patrones[tipo] || [[700, 0, 0.14]];
+
+      patron.forEach(([frecuencia, offset, duracion]) => {
+        reproducirNota(ctx, frecuencia, ahora + offset, duracion);
+      });
+    } catch (error) {
+      console.warn("No se pudo reproducir sonido de notificación:", error);
+    }
+  };
+
+  const cambiarSonidoActivo = async () => {
+    const nuevo = !sonidoActivo;
+    setSonidoActivo(nuevo);
+    localStorage.setItem("sonido_notificaciones", nuevo ? "on" : "off");
+
+    if (nuevo) {
+      await reproducirSonidoNotificacion("paciente_llego");
+    }
+  };
 
   const cargarMensajes = async (silencioso = false) => {
-    if (!empresa?.id) return;
+    if (empresasConsultaIds.length === 0) return;
 
     if (!silencioso) setCargando(true);
 
@@ -217,11 +483,12 @@ function BandejaNotificaciones({ empresaActiva = null, empresasUsuario = [] }) {
         estado,
         leida,
         datos,
+        es_ultima_accion,
         created_at
       `)
-      .eq("empresa_id", empresa.id)
+      .in("empresa_id", empresasConsultaIds)
       .order("created_at", { ascending: false })
-      .limit(80);
+      .limit(150);
 
     if (!silencioso) setCargando(false);
 
@@ -230,32 +497,55 @@ function BandejaNotificaciones({ empresaActiva = null, empresasUsuario = [] }) {
       return;
     }
 
-    const nuevos = (data || []).filter((m) =>
-      puedeVerTipoNotificacion(m.tipo)
-    );
+    const nuevos = (data || []).filter((m) => puedeVerMensaje(m));
 
-    if (silencioso && mensajes.length > 0) {
-      const idsActuales = new Set(mensajes.map((m) => String(m.id)));
-      const nuevoMensaje = nuevos.find(
-        (m) =>
-          puedeVerTipoNotificacion(m.tipo) &&
-          !idsActuales.has(String(m.id)) &&
-          !m.leida
+    if (silencioso) {
+      const idsActuales = new Set(
+        (mensajesRef.current || []).map((m) => String(m.id))
       );
+
+      const nuevoMensaje = nuevos.find((m) => {
+        const id = String(m.id);
+
+        return (
+          puedeVerMensaje(m) &&
+          m.es_ultima_accion !== false &&
+          !m.leida &&
+          !idsActuales.has(id) &&
+          !toastMostradosRef.current.has(id)
+        );
+      });
 
       if (nuevoMensaje) {
         mostrarToast(nuevoMensaje);
+        reproducirSonidoNotificacion(nuevoMensaje.tipo);
       }
     }
 
+    mensajesRef.current = nuevos;
     setMensajes(nuevos);
   };
 
   const mostrarToast = (mensaje) => {
+    if (!mensaje?.id) return;
+
+    const id = String(mensaje.id);
+
+    if (toastMostradosRef.current.has(id)) {
+      return;
+    }
+
+    toastMostradosRef.current.add(id);
     setToast(mensaje);
 
-    setTimeout(() => {
-      setToast(null);
+    if (toastTimerRef.current) {
+      clearTimeout(toastTimerRef.current);
+    }
+
+    toastTimerRef.current = setTimeout(() => {
+      setToast((actual) =>
+        actual && String(actual.id) === id ? null : actual
+      );
     }, 6000);
   };
 
@@ -270,7 +560,7 @@ function BandejaNotificaciones({ empresaActiva = null, empresasUsuario = [] }) {
     });
 
     mensajes
-      .filter((m) => puedeVerTipoNotificacion(m.tipo))
+      .filter((m) => puedeVerMensaje(m) && m.es_ultima_accion !== false)
       .forEach((m) => {
         if (!base[m.tipo]) return;
 
@@ -286,7 +576,10 @@ function BandejaNotificaciones({ empresaActiva = null, empresasUsuario = [] }) {
 
   const totalPendientes = useMemo(() => {
     return mensajes.filter(
-      (m) => puedeVerTipoNotificacion(m.tipo) && (!m.leida || m.estado === "pendiente")
+      (m) =>
+        puedeVerMensaje(m) &&
+        m.es_ultima_accion !== false &&
+        (!m.leida || m.estado === "pendiente")
     ).length;
   }, [mensajes, permisosVersion]);
 
@@ -294,7 +587,7 @@ function BandejaNotificaciones({ empresaActiva = null, empresasUsuario = [] }) {
     const texto = filtroTexto.trim().toLowerCase();
 
     return mensajes.filter((m) => {
-      if (!puedeVerTipoNotificacion(m.tipo)) return false;
+      if (!puedeVerMensaje(m)) return false;
 
       const datos = m.datos || {};
       const paciente = datos.paciente || "";
@@ -307,6 +600,11 @@ function BandejaNotificaciones({ empresaActiva = null, empresasUsuario = [] }) {
         (filtroEstado === "pendientes" && (!m.leida || m.estado === "pendiente")) ||
         (filtroEstado === "leidos" && m.leida && m.estado !== "pendiente");
 
+      const coincideVigencia =
+        filtroVigencia === "todos" ||
+        (filtroVigencia === "ultima" && m.es_ultima_accion !== false) ||
+        (filtroVigencia === "historial" && m.es_ultima_accion === false);
+
       const coincideTexto =
         !texto ||
         String(m.titulo || "").toLowerCase().includes(texto) ||
@@ -314,9 +612,9 @@ function BandejaNotificaciones({ empresaActiva = null, empresasUsuario = [] }) {
         String(paciente || "").toLowerCase().includes(texto) ||
         String(telefono || "").toLowerCase().includes(texto);
 
-      return coincideTipo && coincideEstado && coincideTexto;
+      return coincideTipo && coincideEstado && coincideVigencia && coincideTexto;
     });
-  }, [mensajes, filtroTipo, filtroEstado, filtroTexto, permisosVersion]);
+  }, [mensajes, filtroTipo, filtroEstado, filtroVigencia, filtroTexto, permisosVersion]);
 
   const marcarLeido = async (mensajeId) => {
     const { error } = await supabase
@@ -342,10 +640,10 @@ function BandejaNotificaciones({ empresaActiva = null, empresasUsuario = [] }) {
   };
 
   const marcarTodosLeidos = async () => {
-    if (!empresa?.id) return;
+    if (empresasConsultaIds.length === 0) return;
 
     const pendientes = mensajes.filter(
-      (m) => puedeVerTipoNotificacion(m.tipo) && (!m.leida || m.estado === "pendiente")
+      (m) => puedeVerMensaje(m) && (!m.leida || m.estado === "pendiente")
     );
 
     if (pendientes.length === 0) return;
@@ -358,7 +656,7 @@ function BandejaNotificaciones({ empresaActiva = null, empresasUsuario = [] }) {
         leida: true,
         estado: "leido",
       })
-      .eq("empresa_id", empresa.id)
+      .in("empresa_id", empresasConsultaIds)
       .in("id", idsPendientes);
 
     if (error) {
@@ -374,12 +672,18 @@ function BandejaNotificaciones({ empresaActiva = null, empresasUsuario = [] }) {
     setMostrarBandeja(true);
   };
 
-  if (!empresa?.id) return null;
+  if (empresasConsultaIds.length === 0 || !puedeVerBandeja) return null;
 
   return (
     <>
-      {toast && puedeVerTipoNotificacion(toast.tipo) && (
-        <div style={styles.toast} onClick={() => setMostrarMiniPanel(true)}>
+      {toast && puedeVerMensaje(toast) && (
+        <div
+          style={styles.toast}
+          onClick={() => {
+            setToast(null);
+            setMostrarMiniPanel(true);
+          }}
+        >
           <div style={styles.toastIcon}>{TIPOS[toast.tipo]?.icon || "🔔"}</div>
           <div>
             <strong>{toast.titulo || "Nueva notificación"}</strong>
@@ -397,13 +701,24 @@ function BandejaNotificaciones({ empresaActiva = null, empresasUsuario = [] }) {
                 <span>{totalPendientes} pendiente(s)</span>
               </div>
 
-              <button
-                type="button"
-                style={styles.closeBtn}
-                onClick={() => setMostrarMiniPanel(false)}
-              >
-                ✕
-              </button>
+              <div style={styles.miniHeaderActions}>
+                <button
+                  type="button"
+                  style={sonidoActivo ? styles.soundBtnActive : styles.soundBtn}
+                  onClick={cambiarSonidoActivo}
+                  title={sonidoActivo ? "Sonido activo" : "Sonido apagado"}
+                >
+                  {sonidoActivo ? "🔊" : "🔇"}
+                </button>
+
+                <button
+                  type="button"
+                  style={styles.closeBtn}
+                  onClick={() => setMostrarMiniPanel(false)}
+                >
+                  ✕
+                </button>
+              </div>
             </div>
 
             <div style={styles.summaryList}>
@@ -458,7 +773,13 @@ function BandejaNotificaciones({ empresaActiva = null, empresasUsuario = [] }) {
         <button
           type="button"
           style={styles.bellBtn}
-          onClick={() => setMostrarMiniPanel((prev) => !prev)}
+          onClick={async () => {
+            if (sonidoActivo) {
+              const ctx = obtenerAudioContext();
+              if (ctx?.state === "suspended") await ctx.resume();
+            }
+            setMostrarMiniPanel((prev) => !prev);
+          }}
           title="Notificaciones"
         >
           🔔
@@ -519,6 +840,16 @@ function BandejaNotificaciones({ empresaActiva = null, empresasUsuario = [] }) {
                 <option value="pendientes">Pendientes</option>
                 <option value="leidos">Leídos</option>
                 <option value="todos">Todos</option>
+              </select>
+
+              <select
+                style={styles.input}
+                value={filtroVigencia}
+                onChange={(e) => setFiltroVigencia(e.target.value)}
+              >
+                <option value="ultima">Solo última acción</option>
+                <option value="historial">Solo historial</option>
+                <option value="todos">Última + historial</option>
               </select>
 
               <button
@@ -585,13 +916,27 @@ function BandejaNotificaciones({ empresaActiva = null, empresasUsuario = [] }) {
 
                       <div style={styles.messageContent}>
                         <div style={styles.messageTop}>
-                          <strong>{m.titulo}</strong>
+                          <div style={styles.messageTitleLine}>
+                            <strong>{m.titulo}</strong>
+                            <span
+                              style={
+                                m.es_ultima_accion === false
+                                  ? styles.historyBadge
+                                  : styles.latestBadge
+                              }
+                            >
+                              {m.es_ultima_accion === false
+                                ? "Historial"
+                                : "Última acción"}
+                            </span>
+                          </div>
                           <span>{formatearFechaHora(m.created_at)}</span>
                         </div>
 
                         <p style={styles.messageText}>{m.mensaje}</p>
 
                         <div style={styles.messageMeta}>
+                          <span>Empresa: {obtenerNombreEmpresaMensaje(m.empresa_id)}</span>
                           {datos.paciente && <span>Paciente: {datos.paciente}</span>}
                           {datos.telefono && <span>Tel: {datos.telefono}</span>}
                           {datos.fecha_nueva && (
@@ -605,15 +950,36 @@ function BandejaNotificaciones({ empresaActiva = null, empresasUsuario = [] }) {
                         </div>
                       </div>
 
-                      {(!m.leida || m.estado === "pendiente") && (
-                        <button
-                          type="button"
-                          style={styles.readBtn}
-                          onClick={() => marcarLeido(m.id)}
-                        >
-                          Leído
-                        </button>
-                      )}
+                      <div style={styles.messageActions}>
+                        {m.es_ultima_accion !== false &&
+                          mensajes.some(
+                            (otro) =>
+                              String(otro.cita_id || "") === String(m.cita_id || "") &&
+                              String(otro.id) !== String(m.id)
+                          ) && (
+                            <button
+                              type="button"
+                              style={styles.historyBtn}
+                              onClick={() => {
+                                setFiltroVigencia("todos");
+                                setFiltroTipo("todos");
+                                setFiltroTexto(datos.paciente || "");
+                              }}
+                            >
+                              Ver historial
+                            </button>
+                          )}
+
+                        {(!m.leida || m.estado === "pendiente") && (
+                          <button
+                            type="button"
+                            style={styles.readBtn}
+                            onClick={() => marcarLeido(m.id)}
+                          >
+                            Leído
+                          </button>
+                        )}
+                      </div>
                     </div>
                   );
                 })
@@ -865,7 +1231,7 @@ const styles = {
 
   filtersGrid: {
     display: "grid",
-    gridTemplateColumns: "minmax(240px, 1fr) 190px 140px auto",
+    gridTemplateColumns: "minmax(220px, 1fr) 180px 130px 170px auto",
     gap: "9px",
   },
 
@@ -999,6 +1365,83 @@ const styles = {
     textAlign: "center",
     fontWeight: "850",
   },
+  messageTitleLine: {
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    flexWrap: "wrap",
+  },
+
+  latestBadge: {
+    display: "inline-flex",
+    alignItems: "center",
+    borderRadius: "999px",
+    padding: "4px 8px",
+    background: "#dcfce7",
+    color: "#15803d",
+    border: "1px solid #86efac",
+    fontSize: "11px",
+    fontWeight: "950",
+  },
+
+  historyBadge: {
+    display: "inline-flex",
+    alignItems: "center",
+    borderRadius: "999px",
+    padding: "4px 8px",
+    background: "#f1f5f9",
+    color: "#64748b",
+    border: "1px solid #cbd5e1",
+    fontSize: "11px",
+    fontWeight: "950",
+  },
+
+  messageActions: {
+    display: "grid",
+    gap: "7px",
+    justifyItems: "end",
+  },
+
+  historyBtn: {
+    background: "#f4f0f7",
+    color: "#574866",
+    border: "1px solid #d3c7dd",
+    borderRadius: "12px",
+    padding: "8px 10px",
+    cursor: "pointer",
+    fontWeight: "900",
+    fontSize: "12px",
+    whiteSpace: "nowrap",
+  },
+
+  miniHeaderActions: {
+    display: "flex",
+    alignItems: "center",
+    gap: "7px",
+  },
+
+  soundBtn: {
+    border: "none",
+    background: "#f1f5f9",
+    color: "#64748b",
+    borderRadius: "11px",
+    width: "34px",
+    height: "34px",
+    cursor: "pointer",
+    fontWeight: "950",
+  },
+
+  soundBtnActive: {
+    border: "none",
+    background: "#dcfce7",
+    color: "#15803d",
+    borderRadius: "11px",
+    width: "34px",
+    height: "34px",
+    cursor: "pointer",
+    fontWeight: "950",
+  },
+
 };
 
 export default BandejaNotificaciones;

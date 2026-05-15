@@ -124,25 +124,80 @@ async function registrarPagosEnCajaDiaria({
 }
 
 
+function normalizarTextoOrigen(valor = "") {
+  return String(valor || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
 function obtenerOrigenVenta(venta) {
+  const origenDirecto = String(
+    venta?.origen_venta ||
+      venta?.origen_cxc ||
+      venta?.origen ||
+      venta?.tipo_origen ||
+      venta?.modulo_origen ||
+      ""
+  )
+    .trim()
+    .toLowerCase();
+
+  if (
+    origenDirecto === "cita" ||
+    origenDirecto === "atencion" ||
+    origenDirecto === "atención" ||
+    origenDirecto === "atencion_clinica" ||
+    origenDirecto === "atención_clínica"
+  ) {
+    return "atencion";
+  }
+
+  if (
+    venta?.cita_id ||
+    venta?.atencion_id ||
+    venta?.atencion_clinica_id ||
+    venta?.cita_atendida_id
+  ) {
+    return "atencion";
+  }
+
+  // Según tu tabla real detalle_venta, el único campo útil para detectar
+  // si vino de atención clínica es origen_precio.
+  const detalle = Array.isArray(venta?.detalle_venta) ? venta.detalle_venta : [];
+
+  const vieneDeAtencionPorDetalle = detalle.some((d) => {
+    const origenPrecio = String(d?.origen_precio || "")
+      .trim()
+      .toLowerCase();
+
+    return (
+      origenPrecio === "cita" ||
+      origenPrecio === "atencion" ||
+      origenPrecio === "atención" ||
+      origenPrecio === "atencion_clinica" ||
+      origenPrecio === "atención_clínica"
+    );
+  });
+
+  if (vieneDeAtencionPorDetalle) {
+    return "atencion";
+  }
+
   const texto = [
-    venta.origen,
-    venta.tipo_origen,
-    venta.modulo_origen,
-    venta.referencia,
-    venta.observacion,
-    venta.descripcion,
+    venta?.origen_venta,
+    venta?.origen,
+    venta?.tipo_origen,
+    venta?.modulo_origen,
+    venta?.referencia,
+    venta?.observacion,
+    venta?.descripcion,
+    venta?.comentario,
   ]
     .filter(Boolean)
     .join(" ")
     .toLowerCase();
-
-  try {
-    const atencionPendiente = JSON.parse(localStorage.getItem("atencionPendienteCobro") || "null");
-    if (atencionPendiente?.venta_id && String(atencionPendiente.venta_id) === String(venta.id)) {
-      return "atencion";
-    }
-  } catch {}
 
   if (
     texto.includes("atencion") ||
@@ -177,6 +232,7 @@ function Deudas() {
   const [filtroHastaCxC, setFiltroHastaCxC] = useState("");
   const [filtroOrigenCxC, setFiltroOrigenCxC] = useState("todos");
   const [ventaAbierta, setVentaAbierta] = useState(null);
+  const [empresaCobroId, setEmpresaCobroId] = useState("");
   const [pagos, setPagos] = useState([
     { metodo_pago_id: "", monto: "", referencia: "" },
   ]);
@@ -358,7 +414,12 @@ function Deudas() {
 
     let query = supabase
       .from("ventas")
-      .select("*, clientes(id, nombre), venta_pagos(monto)")
+      .select(`
+        *,
+        clientes(id, nombre),
+        venta_pagos(monto),
+        detalle_venta(id, origen_precio)
+      `)
       .in("empresa_id", idsConsulta)
       .neq("estado", "pagado");
 
@@ -428,8 +489,17 @@ function Deudas() {
   };
 
   const abrirCobro = async (venta) => {
-    await obtenerMetodosPago(venta.empresa_id || empresa?.id);
-    await obtenerClasificaciones(venta.empresa_id || empresa?.id);
+    const empresaCobroInicial =
+      venta.empresa_cobro_id ||
+      venta.empresa_facturacion_id ||
+      venta.empresa_pago_id ||
+      venta.empresa_id ||
+      empresa?.id ||
+      "";
+
+    setEmpresaCobroId(empresaCobroInicial);
+    await obtenerMetodosPago(empresaCobroInicial);
+    await obtenerClasificaciones(empresaCobroInicial);
     await cargarDetalleVenta(venta);
     setVentaAbierta(venta);
     setClasificacionPacienteId(venta.clasificacion_paciente_id || venta.cliente_clasificacion_id || "");
@@ -439,8 +509,20 @@ function Deudas() {
   const cerrarCobro = () => {
     setVentaAbierta(null);
     setDetalleVentaAbierta([]);
+    setEmpresaCobroId("");
     setClasificacionPacienteId("");
     setPagos([{ metodo_pago_id: "", monto: "", referencia: "" }]);
+  };
+
+  const cambiarEmpresaCobro = async (empresaId) => {
+    setEmpresaCobroId(empresaId);
+    setPagos([{ metodo_pago_id: "", monto: "", referencia: "" }]);
+    setClasificacionPacienteId("");
+
+    if (empresaId) {
+      await obtenerMetodosPago(empresaId);
+      await obtenerClasificaciones(empresaId);
+    }
   };
 
   const agregarFilaPago = () => {
@@ -732,6 +814,10 @@ function Deudas() {
   const registrarPago = async () => {
     if (!ventaAbierta || !empresa?.id) return;
 
+    if (!empresaCobroId) {
+      return alert("Seleccioná la empresa que cobrará/facturará este pago");
+    }
+
     const pagosValidos = pagos.filter(
       (p) =>
         p.metodo_pago_id &&
@@ -765,7 +851,8 @@ function Deudas() {
 
     const fechaLocal = obtenerFechaHoraSVISO();
 
-    const empresaPagoId = ventaAbierta.empresa_id || empresa?.id;
+    const empresaVentaId = ventaAbierta.empresa_id || empresa?.id;
+    const empresaPagoId = empresaCobroId || empresaVentaId;
 
     if (clasificacionPacienteId) {
       await guardarClasificacionPaciente({
@@ -824,7 +911,7 @@ function Deudas() {
       .from("ventas")
       .update({ estado: nuevoEstado })
       .eq("id", ventaAbierta.id)
-      .eq("empresa_id", empresaPagoId);
+      .eq("empresa_id", empresaVentaId);
 
     setGuardando(false);
 
@@ -1104,6 +1191,19 @@ function Deudas() {
                     {ventaAbierta.origen_cxc === "atencion" ? "Atención de cita" : "Venta"}
                   </div>
                 </div>
+
+                <select
+                  value={empresaCobroId}
+                  onChange={(e) => cambiarEmpresaCobro(e.target.value)}
+                  style={styles.empresaCobroBadgeSelect}
+                  title="Empresa que cobrará / facturará"
+                >
+                  {empresasUsuario.map((empresa) => (
+                    <option key={empresa.id} value={empresa.id}>
+                      {empresa.nombre}
+                    </option>
+                  ))}
+                </select>
 
                 <button type="button" style={styles.btnCerrar} onClick={cerrarCobro}>
                   ✕
@@ -2004,6 +2104,55 @@ const styles = {
     gridTemplateColumns: "minmax(0, 1fr) minmax(220px, 320px)",
     gap: "12px",
     alignItems: "center",
+  },
+
+
+  empresaCobroMiniBox: {
+    minWidth: "220px",
+    maxWidth: "260px",
+    background: "#eef6ff",
+    border: "1px solid #bfdbfe",
+    borderRadius: "12px",
+    padding: "8px",
+    display: "grid",
+    gap: "5px",
+  },
+
+  empresaCobroMiniLabel: {
+    color: "#1d4ed8",
+    fontSize: "10px",
+    fontWeight: "900",
+    textTransform: "uppercase",
+    letterSpacing: "0.02em",
+  },
+
+  empresaCobroMiniSelect: {
+    width: "100%",
+    padding: "7px 8px",
+    borderRadius: "9px",
+    border: "1px solid #93c5fd",
+    background: "#ffffff",
+    color: "#1e3a8a",
+    boxSizing: "border-box",
+    fontSize: "12px",
+    fontWeight: "800",
+    outline: "none",
+  },
+
+  empresaCobroBadgeSelect: {
+    background: "#dbeafe",
+    color: "#1d4ed8",
+    border: "1px solid #93c5fd",
+    borderRadius: "999px",
+    padding: "6px 12px",
+    fontSize: "12px",
+    fontWeight: "800",
+    outline: "none",
+    cursor: "pointer",
+    width: "fit-content",
+    maxWidth: "220px",
+    marginLeft: "auto",
+    alignSelf: "flex-start",
   },
 
 };

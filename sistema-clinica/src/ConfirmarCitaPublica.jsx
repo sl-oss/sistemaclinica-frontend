@@ -23,6 +23,7 @@ function ConfirmarCitaPublica({ token }) {
   const [mensaje, setMensaje] = useState("");
   const [error, setError] = useState("");
   const [ultimaAccion, setUltimaAccion] = useState(null);
+  const [modoCambiarDecision, setModoCambiarDecision] = useState(false);
 
   const [tokenData, setTokenData] = useState(null);
   const [cita, setCita] = useState(null);
@@ -36,8 +37,8 @@ function ConfirmarCitaPublica({ token }) {
   const [horaReagendar, setHoraReagendar] = useState("09:00");
 
   const horasDisponibles = useMemo(() => {
-    return construirHorariosReagenda();
-  }, []);
+    return construirHorariosReagenda(fechaReagendar);
+  }, [fechaReagendar]);
 
   const esLunesSeleccionado = useMemo(() => {
     return esLunes(fechaReagendar);
@@ -75,6 +76,7 @@ function ConfirmarCitaPublica({ token }) {
     if (!mantenerMensaje) {
       setMensaje("");
       setUltimaAccion(null);
+      setModoCambiarDecision(false);
     }
 
     const { data: tokenEncontrado, error: errorToken } = await supabase
@@ -200,6 +202,19 @@ ${detalleExtra ? `\nDetalle:\n${detalleExtra}` : ""}`;
   const guardarNotificacionInterna = async (tipo, titulo, mensajeDetalle = "", datosExtra = {}) => {
     if (!cita?.empresa_id) return;
 
+    // Para saber cuál fue la última decisión del paciente, guardamos historial,
+    // pero antes marcamos las notificaciones anteriores de esta cita como historial.
+    if (cita?.id) {
+      const { error: errorHistorial } = await supabase
+        .from("bandeja_mensajes")
+        .update({ es_ultima_accion: false })
+        .eq("cita_id", cita.id);
+
+      if (errorHistorial) {
+        console.error("Error marcando historial de notificaciones:", errorHistorial);
+      }
+    }
+
     const payload = {
       empresa_id: cita.empresa_id,
       cita_id: cita.id,
@@ -209,6 +224,7 @@ ${detalleExtra ? `\nDetalle:\n${detalleExtra}` : ""}`;
       mensaje: mensajeDetalle,
       estado: "pendiente",
       leida: false,
+      es_ultima_accion: true,
       datos: {
         paciente: cita?.clientes?.nombre || "Paciente",
         telefono: cita?.clientes?.telefono || "",
@@ -443,6 +459,7 @@ Me gustaría consultar disponibilidad para poder agendar.`;
   };
 
   const info = leerServicio(cita?.servicio);
+  const puedeCambiarDecision = cita?.estado !== "cancelada" || modoCambiarDecision;
 
   if (cargando) {
     return (
@@ -453,6 +470,84 @@ Me gustaría consultar disponibilidad para poder agendar.`;
       </div>
     );
   }
+
+  if (ultimaAccion) {
+  return (
+    <div style={styles.page}>
+      <div style={styles.resultCard}>
+        <div
+          style={{
+            ...styles.resultIcon,
+            background:
+              ultimaAccion.tipo === "confirmada"
+                ? "#dcfce7"
+                : ultimaAccion.tipo === "cancelada"
+                ? "#fee2e2"
+                : "#ede9fe",
+            color:
+              ultimaAccion.tipo === "confirmada"
+                ? "#15803d"
+                : ultimaAccion.tipo === "cancelada"
+                ? "#b91c1c"
+                : "#6d28d9",
+          }}
+        >
+          {ultimaAccion.tipo === "confirmada"
+            ? "✅"
+            : ultimaAccion.tipo === "cancelada"
+            ? "❌"
+            : "🔄"}
+        </div>
+
+        <h1 style={styles.resultTitle}>
+          {ultimaAccion.titulo}
+        </h1>
+
+        <p style={styles.resultText}>
+          {mensaje}
+        </p>
+
+        {ultimaAccion.detalle && (
+          <div style={styles.resultDetailBox}>
+            {ultimaAccion.detalle
+              .split("\n")
+              .map((linea, index) => (
+                <div key={index}>{linea}</div>
+              ))}
+          </div>
+        )}
+
+        <div style={styles.resultButtons}>
+          <button
+            type="button"
+            style={styles.resultSecondaryBtn}
+            onClick={() => {
+              setUltimaAccion(null);
+              setAccion("");
+              setMensaje("");
+            }}
+          >
+            Cambiar decisión
+          </button>
+
+          <button
+            type="button"
+            style={styles.resultPrimaryBtn}
+            onClick={() => {
+              window.close();
+
+              setTimeout(() => {
+                window.location.href = "about:blank";
+              }, 300);
+            }}
+          >
+            Finalizar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
   if (error && !cita) {
     return (
@@ -483,6 +578,12 @@ Me gustaría consultar disponibilidad para poder agendar.`;
           </div>
         )}
         {error && <div style={styles.errorBox}>{error}</div>}
+
+        {modoCambiarDecision && cita?.estado === "cancelada" && (
+          <div style={styles.changeDecisionBox}>
+            Está cambiando una decisión anterior. Puede confirmar, cancelar nuevamente o reagendar la cita.
+          </div>
+        )}
 
         <div style={styles.appointmentBox}>
           <span style={styles.label}>Paciente</span>
@@ -519,7 +620,7 @@ Me gustaría consultar disponibilidad para poder agendar.`;
           )}
         </div>
 
-        {cita?.estado !== "cancelada" && (
+        {puedeCambiarDecision && (
           <div style={styles.actionsGrid}>
             <button
               type="button"
@@ -560,7 +661,7 @@ Me gustaría consultar disponibilidad para poder agendar.`;
           </div>
         )}
 
-        {accion === "cancelar" && cita?.estado !== "cancelada" && (
+        {accion === "cancelar" && puedeCambiarDecision && (
           <div style={styles.panel}>
             <label style={styles.label}>Motivo de cancelación</label>
             <textarea
@@ -608,13 +709,13 @@ Me gustaría consultar disponibilidad para poder agendar.`;
           </div>
         )}
 
-        {accion === "reagendar" && cita?.estado !== "cancelada" && (
+        {accion === "reagendar" && puedeCambiarDecision && (
           <div style={styles.panel}>
             <div style={styles.reagendarHeader}>
               <div>
                 <h3 style={styles.panelTitle}>Reagendar cita</h3>
                 <p style={styles.panelText}>
-                  Horarios disponibles: 09:00 a.m. a 11:45 a.m. y 02:00 p.m. a 05:45 p.m.
+                  Horarios disponibles: lunes a viernes 09:00 a.m. a 11:45 a.m. y 02:00 p.m. a 05:45 p.m. • sábados únicamente hasta las 11:45 a.m.
                   Máximo 4 pacientes por bloque de 15 minutos.
                 </p>
               </div>
@@ -720,10 +821,29 @@ function obtenerFechaSV() {
   return `${yyyy}-${mm}-${dd}`;
 }
 
-function construirHorariosReagenda() {
+function construirHorariosReagenda(fechaSeleccionada = null) {
   const bloques = [];
 
-  HORARIOS_REAGENDA.forEach((rango) => {
+  // Si es sábado, solo se atiende hasta las 11:45 a.m.
+  const esSabadoSeleccionado = (() => {
+    if (!fechaSeleccionada) return false;
+
+    const [y, m, d] = String(fechaSeleccionada)
+      .slice(0, 10)
+      .split("-")
+      .map(Number);
+
+    const fecha = new Date(y, m - 1, d);
+
+    return fecha.getDay() === 6;
+  })();
+
+  const horarios =
+    esSabadoSeleccionado
+      ? [{ desde: "09:00", hasta: "11:45" }]
+      : HORARIOS_REAGENDA;
+
+  horarios.forEach((rango) => {
     let actual = convertirHoraAMinutos(rango.desde);
     const fin = convertirHoraAMinutos(rango.hasta);
 
@@ -1241,6 +1361,95 @@ const styles = {
     color: "#be123c",
     border: "1px solid #fecdd3",
   },
+
+  changeDecisionBox: {
+    background: "#eff6ff",
+    border: "1px solid #bfdbfe",
+    color: "#1d4ed8",
+    borderRadius: "14px",
+    padding: "12px",
+    fontWeight: "850",
+    fontSize: "13px",
+    lineHeight: 1.4,
+  },
+  resultCard: {
+  width: "min(500px, 100%)",
+  background: "#fff",
+  borderRadius: "30px",
+  padding: "32px",
+  boxSizing: "border-box",
+  border: "1px solid #e2e8f0",
+  boxShadow: "0 24px 80px rgba(15,23,42,0.14)",
+  display: "grid",
+  gap: "18px",
+  textAlign: "center",
+},
+
+resultIcon: {
+  width: "90px",
+  height: "90px",
+  borderRadius: "999px",
+  display: "grid",
+  placeItems: "center",
+  fontSize: "42px",
+  margin: "0 auto",
+  fontWeight: "900",
+},
+
+resultTitle: {
+  margin: 0,
+  fontSize: "34px",
+  fontWeight: "950",
+  color: "#0f172a",
+  lineHeight: 1,
+},
+
+resultText: {
+  margin: 0,
+  color: "#475569",
+  fontSize: "16px",
+  lineHeight: 1.5,
+},
+
+resultDetailBox: {
+  background: "#f8fafc",
+  border: "1px solid #e2e8f0",
+  borderRadius: "18px",
+  padding: "16px",
+  color: "#334155",
+  fontSize: "14px",
+  lineHeight: 1.5,
+  textAlign: "left",
+},
+
+resultButtons: {
+  display: "grid",
+  gridTemplateColumns: "1fr 1fr",
+  gap: "12px",
+  marginTop: "10px",
+},
+
+resultPrimaryBtn: {
+  background: "#15803d",
+  color: "#fff",
+  border: "none",
+  borderRadius: "16px",
+  padding: "15px",
+  cursor: "pointer",
+  fontWeight: "950",
+  fontSize: "15px",
+},
+
+resultSecondaryBtn: {
+  background: "#f1f5f9",
+  color: "#334155",
+  border: "1px solid #cbd5e1",
+  borderRadius: "16px",
+  padding: "15px",
+  cursor: "pointer",
+  fontWeight: "950",
+  fontSize: "15px",
+},
 
 };
 

@@ -343,6 +343,10 @@ function App() {
   };
 
   const crearEmpresa = async () => {
+    if (!puedeCrearEmpresa) {
+      return alert("No tienes permiso para crear empresas");
+    }
+
     if (!nuevaEmpresa.trim()) {
       return alert("Escribe un nombre de empresa");
     }
@@ -520,6 +524,21 @@ function App() {
     return Boolean(permisosActivos?.[clave]);
   };
 
+  const puedeCambiarEmpresa =
+    membresias.length > 1 &&
+    (
+      ["owner", "admin", "propietario"].includes(
+        String(rolActivo || "").toLowerCase()
+      ) ||
+      permisosActivos?.empresas_cambiar
+    );
+
+  const puedeCrearEmpresa =
+    ["owner", "admin", "propietario"].includes(
+      String(rolActivo || "").toLowerCase()
+    ) ||
+    permisosActivos?.empresas_crear;
+
   const menuVisible = useMemo(() => {
     return [
       { key: "usuarios", label: "👥 Usuarios / Accesos", permiso: "usuarios_ver" },
@@ -676,9 +695,11 @@ function App() {
             />
           </div>
 
+          {puedeCrearEmpresa && (
           <button style={styles.cleanPrimaryBtn} onClick={crearEmpresa}>
             Crear empresa
           </button>
+          )}
 
           <button style={styles.cleanDangerBtn} onClick={logout}>
             Cerrar sesión
@@ -722,6 +743,7 @@ function App() {
             ))}
           </div>
 
+          {puedeCrearEmpresa && (
           <div style={styles.cleanCreateBox}>
             <label style={styles.cleanLabel}>Crear nueva empresa</label>
             <input
@@ -735,6 +757,7 @@ function App() {
               Crear empresa
             </button>
           </div>
+          )}
 
           <button style={styles.cleanDangerBtn} onClick={logout}>
             Cerrar sesión
@@ -766,6 +789,7 @@ function App() {
         </div>
 
         <div style={styles.topbarRight}>
+          {puedeCambiarEmpresa && (
           <button
             style={styles.smallTopButton}
             onClick={() => {
@@ -774,6 +798,7 @@ function App() {
           >
             Cambiar
           </button>
+          )}
 
           <button style={styles.smallDangerButton} onClick={logout}>
             Salir
