@@ -339,14 +339,81 @@ function BandejaNotificaciones({ empresaActiva = null, empresasUsuario = [] }) {
 
     cargarMensajes(false);
 
-    const intervalo = setInterval(() => {
-      cargarMensajes(true);
-    }, 15000);
+    const channel = supabase
+      .channel(`bandeja-mensajes-realtime-${empresasConsultaIds.join("-")}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "bandeja_mensajes",
+        },
+        async (payload) => {
+          const empresaPayload = String(payload?.new?.empresa_id || "");
+          if (!empresasConsultaIds.map(String).includes(empresaPayload)) return;
 
-    return () => clearInterval(intervalo);
+          console.log("Nueva notificación realtime:", payload);
+          await cargarMensajes(true);
+        }
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "bandeja_mensajes",
+        },
+        async (payload) => {
+          const empresaPayload = String(payload?.new?.empresa_id || "");
+          if (!empresasConsultaIds.map(String).includes(empresaPayload)) return;
+
+          await cargarMensajes(true);
+        }
+      )
+      .subscribe((status) => {
+        console.log("Estado Realtime bandeja:", status);
+      });
+
+    // Respaldo suave por si el navegador/tablet corta realtime temporalmente.
+    const intervaloRespaldo = setInterval(() => {
+      cargarMensajes(true);
+    }, 60000);
+
+    return () => {
+      clearInterval(intervaloRespaldo);
+      supabase.removeChannel(channel);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [empresasConsultaIds.join("|"), permisosVersion]);
 
+
+  useEffect(() => {
+    const refrescarAlVolver = () => {
+      if (document.visibilityState === "visible") {
+        cargarMensajes(true);
+      }
+    };
+
+    document.addEventListener("visibilitychange", refrescarAlVolver);
+
+    return () => {
+      document.removeEventListener("visibilitychange", refrescarAlVolver);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [empresasConsultaIds.join("|")]);
+
+  useEffect(() => {
+    const refrescarAlEnfocar = () => {
+      cargarMensajes(true);
+    };
+
+    window.addEventListener("focus", refrescarAlEnfocar);
+
+    return () => {
+      window.removeEventListener("focus", refrescarAlEnfocar);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [empresasConsultaIds.join("|")]);
 
   useEffect(() => {
     if (
