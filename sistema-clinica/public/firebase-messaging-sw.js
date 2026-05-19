@@ -8,21 +8,51 @@ firebase.initializeApp({
   storageBucket: "sistema-clinica-3a167.firebasestorage.app",
   messagingSenderId: "278003358478",
   appId: "1:278003358478:web:f1930ee6c95f65e9afd55f",
-  measurementId: "G-WYKWN5W0L0",
 });
 
 const messaging = firebase.messaging();
 
 messaging.onBackgroundMessage((payload) => {
-  self.registration.showNotification(payload?.notification?.title || "Nueva notificación", {
-    body: payload?.notification?.body || "Hay una nueva actualización.",
+  console.log("[firebase-messaging-sw.js] Background message ", payload);
+
+  const notificationTitle =
+    payload.notification?.title || "Nueva notificación";
+
+  const notificationOptions = {
+    body:
+      payload.notification?.body ||
+      payload.data?.message ||
+      "Nueva actualización",
     icon: "/icon-192.png",
     badge: "/icon-192.png",
-    data: payload?.data || {},
-  });
+    vibrate: [200, 100, 200],
+    requireInteraction: true,
+    data: payload.data || {},
+  };
+
+  self.registration.showNotification(
+    notificationTitle,
+    notificationOptions
+  );
 });
 
-self.addEventListener("notificationclick", (event) => {
+self.addEventListener("notificationclick", function (event) {
   event.notification.close();
-  event.waitUntil(clients.openWindow("/"));
+
+  event.waitUntil(
+    clients.matchAll({
+      type: "window",
+      includeUncontrolled: true,
+    }).then(function (clientList) {
+      for (const client of clientList) {
+        if ("focus" in client) {
+          return client.focus();
+        }
+      }
+
+      if (clients.openWindow) {
+        return clients.openWindow("/");
+      }
+    })
+  );
 });
