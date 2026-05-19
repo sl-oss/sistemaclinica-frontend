@@ -206,7 +206,7 @@ ${detalleExtra ? `\nDetalle:\n${detalleExtra}` : ""}`;
       const { data: tokensData, error: tokensError } = await supabase
         .from("push_tokens")
         .select("token")
-        
+        .eq("empresa_id", cita.empresa_id)
         .eq("activo", true);
 
       if (tokensError) {
@@ -219,7 +219,7 @@ ${detalleExtra ? `\nDetalle:\n${detalleExtra}` : ""}`;
         .filter(Boolean);
 
       if (tokens.length === 0) {
-        console.log("No hay tokens push para esta empresa.");
+        console.log("No hay tokens push para esta empresa:", cita.empresa_id);
         return;
       }
 
@@ -234,7 +234,7 @@ ${detalleExtra ? `\nDetalle:\n${detalleExtra}` : ""}`;
         dataPush[key] = value == null ? "" : String(value);
       });
 
-      const { data: pushData, error: pushError } = await supabase.functions.invoke("enviar-push", { 
+      const { data: pushData, error: pushError } = await supabase.functions.invoke("enviar-push", {
         body: {
           tokens,
           title: titulo || "Nueva notificación",
@@ -244,10 +244,6 @@ ${detalleExtra ? `\nDetalle:\n${detalleExtra}` : ""}`;
       });
 
       console.log("RESPUESTA PUSH:", pushData);
-
-if (pushError) {
-  console.error("Error enviando push:", pushError);
-}
 
       if (pushError) {
         console.error("Error enviando push:", pushError);

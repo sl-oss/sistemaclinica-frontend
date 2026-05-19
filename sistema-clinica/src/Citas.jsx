@@ -1226,21 +1226,28 @@ autoTable(doc, {
     } else {
       window.dispatchEvent(new Event("bandejaMensajesActualizada"));
       // PUSH REAL FIREBASE
-try {
-  const { data: tokensData, error: tokensError } = await supabase
-    .from("push_tokens")
-    .select("token")
+      try {
+        const { data: tokensData, error: tokensError } = await supabase
+          .from("push_tokens")
+          .select("token")
+          .eq("empresa_id", cita.empresa_id)
           .eq("activo", true);
 
-  if (tokensError) {
-    console.error("Error obteniendo tokens:", tokensError);
-  } else {
-    const tokens = (tokensData || [])
-      .map((t) => t.token)
-      .filter(Boolean);
+        if (tokensError) {
+          console.error("Error obteniendo tokens push:", tokensError);
+          return;
+        }
 
-    if (tokens.length > 0) {
-      const { data: pushData, error: pushError } = await supabase.functions.invoke("enviar-push", {
+        const tokens = (tokensData || [])
+          .map((item) => item.token)
+          .filter(Boolean);
+
+        if (tokens.length === 0) {
+          console.log("No hay tokens push para esta empresa:", cita.empresa_id);
+          return;
+        }
+
+        const { data: pushData, error: pushError } = await supabase.functions.invoke("enviar-push", {
           body: {
             tokens,
             title: "Paciente llegó",
@@ -1248,25 +1255,20 @@ try {
             data: {
               tipo: "paciente_llego",
               cita_id: String(cita.id),
+              empresa_id: String(cita.empresa_id),
+              cliente_id: String(cita.cliente_id || ""),
             },
           },
+        });
+
+        console.log("RESPUESTA PUSH:", pushData);
+
+        if (pushError) {
+          console.error("Error enviando push:", pushError);
         }
-      );
-
-      console.log("RESPUESTA PUSH:", pushData);
-
-if (pushError) {
-  console.error("Error enviando push:", pushError);
-}
-
-      if (pushError) {
-        console.error("Error enviando push:", pushError);
+      } catch (err) {
+        console.error("Error push firebase:", err);
       }
-    }
-  }
-} catch (err) {
-  console.error("Error push firebase:", err);
-}
     }
   };
 
