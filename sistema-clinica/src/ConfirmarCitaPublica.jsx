@@ -199,6 +199,58 @@ ${detalleExtra ? `\nDetalle:\n${detalleExtra}` : ""}`;
     window.location.href = url;
   };
 
+  const enviarPushNotificacion = async (titulo, mensajeDetalle, tipo, datosExtra = {}) => {
+    if (!cita?.empresa_id) return;
+
+    try {
+      const { data: tokensData, error: tokensError } = await supabase
+        .from("push_tokens")
+        .select("token")
+        .eq("empresa_id", cita.empresa_id)
+        .eq("activo", true);
+
+      if (tokensError) {
+        console.error("Error obteniendo tokens push:", tokensError);
+        return;
+      }
+
+      const tokens = (tokensData || [])
+        .map((item) => item.token)
+        .filter(Boolean);
+
+      if (tokens.length === 0) {
+        console.log("No hay tokens push para esta empresa.");
+        return;
+      }
+
+      const dataPush = {
+        tipo: String(tipo || ""),
+        cita_id: String(cita?.id || ""),
+        empresa_id: String(cita?.empresa_id || ""),
+        cliente_id: String(cita?.cliente_id || ""),
+      };
+
+      Object.entries(datosExtra || {}).forEach(([key, value]) => {
+        dataPush[key] = value == null ? "" : String(value);
+      });
+
+      const { error: pushError } = await supabase.functions.invoke("enviar-push", {
+        body: {
+          tokens,
+          title: titulo || "Nueva notificación",
+          message: mensajeDetalle || "Hay una nueva actualización.",
+          data: dataPush,
+        },
+      });
+
+      if (pushError) {
+        console.error("Error enviando push:", pushError);
+      }
+    } catch (error) {
+      console.error("Error push firebase:", error);
+    }
+  };
+
   const guardarNotificacionInterna = async (tipo, titulo, mensajeDetalle = "", datosExtra = {}) => {
     if (!cita?.empresa_id) return;
 
@@ -238,7 +290,12 @@ ${detalleExtra ? `\nDetalle:\n${detalleExtra}` : ""}`;
 
     if (error) {
       console.error("Error guardando notificación interna:", error);
+      return;
     }
+
+    window.dispatchEvent(new Event("bandejaMensajesActualizada"));
+
+    await enviarPushNotificacion(titulo, mensajeDetalle, tipo, datosExtra);
   };
 
   const contactarClinicaPorLunes = async () => {

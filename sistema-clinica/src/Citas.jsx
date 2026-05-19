@@ -1225,6 +1225,44 @@ autoTable(doc, {
       console.error("Error creando notificación de llegada:", error);
     } else {
       window.dispatchEvent(new Event("bandejaMensajesActualizada"));
+      // PUSH REAL FIREBASE
+try {
+  const { data: tokensData, error: tokensError } = await supabase
+    .from("push_tokens")
+    .select("token")
+    .eq("empresa_id", cita.empresa_id);
+
+  if (tokensError) {
+    console.error("Error obteniendo tokens:", tokensError);
+  } else {
+    const tokens = (tokensData || [])
+      .map((t) => t.token)
+      .filter(Boolean);
+
+    if (tokens.length > 0) {
+      const { error: pushError } = await supabase.functions.invoke(
+        "enviar-push",
+        {
+          body: {
+            tokens,
+            title: "Paciente llegó",
+            message: `${paciente} ya llegó a clínica`,
+            data: {
+              tipo: "paciente_llego",
+              cita_id: String(cita.id),
+            },
+          },
+        }
+      );
+
+      if (pushError) {
+        console.error("Error enviando push:", pushError);
+      }
+    }
+  }
+} catch (err) {
+  console.error("Error push firebase:", err);
+}
     }
   };
 

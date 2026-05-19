@@ -130,12 +130,33 @@ function App() {
 
       console.log("TOKEN PUSH:", token);
 
-      // Más adelante guardaremos este token en Supabase para enviar push reales
-      // desde servidor/Firebase hacia cada tablet o celular.
+      const empresaLocal = JSON.parse(localStorage.getItem("empresa") || "null");
+      const empresaId = empresaActiva?.id || empresaLocal?.id || null;
+
+      const payload = {
+        user_id: user.id,
+        empresa_id: empresaId,
+        token,
+        plataforma: "web-pwa",
+        activo: true,
+        updated_at: new Date().toISOString(),
+      };
+
+      const { error } = await supabase
+        .from("push_tokens")
+        .upsert(payload, {
+          onConflict: "token",
+        });
+
+      if (error) {
+        console.error("Error guardando push token:", error);
+      } else {
+        console.log("Push token guardado en Supabase");
+      }
     };
 
     activarPush();
-  }, [user?.id, pushPermisoSolicitado]);
+  }, [user?.id, empresaActiva?.id, pushPermisoSolicitado]);
 
 
   useEffect(() => {
@@ -372,6 +393,7 @@ function App() {
   const logout = async () => {
     await supabase.auth.signOut();
     limpiarEmpresaLocal();
+    setPushPermisoSolicitado(false);
   };
 
   const crearEmpresa = async () => {
