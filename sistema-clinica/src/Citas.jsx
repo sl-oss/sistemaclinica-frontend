@@ -1253,6 +1253,12 @@ try {
         }
       );
 
+      console.log("RESPUESTA PUSH:", pushData);
+
+if (pushError) {
+  console.error("Error enviando push:", pushError);
+}
+
       if (pushError) {
         console.error("Error enviando push:", pushError);
       }
@@ -4353,12 +4359,6 @@ const styles = {
 
 };
 
-
-
 export default Citas;
-console.log("RESPUESTA PUSH:", pushData);
 
-if (pushError) {
-  console.error("Error enviando push:", pushError);
-}
   

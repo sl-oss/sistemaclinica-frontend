@@ -234,7 +234,7 @@ ${detalleExtra ? `\nDetalle:\n${detalleExtra}` : ""}`;
         dataPush[key] = value == null ? "" : String(value);
       });
 
-      const { data: pushData, error: pushError } = await supabase.functions.invoke("enviar-push", {
+      const { data: pushData, error: pushError } = await supabase.functions.invoke("enviar-push", { 
         body: {
           tokens,
           title: titulo || "Nueva notificación",
@@ -242,6 +242,12 @@ ${detalleExtra ? `\nDetalle:\n${detalleExtra}` : ""}`;
           data: dataPush,
         },
       });
+
+      console.log("RESPUESTA PUSH:", pushData);
+
+if (pushError) {
+  console.error("Error enviando push:", pushError);
+}
 
       if (pushError) {
         console.error("Error enviando push:", pushError);
@@ -1510,9 +1516,5 @@ resultSecondaryBtn: {
 
 };
 
-export default ConfirmarCitaPublica;
-console.log("RESPUESTA PUSH:", pushData);
 
-if (pushError) {
-  console.error("Error enviando push:", pushError);
-}
+export default ConfirmarCitaPublica;
