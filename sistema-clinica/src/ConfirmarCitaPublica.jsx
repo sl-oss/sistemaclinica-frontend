@@ -234,7 +234,7 @@ ${detalleExtra ? `\nDetalle:\n${detalleExtra}` : ""}`;
         dataPush[key] = value == null ? "" : String(value);
       });
 
-      const { error: pushError } = await supabase.functions.invoke("enviar-push", {
+      const { data: pushData, error: pushError } = await supabase.functions.invoke("enviar-push", {
         body: {
           tokens,
           title: titulo || "Nueva notificación",
@@ -936,6 +936,12 @@ function esDomingo(fecha) {
   const [y, m, d] = String(fecha).slice(0, 10).split("-").map(Number);
   const date = new Date(y, m - 1, d);
   return date.getDay() === 0;
+}
+
+console.log("RESPUESTA PUSH:", pushData);
+
+if (pushError) {
+  console.error("Error enviando push:", pushError);
 }
 
 function formatearTelefonoClinica(numero) {

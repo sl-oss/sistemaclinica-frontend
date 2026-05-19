@@ -1240,9 +1240,7 @@ try {
       .filter(Boolean);
 
     if (tokens.length > 0) {
-      const { error: pushError } = await supabase.functions.invoke(
-        "enviar-push",
-        {
+      const { data: pushData, error: pushError } = await supabase.functions.invoke("enviar-push", {
           body: {
             tokens,
             title: "Paciente llegó",
@@ -2885,6 +2883,12 @@ function labelTipo(tipo) {
   if (tipo === "emergencia") return "Emergencia";
   if (tipo === "importante") return "Importante";
   return "Normal";
+}
+
+console.log("RESPUESTA PUSH:", pushData);
+
+if (pushError) {
+  console.error("Error enviando push:", pushError);
 }
 
 function prioridadStyle(tipo) {
