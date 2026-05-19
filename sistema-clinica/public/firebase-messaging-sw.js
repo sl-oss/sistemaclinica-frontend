@@ -1,4 +1,3 @@
-/* eslint-disable no-undef */
 importScripts("https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js");
 importScripts("https://www.gstatic.com/firebasejs/10.13.2/firebase-messaging-compat.js");
 
@@ -15,23 +14,15 @@ firebase.initializeApp({
 const messaging = firebase.messaging();
 
 messaging.onBackgroundMessage((payload) => {
-  const notificationTitle =
-    payload?.notification?.title || "Nueva notificación";
-
-  const notificationOptions = {
+  self.registration.showNotification(payload?.notification?.title || "Nueva notificación", {
     body: payload?.notification?.body || "Hay una nueva actualización.",
     icon: "/icon-192.png",
     badge: "/icon-192.png",
     data: payload?.data || {},
-  };
-
-  self.registration.showNotification(notificationTitle, notificationOptions);
+  });
 });
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
-
-  event.waitUntil(
-    clients.openWindow("/")
-  );
+  event.waitUntil(clients.openWindow("/"));
 });

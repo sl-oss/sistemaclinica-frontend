@@ -1,9 +1,5 @@
 import { initializeApp } from "firebase/app";
-import {
-  getMessaging,
-  getToken,
-  onMessage,
-} from "firebase/messaging";
+import { getMessaging, getToken, onMessage } from "firebase/messaging";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBuuD5Vf-GXlTYuzt7H9yrjPqvtTZCdumA",
@@ -16,7 +12,6 @@ const firebaseConfig = {
 };
 
 const app = initializeApp(firebaseConfig);
-
 export const messaging = getMessaging(app);
 
 export const solicitarPermisoNotificaciones = async () => {
@@ -28,13 +23,16 @@ export const solicitarPermisoNotificaciones = async () => {
       return null;
     }
 
+    const swRegistration = await navigator.serviceWorker.register(
+      "/firebase-messaging-sw.js"
+    );
+
     const token = await getToken(messaging, {
-      vapidKey:
-        "T75zlnj3CA5a8pOa_Y2EQNie70-YqQduwj-9Av4QUms",
+      vapidKey: "T75zlnj3CA5a8pOa_Y2EQNie70-YqQduwj-9Av4QUms",
+      serviceWorkerRegistration: swRegistration,
     });
 
     console.log("TOKEN FIREBASE:", token);
-
     return token;
   } catch (error) {
     console.error("Error obteniendo token:", error);
@@ -42,9 +40,6 @@ export const solicitarPermisoNotificaciones = async () => {
   }
 };
 
-export const escucharMensajesForeground = () =>
-  new Promise((resolve) => {
-    onMessage(messaging, (payload) => {
-      resolve(payload);
-    });
-  });
+export const escucharMensajesForeground = (callback) => {
+  return onMessage(messaging, callback);
+};
