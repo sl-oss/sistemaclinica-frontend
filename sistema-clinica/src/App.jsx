@@ -16,7 +16,7 @@ import ClasificacionesPacientes from "./ClasificacionesPacientes";
 import ConfirmarCitaPublica from "./ConfirmarCitaPublica";
 import BandejaNotificaciones from "./BandejaNotificaciones";
 import AtencionClinica from "./AtencionClinica";
-import { solicitarPermisoNotificaciones } from "./firebase";
+import { solicitarPermisoNotificaciones, escucharMensajesForeground, } from "./firebase";
 
 function App() {
   const [user, setUser] = useState(null);
@@ -158,6 +158,37 @@ function App() {
     activarPush();
   }, [user?.id, empresaActiva?.id, pushPermisoSolicitado]);
 
+  useEffect(() => {
+  const unsubscribe = escucharMensajesForeground((payload) => {
+    console.log("PUSH FOREGROUND:", payload);
+
+    const title =
+      payload?.notification?.title || "Nueva notificación";
+
+    const body =
+      payload?.notification?.body ||
+      payload?.data?.body ||
+      payload?.data?.message ||
+      "Nueva actualización";
+
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.ready.then((registration) => {
+        registration.showNotification(title, {
+          body,
+          icon: "/icon-192.png",
+          badge: "/icon-192.png",
+          vibrate: [200, 100, 200],
+          requireInteraction: true,
+          data: payload?.data || {},
+        });
+      });
+    }
+  });
+
+  return () => {
+    if (unsubscribe) unsubscribe();
+  };
+}, []);
 
   useEffect(() => {
     if (!user?.id || !empresaActiva?.id) return;
