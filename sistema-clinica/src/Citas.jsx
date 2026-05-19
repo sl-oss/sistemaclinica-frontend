@@ -547,7 +547,7 @@ function Citas({ onNavigate }) {
       .from("citas_tokens_publicos")
       .select("token, expira_en")
       .eq("cita_id", cita.id)
-      .eq("activo", true)
+      .eq("empresa_id", cita.empresa_id)
       .maybeSingle();
 
     if (errorBuscar) {
@@ -1230,7 +1230,7 @@ try {
   const { data: tokensData, error: tokensError } = await supabase
     .from("push_tokens")
     .select("token")
-    .eq("activo", true);
+          .eq("activo", true);
 
   if (tokensError) {
     console.error("Error obteniendo tokens:", tokensError);
@@ -1329,7 +1329,7 @@ if (pushError) {
       .from("atenciones_clinicas")
       .select("*")
       .eq("cita_id", cita.id)
-      .eq("activo", true)
+      .eq("empresa_id", cita.empresa_id)
       .maybeSingle();
 
     if (errorBuscar) {

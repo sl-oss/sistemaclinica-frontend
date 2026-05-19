@@ -206,7 +206,7 @@ ${detalleExtra ? `\nDetalle:\n${detalleExtra}` : ""}`;
       const { data: tokensData, error: tokensError } = await supabase
         .from("push_tokens")
         .select("token")
-        .eq("activo", true)
+        
         .eq("activo", true);
 
       if (tokensError) {
@@ -365,7 +365,7 @@ Me gustaría consultar disponibilidad para poder agendar.`;
         hora_reprogramada: null,
       })
       .eq("id", cita.id)
-      .eq("activo", true);
+      .eq("empresa_id", cita.empresa_id);
 
     setGuardando(false);
 
@@ -416,7 +416,7 @@ Me gustaría consultar disponibilidad para poder agendar.`;
         desea_reprogramar: Boolean(cancelarDeseaReagendar),
       })
       .eq("id", cita.id)
-      .eq("activo", true);
+      .eq("empresa_id", cita.empresa_id);
 
     setGuardando(false);
 
@@ -492,7 +492,7 @@ Me gustaría consultar disponibilidad para poder agendar.`;
         motivo_cancelacion: null,
       })
       .eq("id", cita.id)
-      .eq("activo", true);
+      .eq("empresa_id", cita.empresa_id);
 
     setGuardando(false);
 
