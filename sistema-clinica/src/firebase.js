@@ -28,7 +28,7 @@ export const solicitarPermisoNotificaciones = async () => {
     );
 
     const token = await getToken(messaging, {
-      vapidKey: "T75zlnj3CA5a8pOa_Y2EQNie70-YqQduwj-9Av4QUms",
+      vapidKey: "BBjKzhQd6z73dXNSdPcq4mliEY_Nnj95gx2hBrFj7tr042bWCXTuIy2Tl68s5IeK9S0EHSFof2--hJXP-SIMMyQ",
       serviceWorkerRegistration: swRegistration,
     });
 
