@@ -2885,12 +2885,6 @@ function labelTipo(tipo) {
   return "Normal";
 }
 
-console.log("RESPUESTA PUSH:", pushData);
-
-if (pushError) {
-  console.error("Error enviando push:", pushError);
-}
-
 function prioridadStyle(tipo) {
   if (tipo === "emergencia") {
     return {
@@ -4362,5 +4356,9 @@ const styles = {
 
 
 export default Citas;
+console.log("RESPUESTA PUSH:", pushData);
 
+if (pushError) {
+  console.error("Error enviando push:", pushError);
+}
   

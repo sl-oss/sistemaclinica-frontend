@@ -938,12 +938,6 @@ function esDomingo(fecha) {
   return date.getDay() === 0;
 }
 
-console.log("RESPUESTA PUSH:", pushData);
-
-if (pushError) {
-  console.error("Error enviando push:", pushError);
-}
-
 function formatearTelefonoClinica(numero) {
   const limpio = String(numero || "").replace(/\D/g, "");
   if (limpio.startsWith("503") && limpio.length === 11) {
@@ -1517,3 +1511,8 @@ resultSecondaryBtn: {
 };
 
 export default ConfirmarCitaPublica;
+console.log("RESPUESTA PUSH:", pushData);
+
+if (pushError) {
+  console.error("Error enviando push:", pushError);
+}
