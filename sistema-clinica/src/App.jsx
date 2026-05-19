@@ -16,6 +16,7 @@ import ClasificacionesPacientes from "./ClasificacionesPacientes";
 import ConfirmarCitaPublica from "./ConfirmarCitaPublica";
 import BandejaNotificaciones from "./BandejaNotificaciones";
 import AtencionClinica from "./AtencionClinica";
+import { solicitarPermisoNotificaciones } from "./firebase";
 
 function App() {
   const [user, setUser] = useState(null);
@@ -43,6 +44,9 @@ function App() {
   const [empresaUsuarioId, setEmpresaUsuarioId] = useState(
     localStorage.getItem("empresa_usuario_id") || ""
   );
+
+  const [pushToken, setPushToken] = useState(localStorage.getItem("push_token") || "");
+  const [pushPermisoSolicitado, setPushPermisoSolicitado] = useState(false);
 
   const [nuevaEmpresa, setNuevaEmpresa] = useState("");
   const [pantalla, setPantalla] = useState("dashboard");
@@ -105,6 +109,34 @@ function App() {
 
     prepararAccesos();
   }, [user?.id, user?.email]);
+
+  useEffect(() => {
+    const activarPush = async () => {
+      if (!user?.id || pushPermisoSolicitado) return;
+
+      if (typeof window === "undefined" || !("Notification" in window)) {
+        console.warn("Este navegador no soporta notificaciones push.");
+        return;
+      }
+
+      setPushPermisoSolicitado(true);
+
+      const token = await solicitarPermisoNotificaciones();
+
+      if (!token) return;
+
+      localStorage.setItem("push_token", token);
+      setPushToken(token);
+
+      console.log("TOKEN PUSH:", token);
+
+      // Más adelante guardaremos este token en Supabase para enviar push reales
+      // desde servidor/Firebase hacia cada tablet o celular.
+    };
+
+    activarPush();
+  }, [user?.id, pushPermisoSolicitado]);
+
 
   useEffect(() => {
     if (!user?.id || !empresaActiva?.id) return;

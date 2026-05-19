@@ -371,8 +371,18 @@ function BandejaNotificaciones({ empresaActiva = null, empresasUsuario = [] }) {
         }
       )
       .subscribe((status) => {
-        console.log("Estado Realtime bandeja:", status);
-      });
+  if (status === "SUBSCRIBED") {
+    console.log("Bandeja Realtime conectada");
+  }
+
+  if (status === "CHANNEL_ERROR") {
+    console.warn("Error en Realtime de bandeja");
+  }
+
+  if (status === "TIMED_OUT") {
+    console.warn("Realtime de bandeja tardó demasiado");
+  }
+});
 
     // Respaldo suave por si el navegador/tablet corta realtime temporalmente.
     const intervaloRespaldo = setInterval(() => {
