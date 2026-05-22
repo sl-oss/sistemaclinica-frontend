@@ -121,6 +121,17 @@ function Citas({ onNavigate }) {
     return horas;
   }, []);
 
+  // Vista de día en bloques de media hora.
+  const bloquesMediaHoraDelDia = useMemo(() => {
+    const bloques = [];
+    for (let h = 0; h < 24; h += 1) {
+      const hora = String(h).padStart(2, "0");
+      bloques.push(`${hora}:00`);
+      bloques.push(`${hora}:30`);
+    }
+    return bloques;
+  }, []);
+
   const minutosDisponibles = useMemo(() => ["00", "15", "30", "45"], []);
 
   const clientesFiltradosCita = useMemo(() => {
@@ -179,7 +190,7 @@ function Citas({ onNavigate }) {
 
       const coincideHora =
         !horaSeleccionadaLista ||
-        (obtenerHoraBase(cita.hora) === horaSeleccionadaLista &&
+        (normalizarHora(cita.hora) === horaSeleccionadaLista &&
           fechaCita === fechaSeleccionada);
 
       return coincideTexto && coincideTipo && coincideLlegada && coincideRango && coincideHora;
@@ -929,7 +940,7 @@ autoTable(doc, {
 
   const verCitasDeHora = (fechaTexto, horaTexto) => {
     setFechaSeleccionada(fechaTexto);
-    setHoraSeleccionadaLista(obtenerHoraBase(horaTexto));
+    setHoraSeleccionadaLista(normalizarHora(horaTexto));
     setVista("lista");
   };
 
@@ -1773,7 +1784,7 @@ autoTable(doc, {
             {vista === "dia" && (
               <AgendaDia
                 fechaSeleccionada={fechaSeleccionada}
-                horasDelDia={horasDelDia}
+                horasDelDia={bloquesMediaHoraDelDia}
                 citas={citasDelDia}
                 onNuevo={seleccionarHoraNueva}
                 onVerHora={verCitasDeHora}
@@ -2496,7 +2507,7 @@ function AgendaDia({
 
       <div style={styles.dayAgenda}>
         {horasDelDia.map((h) => {
-          const citasHora = citas.filter((c) => obtenerHoraBase(c.hora) === h);
+          const citasHora = citas.filter((c) => normalizarHora(c.hora) === h);
 
           return (
             <div key={h} style={styles.daySlot}>
