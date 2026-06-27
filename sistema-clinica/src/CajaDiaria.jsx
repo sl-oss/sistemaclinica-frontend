@@ -103,6 +103,14 @@ export default function CajaDiaria() {
   const [loading, setLoading] = useState(false);
   const [autosaveStatus, setAutosaveStatus] = useState("");
   const [accionesAbiertasUid, setAccionesAbiertasUid] = useState(null);
+  const [modalDetallePDF, setModalDetallePDF] = useState({
+    open: false,
+    datos: null,
+    observaciones: {},
+  });
+  const [esPantallaCompacta, setEsPantallaCompacta] = useState(() =>
+    typeof window !== "undefined" ? window.innerWidth <= 900 : false
+  );
 
   const [filtroDesde, setFiltroDesde] = useState(hoy);
   const [filtroHasta, setFiltroHasta] = useState(hoy);
@@ -460,6 +468,17 @@ export default function CajaDiaria() {
     };
   }, []);
 
+  useEffect(() => {
+    const actualizarTamanoPantalla = () => {
+      setEsPantallaCompacta(window.innerWidth <= 900);
+    };
+
+    actualizarTamanoPantalla();
+    window.addEventListener("resize", actualizarTamanoPantalla);
+
+    return () => window.removeEventListener("resize", actualizarTamanoPantalla);
+  }, []);
+
 
 
   const crearFilaVacia = (metodosActuales = metodos, nombrePaciente = "") => {
@@ -474,6 +493,7 @@ export default function CajaDiaria() {
     return {
       uid: crypto.randomUUID(),
       paciente: nombrePaciente,
+      observacion: "",
       pagos,
       referencias,
       venta_id: null,
@@ -1440,6 +1460,7 @@ export default function CajaDiaria() {
         metodo_pago_id,
         monto,
         referencia,
+        observacion_pdf,
         venta_id,
         grupo_facturacion
       `)
@@ -2029,11 +2050,17 @@ export default function CajaDiaria() {
 
     const tieneMonto = metodos.some((metodo) => Number(fila.pagos?.[metodo.id] || 0) > 0);
 
-    if (!tieneMonto) {
-      return alert("Ingresá al menos un monto de cobro.");
+    // Permite guardar pacientes manuales con $0.00.
+    // Esto es necesario para que pacientes solo clasificados o pendientes de cobro
+    // no desaparezcan al guardar/recargar la caja.
+    if (!tieneMonto && manualClasificacionesIds.length === 0) {
+      const continuarCero = window.confirm(
+        "Este paciente quedará guardado con $0.00 y sin clasificar. ¿Deseas continuar?"
+      );
+      if (!continuarCero) return;
     }
 
-    if (manualClasificacionesIds.length === 0) {
+    if (tieneMonto && manualClasificacionesIds.length === 0) {
       const continuar = window.confirm("¿Quieres guardar sin clasificar?");
       if (!continuar) return;
     }
@@ -2153,6 +2180,18 @@ export default function CajaDiaria() {
     setFilas(nuevas);
   };
 
+  const actualizarObservacionFila = (filaIndex, valor) => {
+    const nuevas = [...filas];
+    if (!nuevas[filaIndex]) return;
+
+    nuevas[filaIndex] = {
+      ...nuevas[filaIndex],
+      observacion: valor,
+    };
+
+    setFilas(nuevas);
+  };
+
   const abrirModalFacturacion = (filaUid) => {
     if (!validarEdicionUnaEmpresa()) return;
 
@@ -2251,6 +2290,8 @@ export default function CajaDiaria() {
           origen: [],
           metodos: metodosIniciales,
           referencias: refsIniciales,
+          detalleIds: [],
+          observacion_pdf: item.observacion_pdf || "",
           grupoFacturacion: item.grupoFacturacion || "",
           empresa_id: item.empresa_id || "",
           venta_id: item.venta_id || "",
@@ -2267,6 +2308,16 @@ export default function CajaDiaria() {
 
       if (item.origen && !grupos[key].origen.includes(item.origen)) {
         grupos[key].origen.push(item.origen);
+      }
+
+      (item.detalleIds || []).forEach((detalleId) => {
+        if (detalleId && !grupos[key].detalleIds.includes(detalleId)) {
+          grupos[key].detalleIds.push(detalleId);
+        }
+      });
+
+      if (!grupos[key].observacion_pdf && item.observacion_pdf) {
+        grupos[key].observacion_pdf = item.observacion_pdf;
       }
 
       metodosParaAgrupar.forEach((m) => {
@@ -2309,6 +2360,8 @@ export default function CajaDiaria() {
           : "Manual",
       metodos: g.metodos,
       referencias: g.referencias,
+      detalleIds: g.detalleIds || [],
+      observacion_pdf: g.observacion_pdf || "",
       grupoFacturacion: g.grupoFacturacion,
       empresa_id: g.empresa_id,
       venta_id: g.venta_id,
@@ -2387,8 +2440,45 @@ export default function CajaDiaria() {
       actualizado_por_empresa_usuario_id: empresaUsuarioGuardado.id,
     };
 
+    const normalizarKeyDetalleManual = (valor = "") =>
+      String(valor || "")
+        .trim()
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/\s+/g, " ");
+
+    const construirKeyDetalleManual = (fila = {}) =>
+      [
+        normalizarKeyDetalleManual(fila.paciente || ""),
+        normalizarKeyDetalleManual(fila.grupoFacturacion || fila.grupo_facturacion || ""),
+      ].join("__");
+
+    let observacionesManualExistentes = {};
+
     if (cajaExistente) {
       cajaId = cajaExistente.id;
+
+      const { data: detallesManualExistentes, error: errorDetallesManualExistentes } = await supabase
+        .from("caja_diaria_detalle")
+        .select("paciente, grupo_facturacion, observacion_pdf")
+        .eq("caja_diaria_id", cajaId)
+        .is("venta_id", null);
+
+      if (errorDetallesManualExistentes) {
+        if (!silencioso) setLoading(false);
+        console.error(errorDetallesManualExistentes);
+        if (!silencioso) alert("Error al conservar observaciones anteriores");
+        return false;
+      }
+
+      observacionesManualExistentes = (detallesManualExistentes || []).reduce((acc, item) => {
+        const key = construirKeyDetalleManual(item);
+        if (key && item.observacion_pdf && !acc[key]) {
+          acc[key] = item.observacion_pdf;
+        }
+        return acc;
+      }, {});
 
       const { error: errorActualizarCaja } = await supabase
         .from("cajas_diarias")
@@ -2451,35 +2541,83 @@ export default function CajaDiaria() {
 
     const detalleParaGuardar = [];
 
-    filasManual.forEach((fila) => {
-      metodos.forEach((metodo) => {
-        const valor = fila.pagos[metodo.id];
-        const referencia = fila.referencias[metodo.id];
+    const obtenerMetodoRealParaEmpresa = (metodo) => {
+      if (!metodo) return null;
 
-        if (
-          valor !== "" &&
-          valor !== null &&
-          valor !== undefined &&
-          Number(valor) !== 0
-        ) {
-          const metodoRealId =
-            (metodo.empresasOrigen || []).some((empId) => String(empId) === String(empresaGuardado.id))
-              ? metodo.metodoIds[(metodo.empresasOrigen || []).findIndex((empId) => String(empId) === String(empresaGuardado.id))]
-              : metodo.id;
+      const indexEmpresa = (metodo.empresasOrigen || []).findIndex(
+        (empId) => String(empId) === String(empresaGuardado.id)
+      );
+
+      if (indexEmpresa >= 0 && metodo.metodoIds?.[indexEmpresa]) {
+        return metodo.metodoIds[indexEmpresa];
+      }
+
+      return metodo.metodoIds?.[0] || metodo.id;
+    };
+
+    const obtenerMetodoFallbackCero = () => {
+      const metodoEfectivo = metodos.find((m) =>
+        String(m.nombre || "").toLowerCase().includes("efectivo")
+      );
+
+      return metodoEfectivo || metodos[0] || null;
+    };
+
+    filasManual.forEach((fila) => {
+      let insertoDetalle = false;
+      const observacionPdfExistente =
+        observacionesManualExistentes[construirKeyDetalleManual(fila)] || null;
+
+      metodos.forEach((metodo) => {
+        const valor = fila.pagos?.[metodo.id];
+        const referencia = fila.referencias?.[metodo.id];
+        const valorFueDigitado = valor !== "" && valor !== null && valor !== undefined;
+
+        // Guardamos montos mayores a cero y también montos digitados como 0.
+        // Así una fila manual con $0.00 no desaparece al guardar/recargar.
+        if (valorFueDigitado && Number(valor) >= 0) {
+          const metodoRealId = obtenerMetodoRealParaEmpresa(metodo);
+
+          if (!metodoRealId) return;
 
           detalleParaGuardar.push({
             caja_diaria_id: cajaId,
             paciente: fila.paciente.trim(),
             metodo_pago_id: metodoRealId,
-            monto: Number(valor),
+            monto: Number(valor || 0),
             referencia: referencia?.trim() || null,
+            observacion_pdf: observacionPdfExistente,
+            venta_id: null,
+            grupo_facturacion: fila.grupoFacturacion || null,
+            creado_por_user_id: userGuardado.id,
+            creado_por_empresa_usuario_id: empresaUsuarioGuardado.id,
+          });
+
+          insertoDetalle = true;
+        }
+      });
+
+      // Si el paciente no tiene ningún monto digitado, guardamos una línea $0.00
+      // en efectivo o en el primer método disponible para conservarlo en la caja.
+      if (!insertoDetalle) {
+        const metodoFallback = obtenerMetodoFallbackCero();
+        const metodoRealId = obtenerMetodoRealParaEmpresa(metodoFallback);
+
+        if (metodoRealId) {
+          detalleParaGuardar.push({
+            caja_diaria_id: cajaId,
+            paciente: fila.paciente.trim(),
+            metodo_pago_id: metodoRealId,
+            monto: 0,
+            referencia: null,
+            observacion_pdf: observacionPdfExistente,
             venta_id: null,
             grupo_facturacion: fila.grupoFacturacion || null,
             creado_por_user_id: userGuardado.id,
             creado_por_empresa_usuario_id: empresaUsuarioGuardado.id,
           });
         }
-      });
+      }
     });
 
     if (detalleParaGuardar.length > 0) {
@@ -2697,6 +2835,7 @@ export default function CajaDiaria() {
               paciente,
               monto,
               referencia,
+              observacion_pdf,
               metodo_pago_id,
               venta_id,
               grupo_facturacion,
@@ -2909,7 +3048,17 @@ export default function CajaDiaria() {
             grupoFacturacion,
             metodos: inicial.valores,
             referencias: inicial.refs,
+            detalleIds: [],
+            observacion_pdf: d.observacion_pdf || "",
           };
+        }
+
+        if (d.id && !mapaPacientes[llave].detalleIds.includes(d.id)) {
+          mapaPacientes[llave].detalleIds.push(d.id);
+        }
+
+        if (!mapaPacientes[llave].observacion_pdf && d.observacion_pdf) {
+          mapaPacientes[llave].observacion_pdf = d.observacion_pdf;
         }
 
         mapaPacientes[llave].metodos[metodoNombre] =
@@ -3104,9 +3253,233 @@ export default function CajaDiaria() {
     );
   };
 
-  const exportarDetallePDF = async () => {
-    const datos = await obtenerDatosReporte();
+  const obtenerKeyDetalleReporte = (item, index = 0) => {
+    return [
+      String(item?.empresa || ""),
+      String(item?.fecha || ""),
+      String(item?.paciente || ""),
+      String(item?.origen || ""),
+      String(item?.venta_id || ""),
+      String(item?.grupoFacturacion || item?.grupo_facturacion || ""),
+      String(index),
+    ].join("__");
+  };
 
+  const normalizarClaveObservacionDetalle = (valor = "") => {
+    return String(valor || "")
+      .trim()
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/\s+/g, " ");
+  };
+
+  const obtenerKeyPersistenteObservacionDetalle = (item) => {
+    return [
+      String(item?.empresa_id || ""),
+      String(item?.fecha || ""),
+      normalizarClaveObservacionDetalle(item?.paciente || ""),
+      String(item?.venta_id || "manual"),
+      normalizarClaveObservacionDetalle(item?.grupoFacturacion || item?.grupo_facturacion || ""),
+    ].join("__");
+  };
+
+  const cargarObservacionesDetallePDF = async (datos) => {
+    if (!datos?.detalle?.length) return {};
+
+    const mapa = {};
+
+    (datos.detalle || []).forEach((item, index) => {
+      const keyPersistente = obtenerKeyPersistenteObservacionDetalle(item);
+      const observacion = item.observacion_pdf || "";
+
+      if (keyPersistente && observacion) {
+        mapa[keyPersistente] = observacion;
+      }
+    });
+
+    return mapa;
+  };
+
+  const guardarObservacionesDetallePDF = async (datos, observacionesDetalle = {}) => {
+    if (!datos?.detalle?.length) return true;
+
+    const updates = [];
+
+    datos.detalle.forEach((item, index) => {
+      const keyTemporal = obtenerKeyDetalleReporte(item, index);
+      const observacion = String(observacionesDetalle?.[keyTemporal] || "").trim();
+      const idsDetalle = Array.isArray(item.detalleIds) ? item.detalleIds.filter(Boolean) : [];
+
+      idsDetalle.forEach((idDetalle) => {
+        updates.push({ idDetalle, observacion });
+      });
+    });
+
+    if (updates.length === 0) return true;
+
+    for (const update of updates) {
+      const { error } = await supabase
+        .from("caja_diaria_detalle")
+        .update({ observacion_pdf: update.observacion })
+        .eq("id", update.idDetalle);
+
+      if (error) {
+        console.error("Error guardando observación del PDF:", error);
+        alert("No se pudieron guardar las observaciones del PDF. Revisá que exista la columna observacion_pdf en caja_diaria_detalle.");
+        return false;
+      }
+    }
+
+    return true;
+  };
+
+  const dividirClasificacionesReporte = (texto = "") => {
+    return String(texto || "")
+      .split(/[,|/]+/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+  };
+
+  const obtenerResumenClasificacionesDetalle = (detalle = []) => {
+    return Object.values(
+      (detalle || []).reduce((acc, item) => {
+        const nombres = dividirClasificacionesReporte(item.clasificaciones);
+        const lista = nombres.length > 0 ? nombres : ["Sin clasificación"];
+
+        lista.forEach((nombre) => {
+          const key = nombre.toLowerCase();
+          if (!acc[key]) {
+            acc[key] = {
+              nombre,
+              cantidad: 0,
+            };
+          }
+          acc[key].cantidad += 1;
+        });
+
+        return acc;
+      }, {})
+    ).sort((a, b) => String(a.nombre).localeCompare(String(b.nombre)));
+  };
+
+  const esSinClasificacionDetalle = (item) => {
+    const texto = String(item?.clasificaciones || "").trim();
+    return !texto || texto.toLowerCase() === "sin clasificación";
+  };
+
+  const obtenerTextoPagosDetalle = (item, metodosBase = []) => {
+    const metodosParaMostrar = (metodosBase || [])
+      .map((metodo) => {
+        const nombre = metodo.nombre || metodo.metodo || metodo.label || "Método";
+        const monto = Number(item?.metodos?.[nombre] || 0);
+        if (monto <= 0) return null;
+
+        return `${nombre}: $${formatearMonto(monto)}`;
+      })
+      .filter(Boolean);
+
+    if (metodosParaMostrar.length > 0) return metodosParaMostrar.join(" · ");
+
+    const entradas = Object.entries(item?.metodos || {})
+      .filter(([, valor]) => Number(valor || 0) > 0)
+      .map(([nombre, valor]) => `${nombre}: $${formatearMonto(valor)}`);
+
+    return entradas.length > 0 ? entradas.join(" · ") : "-";
+  };
+
+  const exportarDetallePDF = async () => {
+    let datos = await obtenerDatosReporte();
+
+    // Cuando el reporte es del día que está abierto en pantalla, usamos también
+    // las filas visibles del formulario. Esto evita que se pierdan pacientes con
+    // monto $0.00 o cambios aún no reflejados en el detalle guardado.
+    if (fechaLocal && filtroDesde === fechaLocal && filtroHasta === fechaLocal) {
+      const datosPantalla = obtenerDatosReporteDesdeTablaWeb();
+
+      if (datosPantalla?.detalle?.length) {
+        const mapaDetalle = new Map();
+
+        (datos?.detalle || []).forEach((item, index) => {
+          mapaDetalle.set(obtenerKeyDetalleReporte(item, index), item);
+        });
+
+        datosPantalla.detalle.forEach((item, index) => {
+          const key = obtenerKeyDetalleReporte(item, index);
+          if (!mapaDetalle.has(key)) {
+            mapaDetalle.set(key, item);
+          }
+        });
+
+        datos = {
+          ...(datos || {}),
+          detalle: Array.from(mapaDetalle.values()),
+          resumen: datosPantalla.resumen || datos?.resumen || [],
+          metodosReporte: datosPantalla.metodosReporte || datos?.metodosReporte || [],
+          totalGeneralResumen:
+            datosPantalla.totalGeneralResumen || datos?.totalGeneralResumen || 0,
+        };
+      }
+    }
+
+    if (!datos || datos.detalle.length === 0) {
+      return alert("No hay datos para exportar");
+    }
+
+    const observacionesGuardadas = await cargarObservacionesDetallePDF(datos);
+    const observacionesIniciales = {};
+
+    datos.detalle.forEach((item, index) => {
+      const keyTemporal = obtenerKeyDetalleReporte(item, index);
+      const keyPersistente = obtenerKeyPersistenteObservacionDetalle(item);
+
+      observacionesIniciales[keyTemporal] =
+        modalDetallePDF.observaciones?.[keyTemporal] ||
+        observacionesGuardadas[keyPersistente] ||
+        item.observacion_pdf ||
+        "";
+    });
+
+    setModalDetallePDF({
+      open: true,
+      datos,
+      observaciones: observacionesIniciales,
+    });
+  };
+
+  const cerrarModalDetallePDF = () => {
+    setModalDetallePDF({
+      open: false,
+      datos: null,
+      observaciones: {},
+    });
+  };
+
+  const actualizarObservacionDetallePDF = (key, valor) => {
+    setModalDetallePDF((prev) => ({
+      ...prev,
+      observaciones: {
+        ...(prev.observaciones || {}),
+        [key]: valor,
+      },
+    }));
+  };
+
+  const descargarDetallePDFDesdeVista = async () => {
+    if (!modalDetallePDF.datos) return;
+
+    const ok = await guardarObservacionesDetallePDF(
+      modalDetallePDF.datos,
+      modalDetallePDF.observaciones || {}
+    );
+
+    if (!ok) return;
+
+    generarDetallePDF(modalDetallePDF.datos, modalDetallePDF.observaciones || {});
+    cerrarModalDetallePDF();
+  };
+
+  const generarDetallePDF = (datos, observacionesDetalle = {}) => {
     if (!datos || datos.detalle.length === 0) {
       return alert("No hay datos para exportar");
     }
@@ -3121,16 +3494,14 @@ export default function CajaDiaria() {
         .replace(/CHEQUE/gi, "CHEQ.");
     };
 
-    const abreviarTextoPDF = (texto, max = 18) => {
+    const abreviarTextoPDF = (texto, max = 24) => {
       const limpio = String(texto || "").trim();
       if (limpio.length <= max) return limpio;
       return `${limpio.slice(0, max - 1)}…`;
     };
-    
 
-    // IMPORTANTE:
-    // El PDF usa EXACTAMENTE los mismos métodos del resumen del reporte.
-    // Así los totales de columnas cuadran con la tabla web.
+    const resumenClasificacionesPDF = obtenerResumenClasificacionesDetalle(datos.detalle);
+
     const metodosReporte = (datos.resumen || [])
       .filter((r) => Number(r.total || 0) !== 0)
       .map((r) => ({
@@ -3143,7 +3514,6 @@ export default function CajaDiaria() {
       return alert("No hay métodos de pago con movimiento para exportar");
     }
 
-
     const totalGeneralPDF = metodosReporte.reduce(
       (acc, m) => acc + Number(m.total || 0),
       0
@@ -3152,43 +3522,64 @@ export default function CajaDiaria() {
     const doc = new jsPDF({
       orientation: "landscape",
       unit: "mm",
-      format: "letter",
+      format: "a4",
     });
 
+    const pageWidth = doc.internal.pageSize.getWidth();
+
     doc.setFillColor(244, 240, 247);
-    doc.rect(0, 0, doc.internal.pageSize.getWidth(), 28, "F");
+    doc.rect(0, 0, pageWidth, 31, "F");
 
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(15);
+    doc.setFontSize(17);
     doc.setTextColor(87, 72, 102);
-    doc.text("INFORME DETALLADO DE CAJA DIARIA", 8, 14);
+    doc.text("INFORME DETALLADO DE CAJA DIARIA", 10, 15);
 
     doc.setFont("helvetica", "normal");
-    doc.setFontSize(8);
+    doc.setFontSize(9.2);
     doc.setTextColor(71, 85, 105);
-    doc.text(`Empresa(s): ${nombreEmpresasReporte}`, 8, 22);
+    doc.text(`Empresa(s): ${nombreEmpresasReporte}`, 10, 24);
     doc.text(
       `Período: ${formatearFecha(filtroDesde)} al ${formatearFecha(filtroHasta)}`,
-      160,
-      22
+      pageWidth - 10,
+      24,
+      { align: "right" }
+    );
+
+    const resumenTextoClasificaciones = resumenClasificacionesPDF
+      .map((item) => `${item.cantidad} ${item.nombre}`)
+      .join("   ·   ");
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9.3);
+    doc.setTextColor(87, 72, 102);
+    doc.text("Resumen por clasificación", 10, 40);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8.4);
+    doc.setTextColor(71, 85, 105);
+    doc.text(resumenTextoClasificaciones || "Sin clasificaciones registradas", 10, 46, {
+      maxWidth: pageWidth - 20,
+    });
+
+    const totalPorClasificacion = resumenClasificacionesPDF.reduce(
+      (acc, item) => acc + Number(item.cantidad || 0),
+      0
     );
 
     const head = [[
-      "Clasif.",
+      "Clasificación",
       "Fecha",
       "Empresa",
       "Paciente",
       "Origen",
-      ...metodosReporte.map((m) => m.label || m.nombre),
+      "Método(s) de pago",
       "Ref.",
       "Total",
+      "Observación",
     ]];
 
-    const body = datos.detalle.map((item) => {
-      const montosMetodo = metodosReporte.map((m) =>
-        `$${formatearMonto(Number(item.metodos?.[m.nombre] || 0))}`
-      );
-
+    const body = datos.detalle.map((item, index) => {
       const totalPaciente = metodosReporte.reduce(
         (acc, m) => acc + Number(item.metodos?.[m.nombre] || 0),
         0
@@ -3203,15 +3594,20 @@ export default function CajaDiaria() {
         .filter(Boolean)
         .join(" | ");
 
+      const key = obtenerKeyDetalleReporte(item, index);
+      const observacion = String(observacionesDetalle?.[key] || "").trim();
+      const clasificacion = item.clasificaciones || "Sin clasificación";
+
       return [
-        abreviarTextoPDF(item.clasificaciones || "",300),
+        abreviarTextoPDF(clasificacion, 26),
         formatearFecha(item.fecha),
-        abreviarTextoPDF(item.empresa || "", 14),
-        abreviarTextoPDF(item.paciente || "", 19),
-        abreviarTextoPDF(item.origen || "", 7),
-        ...montosMetodo,
-        abreviarTextoPDF(referenciasTexto, 18),
+        abreviarTextoPDF(item.empresa || "", 26),
+        abreviarTextoPDF(item.paciente || "", 32),
+        abreviarTextoPDF(item.origen || "", 12),
+        abreviarTextoPDF(obtenerTextoPagosDetalle(item, metodosReporte), 52),
+        abreviarTextoPDF(referenciasTexto, 20),
         `$${formatearMonto(totalPaciente)}`,
+        observacion,
       ];
     });
 
@@ -3219,51 +3615,40 @@ export default function CajaDiaria() {
       "",
       "",
       "",
-      "TOTALES",
+      `TOTAL PACIENTES: ${totalPorClasificacion}`,
       "",
-      ...metodosReporte.map((m) => `$${formatearMonto(m.total || 0)}`),
+      "",
       "",
       `$${formatearMonto(totalGeneralPDF)}`,
+      "",
     ]];
 
-    const cantidadMetodos = metodosReporte.length;
-    const anchoDisponible = doc.internal.pageSize.getWidth() - 8 - 8;
-    const anchoFijo = 16 + 16 + 22 + 28 + 12 + 18 + 18;
-    const anchoMetodo = Math.max(
-      14,
-      Math.min(35, (anchoDisponible - anchoFijo) / cantidadMetodos)
-    );
-
+    const margenPDF = 8;
     const columnStyles = {
-      0: { cellWidth: 16 },
-      1: { cellWidth: 16 },
-      2: { cellWidth: 22 },
-      3: { cellWidth: 28 },
-      4: { cellWidth: 12 },
-      [5 + cantidadMetodos]: { cellWidth: 18 },
-      [6 + cantidadMetodos]: { cellWidth: 18, halign: "right" },
+      0: { cellWidth: 24 },
+      1: { cellWidth: 19 },
+      2: { cellWidth: 30 },
+      3: { cellWidth: 38, fontStyle: "bold" },
+      4: { cellWidth: 16 },
+      5: { cellWidth: 50 },
+      6: { cellWidth: 14 },
+      7: { cellWidth: 22, halign: "right", fontStyle: "bold" },
+      8: { cellWidth: 68, minCellHeight: 18 },
     };
 
-    metodosReporte.forEach((_, index) => {
-      columnStyles[5 + index] = {
-        cellWidth: anchoMetodo,
-        halign: "right",
-      };
-    });
-
     autoTable(doc, {
-      startY: 32,
+      startY: 53,
       head,
       body,
       foot,
-      margin: { left: 4, right: 4 },
+      margin: { left: margenPDF, right: margenPDF },
       tableWidth: "auto",
       styles: {
-        fontSize: cantidadMetodos > 8 ? 4.8 : 5.8,
-        cellPadding: 1,
+        fontSize: 8,
+        cellPadding: 2,
         textColor: [31, 41, 55],
         overflow: "linebreak",
-        minCellHeight: 4.5,
+        minCellHeight: 9.2,
       },
       headStyles: {
         fillColor: [107, 90, 122],
@@ -3289,8 +3674,37 @@ export default function CajaDiaria() {
           data.cell.styles.fontStyle = "bold";
         }
 
-        if (data.column.index >= 5 && data.column.index < 5 + cantidadMetodos) {
+        if (data.column.index === 7) {
           data.cell.styles.halign = "right";
+        }
+
+        if (data.section === "body") {
+          const fila = datos.detalle?.[data.row.index];
+          if (fila && esSinClasificacionDetalle(fila)) {
+            data.cell.styles.fillColor = [255, 247, 237];
+            data.cell.styles.textColor = [124, 45, 18];
+          }
+        }
+
+        if (data.column.index === 8 && data.section === "body") {
+          data.cell.styles.minCellHeight = 18;
+          data.cell.styles.cellPadding = 2.4;
+          data.cell.styles.fillColor = [255, 255, 255];
+          data.cell.styles.textColor = [31, 41, 55];
+        }
+      },
+      didDrawCell: (data) => {
+        if (data.section === "body" && data.column.index === 8) {
+          const texto = String(data.cell.raw || "").trim();
+          if (!texto) {
+            const x1 = data.cell.x + 2.2;
+            const x2 = data.cell.x + data.cell.width - 2.2;
+            const yBase = data.cell.y + 6.4;
+            doc.setDrawColor(203, 213, 225);
+            doc.line(x1, yBase, x2, yBase);
+            doc.line(x1, yBase + 4.8, x2, yBase + 4.8);
+            doc.line(x1, yBase + 9.6, x2, yBase + 9.6);
+          }
         }
       },
     });
@@ -3508,8 +3922,8 @@ export default function CajaDiaria() {
 
   return (
     <div style={styles.page}>
-      <div style={styles.container}>
-        <div style={styles.headerCard}>
+      <div style={{ ...styles.container, ...(esPantallaCompacta ? styles.containerCompact : {}) }}>
+        <div style={{ ...styles.headerCard, ...(esPantallaCompacta ? styles.headerCardCompact : {}) }}>
           <div>
             <h1 style={styles.title}>Caja Diaria</h1>
             <p style={styles.subtitle}>Registro del día, cierre e informes</p>
@@ -3535,7 +3949,7 @@ export default function CajaDiaria() {
             </p>
           </div>
 
-          <div style={styles.topGrid}>
+          <div style={{ ...styles.topGrid, ...(esPantallaCompacta ? styles.topGridCompact : {}) }}>
             <div style={styles.formGroup}>
               <label style={styles.label}>Fecha</label>
               <input
@@ -3662,18 +4076,18 @@ export default function CajaDiaria() {
             </p>
           </div>
 
-          <div style={styles.tableWrap}>
-            <table style={styles.table}>
+          <div style={{ ...styles.tableWrap, ...(esPantallaCompacta ? styles.tableWrapCompact : {}) }}>
+            <table style={{ ...styles.table, ...(esPantallaCompacta ? styles.tableCompact : {}) }}>
               <thead>
                 <tr style={styles.theadRow}>
                   <th style={{ ...styles.th, minWidth: 155 }}>Paciente</th>
                   <th style={{ ...styles.th, minWidth: 230 }}>Origen</th>
                   {metodos.map((metodo) => (
-                    <th key={metodo.id} style={{ ...styles.th, minWidth: 145 }}>
+                    <th key={metodo.id} style={{ ...styles.th, minWidth: esPantallaCompacta ? 118 : 145 }}>
                       {metodo.nombre}
                     </th>
                   ))}
-                  <th style={{ ...styles.th, minWidth: 130 }}>Acción</th>
+                  <th style={{ ...styles.th, minWidth: esPantallaCompacta ? 110 : 130 }}>Acción</th>
                 </tr>
               </thead>
 
@@ -4196,8 +4610,8 @@ export default function CajaDiaria() {
 
       {modalManual.open && modalManual.fila && (
         <div style={styles.modalOverlay} onClick={cerrarModalManual}>
-          <div style={styles.quickModalBox} onClick={(e) => e.stopPropagation()}>
-            <div style={styles.quickModalHeader}>
+          <div style={{ ...styles.quickModalBox, ...(esPantallaCompacta ? styles.quickModalBoxCompact : {}) }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ ...styles.quickModalHeader, ...(esPantallaCompacta ? styles.quickModalHeaderCompact : {}) }}>
               <div>
                 <h3 style={styles.modalTitle}>
                   {modalManual.editando ? "Editar cobro manual" : "Creación manual"}
@@ -4217,7 +4631,7 @@ export default function CajaDiaria() {
               </button>
             </div>
 
-            <div style={styles.quickModalBody}>
+            <div style={{ ...styles.quickModalBody, ...(esPantallaCompacta ? styles.quickModalBodyCompact : {}) }}>
               <div style={styles.quickMainColumn}>
                 <div style={styles.quickPatientCard}>
                   <label style={styles.label}>Paciente</label>
@@ -4654,6 +5068,124 @@ export default function CajaDiaria() {
         </div>
       )}
 
+      {modalDetallePDF.open && modalDetallePDF.datos && (
+        <div style={styles.modalOverlay} onClick={cerrarModalDetallePDF}>
+          <div style={styles.modalDetallePDFBox} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.modalDetallePDFHeader}>
+              <div>
+                <h3 style={styles.modalTitle}>Vista previa PDF Detalle</h3>
+                <p style={styles.modalText}>
+                  Revisá los pacientes y escribí observaciones por fila antes de generar el PDF.
+                </p>
+              </div>
+
+              <button type="button" onClick={cerrarModalDetallePDF} style={styles.modalCloseBtn}>
+                ✕
+              </button>
+            </div>
+
+            <div style={styles.detallePDFSummaryBar}>
+              <strong>{nombreEmpresasReporte}</strong>
+              <span>
+                Período: {formatearFecha(filtroDesde)} al {formatearFecha(filtroHasta)}
+              </span>
+              <span>{modalDetallePDF.datos.detalle.length} paciente(s)</span>
+            </div>
+
+            <div style={styles.detallePDFResumenBloque}>
+              <div style={styles.detallePDFResumenTitulo}>Resumen por clasificación</div>
+              <div style={styles.detallePDFResumenChips}>
+                {obtenerResumenClasificacionesDetalle(modalDetallePDF.datos.detalle).map((item) => {
+                  const sinClasificacion = String(item.nombre || "").toLowerCase() === "sin clasificación";
+                  return (
+                    <span
+                      key={item.nombre}
+                      style={sinClasificacion ? styles.detallePDFResumenChipAlerta : styles.detallePDFResumenChip}
+                    >
+                      <strong>{item.cantidad}</strong> {item.nombre}
+                    </span>
+                  );
+                })}
+              </div>
+
+              <div style={styles.detallePDFResumenTitulo}>Total por método de pago</div>
+              <div style={styles.detallePDFResumenChips}>
+                {(modalDetallePDF.datos.resumen || [])
+                  .filter((item) => Number(item.total || 0) > 0)
+                  .map((item) => (
+                    <span key={item.metodo} style={styles.detallePDFResumenChipMetodo}>
+                      {item.metodo}: <strong>${formatearMonto(item.total)}</strong>
+                    </span>
+                  ))}
+              </div>
+            </div>
+
+            <div style={styles.detallePDFPreviewWrap}>
+              <table style={styles.detallePDFPreviewTable}>
+                <thead style={styles.detallePDFTheadSticky}>
+                  <tr>
+                    <th style={styles.detallePDFTh}>Clasificación</th>
+                    <th style={styles.detallePDFTh}>Fecha</th>
+                    <th style={styles.detallePDFTh}>Paciente</th>
+                    <th style={styles.detallePDFTh}>Origen</th>
+                    <th style={styles.detallePDFTh}>Método(s) de pago</th>
+                    <th style={styles.detallePDFThRight}>Total</th>
+                    <th style={styles.detallePDFTh}>Observación para PDF</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {modalDetallePDF.datos.detalle.map((item, index) => {
+                    const key = obtenerKeyDetalleReporte(item, index);
+                    const totalPaciente = Object.values(item.metodos || {}).reduce(
+                      (acc, valor) => acc + Number(valor || 0),
+                      0
+                    );
+
+                    const sinClasificacion = esSinClasificacionDetalle(item);
+
+                    return (
+                      <tr key={key} style={sinClasificacion ? styles.detallePDFRowSinClasificacion : undefined}>
+                        <td style={styles.detallePDFTd}>
+                          <span style={sinClasificacion ? styles.detallePDFBadgeSinClasificacion : undefined}>
+                            {item.clasificaciones || "Sin clasificación"}
+                          </span>
+                        </td>
+                        <td style={styles.detallePDFTd}>{formatearFecha(item.fecha)}</td>
+                        <td style={styles.detallePDFTdStrong}>{item.paciente || "Sin nombre"}</td>
+                        <td style={styles.detallePDFTd}>{item.origen || "-"}</td>
+                        <td style={styles.detallePDFTdMetodo}>
+                          {obtenerTextoPagosDetalle(item, modalDetallePDF.datos.metodosReporte || [])}
+                        </td>
+                        <td style={styles.detallePDFTdRight}>${formatearMonto(totalPaciente)}</td>
+                        <td style={styles.detallePDFTdObs}>
+                          <textarea
+                            value={modalDetallePDF.observaciones?.[key] || ""}
+                            onChange={(e) => actualizarObservacionDetallePDF(key, e.target.value)}
+                            placeholder="Escribir observación de este paciente..."
+                            rows={2}
+                            style={styles.detallePDFTextarea}
+                          />
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            <div style={styles.modalActionsInline}>
+              <button type="button" style={styles.saveBtn} onClick={descargarDetallePDFDesdeVista}>
+                Generar PDF Detalle
+              </button>
+
+              <button type="button" style={styles.clearBtn} onClick={cerrarModalDetallePDF}>
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {modalFacturacion.open && (
         <div style={styles.modalOverlay} onClick={cerrarModalFacturacion}>
           <div style={styles.modalBox} onClick={(e) => e.stopPropagation()}>
@@ -4712,6 +5244,13 @@ const styles = {
     gap: "18px",
   },
 
+  containerCompact: {
+    width: "100%",
+    gap: "12px",
+    padding: "0 8px",
+    boxSizing: "border-box",
+  },
+
   modalBoxManualPro: {
     width: "min(1120px, calc(100vw - 28px))",
     maxHeight: "92vh",
@@ -4721,7 +5260,7 @@ const styles = {
     border: "1px solid #d7dbe2",
     boxShadow: "0 24px 90px rgba(15, 23, 42, 0.25)",
     display: "grid",
-    gridTemplateRows: "auto auto minmax(0, 1fr) auto",
+    gridTemplateRows: "auto auto auto minmax(0, 1fr) auto",
   },
 
   modalManualHero: {
@@ -5520,6 +6059,12 @@ const styles = {
     boxShadow: "0 10px 30px rgba(15, 23, 42, 0.06)",
   },
 
+  headerCardCompact: {
+    padding: "16px",
+    borderRadius: "18px",
+    alignItems: "stretch",
+  },
+
   title: {
     margin: 0,
     color: "#574866",
@@ -5780,6 +6325,11 @@ const styles = {
     marginTop: "14px",
   },
 
+  topGridCompact: {
+    gridTemplateColumns: "1fr",
+    gap: "10px",
+  },
+
   actionGridSimple: {
     marginTop: "14px",
     display: "grid",
@@ -5871,6 +6421,31 @@ const styles = {
     width: "100%",
     borderCollapse: "collapse",
     minWidth: "1300px",
+  },
+
+  tableWrapCompact: {
+    width: "100%",
+    overflowX: "auto",
+    WebkitOverflowScrolling: "touch",
+  },
+
+  tableCompact: {
+    minWidth: "920px",
+  },
+
+  observacionPacienteInput: {
+    width: "100%",
+    minWidth: "170px",
+    minHeight: "46px",
+    boxSizing: "border-box",
+    padding: "10px 11px",
+    borderRadius: "12px",
+    border: "1px solid #cfd9e5",
+    background: "#fff",
+    outline: "none",
+    resize: "vertical",
+    fontSize: "12px",
+    color: "#334155",
   },
 
   historialWrap: {
@@ -6351,6 +6926,12 @@ const styles = {
     overflow: "hidden",
   },
 
+  quickModalBoxCompact: {
+    width: "calc(100vw - 12px)",
+    height: "calc(100vh - 12px)",
+    borderRadius: "16px",
+  },
+
   quickModalHeader: {
     padding: "16px 18px",
     borderBottom: "1px solid #e2e8f0",
@@ -6359,6 +6940,11 @@ const styles = {
     gridTemplateColumns: "minmax(0, 1fr) 150px auto",
     gap: "12px",
     alignItems: "center",
+  },
+
+  quickModalHeaderCompact: {
+    gridTemplateColumns: "1fr auto",
+    padding: "12px",
   },
 
   quickTotalHeader: {
@@ -6379,6 +6965,12 @@ const styles = {
     padding: "14px",
     background: "#f8fafc",
     overflow: "hidden",
+  },
+
+  quickModalBodyCompact: {
+    gridTemplateColumns: "1fr",
+    overflowY: "auto",
+    padding: "10px",
   },
 
   quickMainColumn: {
@@ -6411,7 +7003,7 @@ const styles = {
     borderRadius: "18px",
     padding: "12px",
     display: "grid",
-    gridTemplateRows: "auto auto minmax(0, 1fr) auto",
+    gridTemplateRows: "auto auto auto minmax(0, 1fr) auto",
     gap: "10px",
   },
 
@@ -6808,7 +7400,7 @@ const styles = {
     borderRadius: "16px",
     padding: "10px",
     display: "grid",
-    gridTemplateRows: "auto auto minmax(0, 1fr) auto",
+    gridTemplateRows: "auto auto auto minmax(0, 1fr) auto",
     gap: "8px",
   },
 
@@ -7083,7 +7675,7 @@ const styles = {
     boxShadow: "0 24px 80px rgba(15, 23, 42, 0.25)",
     padding: "14px",
     display: "grid",
-    gridTemplateRows: "auto auto minmax(0, 1fr) auto",
+    gridTemplateRows: "auto auto auto minmax(0, 1fr) auto",
     gap: "10px",
   },
 
@@ -7216,6 +7808,227 @@ const styles = {
     fontSize: "11.5px",
     minHeight: "31px",
   },
+  modalDetallePDFBox: {
+    width: "min(1480px, calc(100vw - 14px))",
+    maxHeight: "95vh",
+    overflow: "hidden",
+    background: "#fff",
+    borderRadius: "22px",
+    border: "1px solid #d7dbe2",
+    boxShadow: "0 24px 90px rgba(15, 23, 42, 0.25)",
+    display: "grid",
+    gridTemplateRows: "auto auto auto minmax(0, 1fr) auto",
+  },
+
+  modalDetallePDFHeader: {
+    padding: "18px 20px",
+    borderBottom: "1px solid #e2e8f0",
+    background: "linear-gradient(180deg, #ffffff 0%, #fbf8fd 100%)",
+    display: "flex",
+    alignItems: "start",
+    justifyContent: "space-between",
+    gap: "14px",
+  },
+
+  detallePDFSummaryBar: {
+    padding: "10px 20px",
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "10px",
+    alignItems: "center",
+    background: "#f8fafc",
+    borderBottom: "1px solid #e2e8f0",
+    color: "#475569",
+    fontSize: "12.5px",
+  },
+
+  detallePDFPreviewWrap: {
+    minHeight: 0,
+    overflow: "auto",
+    padding: "0 16px 14px",
+    position: "relative",
+    WebkitOverflowScrolling: "touch",
+    background: "#fff",
+    isolation: "isolate",
+    clipPath: "inset(0)",
+  },
+
+  detallePDFPreviewTable: {
+    width: "100%",
+    minWidth: "1180px",
+    borderCollapse: "separate",
+    borderSpacing: 0,
+    fontSize: "12.5px",
+  },
+
+  detallePDFTheadSticky: {
+    position: "sticky",
+    top: 0,
+    zIndex: 90,
+    background: "#6b5a7a",
+    boxShadow: "0 -18px 0 #fff, 0 3px 0 rgba(15, 23, 42, 0.16)",
+  },
+
+  detallePDFTh: {
+    position: "sticky",
+    top: 0,
+    zIndex: 60,
+    background: "#6b5a7a",
+    color: "#fff",
+    padding: "12px 10px",
+    textAlign: "left",
+    fontWeight: "900",
+    boxShadow: "0 -20px 0 #6b5a7a, 0 2px 0 rgba(15, 23, 42, 0.18)",
+    backgroundClip: "padding-box",
+  },
+
+  detallePDFThRight: {
+    position: "sticky",
+    top: 0,
+    zIndex: 60,
+    background: "#6b5a7a",
+    color: "#fff",
+    padding: "12px 10px",
+    textAlign: "right",
+    fontWeight: "900",
+    boxShadow: "0 -20px 0 #6b5a7a, 0 2px 0 rgba(15, 23, 42, 0.18)",
+    backgroundClip: "padding-box",
+  },
+
+  detallePDFTd: {
+    padding: "9px",
+    borderBottom: "1px solid #e2e8f0",
+    color: "#334155",
+    verticalAlign: "top",
+  },
+
+  detallePDFTdStrong: {
+    padding: "9px",
+    borderBottom: "1px solid #e2e8f0",
+    color: "#1f2937",
+    fontWeight: "900",
+    verticalAlign: "top",
+  },
+
+  detallePDFTdRight: {
+    padding: "9px",
+    borderBottom: "1px solid #e2e8f0",
+    color: "#1f2937",
+    fontWeight: "900",
+    textAlign: "right",
+    verticalAlign: "top",
+  },
+
+  detallePDFTdObs: {
+    padding: "6px 8px",
+    borderBottom: "1px solid #e2e8f0",
+    verticalAlign: "top",
+    minWidth: "300px",
+    width: "30%",
+  },
+
+  detallePDFTextarea: {
+    width: "100%",
+    minHeight: "58px",
+    resize: "vertical",
+    boxSizing: "border-box",
+    padding: "8px 10px",
+    borderRadius: "12px",
+    border: "1px solid #cfd9e5",
+    background: "#fff",
+    outline: "none",
+    color: "#1f2937",
+    fontSize: "12.5px",
+    lineHeight: 1.45,
+    fontFamily: "inherit",
+  },
+
+
+  detallePDFResumenBloque: {
+    padding: "10px 20px 12px",
+    background: "#ffffff",
+    borderBottom: "1px solid #e2e8f0",
+    display: "grid",
+    gap: "7px",
+  },
+
+  detallePDFResumenTitulo: {
+    color: "#574866",
+    fontSize: "12px",
+    fontWeight: "900",
+  },
+
+  detallePDFResumenChips: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "7px",
+  },
+
+  detallePDFResumenChip: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "4px",
+    border: "1px solid #d3c7dd",
+    background: "#f4f0f7",
+    color: "#574866",
+    borderRadius: "999px",
+    padding: "5px 9px",
+    fontSize: "11.5px",
+    fontWeight: "700",
+  },
+
+  detallePDFResumenChipAlerta: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "4px",
+    border: "1px solid #fed7aa",
+    background: "#fff7ed",
+    color: "#9a3412",
+    borderRadius: "999px",
+    padding: "5px 9px",
+    fontSize: "11.5px",
+    fontWeight: "900",
+  },
+
+  detallePDFRowSinClasificacion: {
+    background: "#fff7ed",
+  },
+
+  detallePDFBadgeSinClasificacion: {
+    display: "inline-flex",
+    alignItems: "center",
+    border: "1px solid #fed7aa",
+    background: "#ffedd5",
+    color: "#9a3412",
+    borderRadius: "999px",
+    padding: "3px 8px",
+    fontSize: "11px",
+    fontWeight: "900",
+    whiteSpace: "nowrap",
+  },
+
+  detallePDFResumenChipMetodo: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "4px",
+    border: "1px solid #cbd5e1",
+    background: "#f8fafc",
+    color: "#334155",
+    borderRadius: "999px",
+    padding: "5px 9px",
+    fontSize: "11.5px",
+    fontWeight: "700",
+  },
+
+  detallePDFTdMetodo: {
+    padding: "9px",
+    borderBottom: "1px solid #e2e8f0",
+    color: "#334155",
+    verticalAlign: "top",
+    minWidth: "180px",
+    fontWeight: "700",
+  },
+
   autosaveBadge: {
     display: "inline-flex",
     alignItems: "center",
