@@ -3265,6 +3265,18 @@ export default function CajaDiaria() {
     ].join("__");
   };
 
+  const obtenerKeyUnicaDetalleReporte = (item) => {
+    return [
+      String(item?.empresa_id || ""),
+      String(item?.empresa || ""),
+      String(item?.fecha || ""),
+      normalizarClaveObservacionDetalle(item?.paciente || ""),
+      String(item?.origen || ""),
+      String(item?.venta_id || "manual"),
+      normalizarClaveObservacionDetalle(item?.grupoFacturacion || item?.grupo_facturacion || ""),
+    ].join("__");
+  };
+
   const normalizarClaveObservacionDetalle = (valor = "") => {
     return String(valor || "")
       .trim()
@@ -3342,25 +3354,35 @@ export default function CajaDiaria() {
   };
 
   const obtenerResumenClasificacionesDetalle = (detalle = []) => {
-    return Object.values(
-      (detalle || []).reduce((acc, item) => {
-        const nombres = dividirClasificacionesReporte(item.clasificaciones);
-        const lista = nombres.length > 0 ? nombres : ["Sin clasificación"];
+    const resumen = {};
+    const pacientesContadosPorClasificacion = new Set();
 
-        lista.forEach((nombre) => {
-          const key = nombre.toLowerCase();
-          if (!acc[key]) {
-            acc[key] = {
-              nombre,
-              cantidad: 0,
-            };
-          }
-          acc[key].cantidad += 1;
-        });
+    (detalle || []).forEach((item, index) => {
+      const nombres = dividirClasificacionesReporte(item.clasificaciones);
+      const lista = nombres.length > 0 ? nombres : ["Sin clasificación"];
+      const keyPaciente = obtenerKeyUnicaDetalleReporte(item) || obtenerKeyDetalleReporte(item, index);
 
-        return acc;
-      }, {})
-    ).sort((a, b) => String(a.nombre).localeCompare(String(b.nombre)));
+      lista.forEach((nombre) => {
+        const keyClasificacion = normalizarClaveObservacionDetalle(nombre || "Sin clasificación");
+        const keyConteo = `${keyClasificacion}__${keyPaciente}`;
+
+        if (pacientesContadosPorClasificacion.has(keyConteo)) return;
+        pacientesContadosPorClasificacion.add(keyConteo);
+
+        if (!resumen[keyClasificacion]) {
+          resumen[keyClasificacion] = {
+            nombre,
+            cantidad: 0,
+          };
+        }
+
+        resumen[keyClasificacion].cantidad += 1;
+      });
+    });
+
+    return Object.values(resumen).sort((a, b) =>
+      String(a.nombre).localeCompare(String(b.nombre))
+    );
   };
 
   const esSinClasificacionDetalle = (item) => {
@@ -3400,15 +3422,34 @@ export default function CajaDiaria() {
       if (datosPantalla?.detalle?.length) {
         const mapaDetalle = new Map();
 
-        (datos?.detalle || []).forEach((item, index) => {
-          mapaDetalle.set(obtenerKeyDetalleReporte(item, index), item);
+        (datos?.detalle || []).forEach((item) => {
+          mapaDetalle.set(obtenerKeyUnicaDetalleReporte(item), item);
         });
 
-        datosPantalla.detalle.forEach((item, index) => {
-          const key = obtenerKeyDetalleReporte(item, index);
-          if (!mapaDetalle.has(key)) {
+        datosPantalla.detalle.forEach((item) => {
+          const key = obtenerKeyUnicaDetalleReporte(item);
+          const existente = mapaDetalle.get(key);
+
+          if (!existente) {
             mapaDetalle.set(key, item);
+            return;
           }
+
+          mapaDetalle.set(key, {
+            ...existente,
+            ...item,
+            metodos: {
+              ...(item.metodos || {}),
+              ...(existente.metodos || {}),
+            },
+            referencias: {
+              ...(item.referencias || {}),
+              ...(existente.referencias || {}),
+            },
+            clasificaciones: existente.clasificaciones || item.clasificaciones || "",
+            detalleIds: existente.detalleIds || item.detalleIds || [],
+            observacion_pdf: existente.observacion_pdf || item.observacion_pdf || "",
+          });
         });
 
         datos = {
